@@ -1,0 +1,25 @@
+FROM ubuntu:24.04 AS builder
+
+RUN apt-get update && apt-get install -y -qq \
+    cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
+    libgrpc-dev protobuf-compiler-grpc build-essential \
+    pkg-config git ca-certificates
+
+WORKDIR /build
+COPY agent/ ./agent/
+COPY api/ ./api/
+
+RUN cmake -S agent -B build && \
+    cmake --build build -j$(nproc) && \
+    cp build/pudim-agent /usr/local/bin/pudim-agent
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y -qq \
+    libprotobuf32t64 libgrpc++1.51t64 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/pudim-agent /usr/local/bin/pudim-agent
+
+ENTRYPOINT ["/usr/local/bin/pudim-agent"]
+CMD ["--collector-endpoint=collector:50051", "--node-id=agent-docker", "--interval=5000"]

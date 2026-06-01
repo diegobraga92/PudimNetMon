@@ -1,0 +1,27 @@
+FROM ubuntu:24.04 AS builder
+
+RUN apt-get update && apt-get install -y -qq \
+    cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
+    libgrpc-dev protobuf-compiler-grpc build-essential \
+    pkg-config git ca-certificates
+
+WORKDIR /build
+COPY collector/ ./collector/
+COPY api/ ./api/
+
+RUN cmake -S collector -B build && \
+    cmake --build build -j$(nproc) && \
+    cp build/pudim-collector /usr/local/bin/pudim-collector
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y -qq \
+    libprotobuf32t64 libgrpc++1.51t64 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/pudim-collector /usr/local/bin/pudim-collector
+
+EXPOSE 50051 8080
+
+ENTRYPOINT ["/usr/local/bin/pudim-collector"]
+CMD ["--grpc-addr=0.0.0.0:50051", "--http-addr=0.0.0.0:8080"]

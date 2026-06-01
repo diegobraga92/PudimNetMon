@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.collector
+    ports:
+      - "50051:50051"  # gRPC
+      - "8080:8080"    # HTTP health/metrics
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.agent
+    command: >
+      --collector-endpoint=collector:50051
+      --node-id=agent-docker-001
+      --interval=5000
+    depends_on:
+      - collector
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - collector
+    restart: unless-stopped

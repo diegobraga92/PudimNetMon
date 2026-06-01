@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package pudimnetmon;
+
+option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
+
+// Heartbeat service: agent reports alive status to collector.
+service AgentService {
+  // Unary heartbeat: agent sends its ID and timestamp, collector responds.
+  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message HeartbeatRequest {
+  string agent_id = 1;       // Unique node identifier (e.g., "agent-us-east-1a")
+  int64 timestamp_unix_ms = 2; // Agent's wall clock at send time
+  int32 interval_ms = 3;     // Configured heartbeat interval in ms
+  string version = 4;        // Agent software version (semver)
+}
+
+message HeartbeatResponse {
+  bool ack = 1;              // True if heartbeat was accepted
+  int64 collector_time_unix_ms = 2; // Collector's wall clock at receipt
+  string status_message = 3; // Optional informational message
+}
+
+// Future: Metrics payload will be defined in a separate proto file.

@@ -1,0 +1,36 @@
+[Unit]
+Description=PudimNetMon Agent - Network monitoring heartbeat daemon
+Documentation=https://github.com/diegobraga92/PudimNetMon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pudim-agent \
+    --collector-endpoint=collector.example.com:50051 \
+    --node-id=%H \
+    --interval=5000
+
+# Security hardening
+User=nobody
+Group=nogroup
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+CapabilityBoundingSet=~CAP_NET_RAW
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=256M
+CPUQuota=50%
+
+# Restart behavior
+Restart=always
+RestartSec=5
+StartLimitInterval=300
+StartLimitBurst=3
+
+[Install]
+WantedBy=multi-user.target

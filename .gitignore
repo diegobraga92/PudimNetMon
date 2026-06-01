@@ -1,0 +1,28 @@
+# Build artifacts (C++ agent & collector)
+agent/build/
+collector/build/
+
+# Dependencies fetched by CMake FetchContent
+collector/build/_deps/
+
+# Node.js / dashboard
+dashboard/node_modules/
+dashboard/dist/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment / secrets
+.env
+.env.local
