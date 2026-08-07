@@ -133,6 +133,23 @@ services:
       - collector
     restart: unless-stopped
 
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports:
+      - "3100:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_SECURITY_ADMIN_PASSWORD: "pudim"
+    volumes:
+      - ./infra/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - collector
+      - consumer-storage
+      - consumer-alert
+    restart: unless-stopped
+
 volumes:
   timescaledb-data:
   kafka-data:

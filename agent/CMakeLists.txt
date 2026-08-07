@@ -99,6 +99,7 @@ add_executable(pudim-agent
   src/metrics/failover_client.cpp
   src/diagnostic_service.cpp
   src/systemd_notify.cpp
+  src/trace_context.cpp
 )
 target_link_libraries(pudim-agent
   PRIVATE

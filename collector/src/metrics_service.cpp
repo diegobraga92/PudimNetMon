@@ -20,30 +20,40 @@ MetricsServiceImpl::MetricsServiceImpl(
     std::shared_ptr<alerting::AlertManager> alerts,
     std::shared_ptr<kafka::KafkaProducer> producer,
     StorageMode mode,
-    int64_t skew_threshold_ms)
+    int64_t skew_threshold_ms,
+    int64_t backpressure_threshold_ms)
     : m_storage(std::move(storage)),
       m_alerts(std::move(alerts)),
       m_producer(std::move(producer)),
       m_mode(mode),
-      m_skew_threshold_ms(skew_threshold_ms) {}
+      m_skew_threshold_ms(skew_threshold_ms),
+      m_backpressure_threshold_ms(backpressure_threshold_ms) {}
 
-bool MetricsServiceImpl::IngestBatch(const MetricsBatch &batch) {
+bool MetricsServiceImpl::IngestBatch(const MetricsBatch &batch,
+                                     const std::string &traceparent,
+                                     int64_t &elapsed_ms) {
+    auto start = std::chrono::steady_clock::now();
+
+    bool ok = false;
     if (m_mode == StorageMode::Kafka) {
         // Produce to Kafka; storage + alerting are handled by consumers.
-        if (!m_producer) return false;
-        return m_producer->Produce(batch);
+        ok = m_producer ? m_producer->Produce(batch, traceparent) : false;
+    } else {
+        // Direct mode (Phases 1-2): write to TimescaleDB, then evaluate alerts.
+        // ADR 006: the collector-assigned timestamp is the source of truth for
+        // storage (the agent's timestamp is preserved in logs/metadata only).
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+        ok = m_storage->InsertMetrics(batch.agent_id(), now_ms, batch.metrics());
+        if (ok && m_alerts) {
+            m_alerts->Evaluate(batch.agent_id(), batch.metrics());
+        }
     }
-    // Direct mode (Phases 1-2): write to TimescaleDB, then evaluate alerts.
-    // ADR 006: the collector-assigned timestamp is the source of truth for
-    // storage (the agent's timestamp is preserved in logs/metadata only).
-    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      std::chrono::system_clock::now().time_since_epoch())
-                      .count();
-    bool ok = m_storage->InsertMetrics(batch.agent_id(), now_ms,
-                                       batch.metrics());
-    if (ok && m_alerts) {
-        m_alerts->Evaluate(batch.agent_id(), batch.metrics());
-    }
+
+    elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - start)
+                     .count();
     return ok;
 }
 
@@ -77,6 +87,15 @@ Status MetricsServiceImpl::SendMetrics(
 
     m_received_metrics += request->metrics_size();
 
+    // Phase 6: extract the W3C trace context so the whole ingest path
+    // (storage + Kafka) can be correlated with the agent's trace.
+    std::string traceparent;
+    auto md = ctx->client_metadata();
+    auto tp = md.find("traceparent");
+    if (tp != md.end()) {
+        traceparent.assign(tp->second.data(), tp->second.size());
+    }
+
     // Phase 5 clock hygiene (ADR 006): the collector's wall clock is the source
     // of truth for storage. Detect large skew between the agent's reported
     // timestamp and the collector's own clock and surface it as a warning.
@@ -95,7 +114,8 @@ Status MetricsServiceImpl::SendMetrics(
                   << std::endl;
     }
 
-    if (!IngestBatch(*request)) {
+    int64_t elapsed_ms = 0;
+    if (!IngestBatch(*request, traceparent, elapsed_ms)) {
         m_rejected_metrics += request->metrics_size();
         response->set_ack(false);
         response->set_accepted_count(0);
@@ -104,6 +124,18 @@ Status MetricsServiceImpl::SendMetrics(
             m_mode == StorageMode::Kafka ? "kafka produce failed"
                                          : "storage write failed");
         return Status::OK;
+    }
+
+    // Phase 6 overload handling: if ingest took too long, signal the agent to
+    // back off via gRPC trailing metadata ("x-overloaded").
+    if (elapsed_ms > m_backpressure_threshold_ms) {
+        m_backpressure_signals_sent++;
+        ctx->AddTrailingMetadata("x-overloaded", "true");
+        std::cout << "{\"timestamp\":" << now_ms
+                  << ",\"level\":\"warn\",\"component\":\"collector\""
+                  << ",\"message\":\"backpressure signalled\""
+                  << ",\"agent_id\":\"" << request->agent_id() << "\""
+                  << ",\"ingest_ms\":" << elapsed_ms << "}" << std::endl;
     }
 
     response->set_ack(true);
@@ -132,6 +164,13 @@ Status MetricsServiceImpl::StreamMetrics(
     auto it = md.find("x-agent-id");
     if (it != md.end()) {
         agent_id.assign(it->second.data(), it->second.size());
+    }
+
+    // Phase 6: W3C trace context for the whole stream.
+    std::string traceparent;
+    auto tpit = md.find("traceparent");
+    if (tpit != md.end()) {
+        traceparent.assign(tpit->second.data(), tpit->second.size());
     }
 
     if (agent_id.empty()) {
@@ -171,7 +210,8 @@ Status MetricsServiceImpl::StreamMetrics(
     // Kafka mode); returns false on failure.
     auto flush = [&]() -> bool {
         if (batch.metrics_size() == 0) return true;
-        bool ok = IngestBatch(batch);
+        int64_t elapsed_ms = 0;
+        bool ok = IngestBatch(batch, traceparent, elapsed_ms);
         if (ok) {
             accepted += batch.metrics_size();
         } else {

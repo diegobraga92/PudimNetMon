@@ -95,6 +95,27 @@ void ConsumeLoop(RdKafka::KafkaConsumer *consumer, const BatchHandler &handler,
                     continue;
                 }
 
+                // Phase 6: forward the W3C trace context (Kafka header) to the
+                // handler log so the consumer's work can be correlated with the
+                // agent→collector trace.
+                std::string traceparent;
+                if (const RdKafka::Headers *hdrs = msg->headers()) {
+                    for (const auto &h : hdrs->get_all()) {
+                        if (h.key() == "traceparent" && h.value()) {
+                            traceparent.assign(static_cast<const char *>(h.value()),
+                                               h.value_size());
+                            break;
+                        }
+                    }
+                }
+                if (!traceparent.empty()) {
+                    std::cout << "{\"level\":\"info\",\"component\":\"consumer\","
+                                 "\"message\":\"consume_batch\",\"agent_id\":\""
+                              << batch.agent_id()
+                              << "\",\"traceparent\":\"" << traceparent << "\"}"
+                              << std::endl;
+                }
+
                 bool ok = handler(batch);
                 if (ok) {
                     stats->batches_processed++;

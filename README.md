@@ -102,27 +102,30 @@ npm run dev
 └── docker-compose.yml     # Local development environment
 ```
 
-## Current Phase: Phase 5 — Systems Engineering, Time Sync & Service Discovery
+## Current Phase: Phase 6 — Observability, Overload & Chaos
 
-**Phase 0 (Skeleton) ✅ — Phase 1 (Metrics) ✅ — Phase 2 (Alerting) ✅ — Phase 3 (Kafka) ✅ — Phase 4 (Deep Networking) ✅ — Phase 5 (SysEng/Time/Discovery) ✅**
+**Phases 0–5 ✅ · Phase 6 (Observability/Overload/Chaos/Incidents) ✅**
 
-- ✅ Protobuf API contracts (`heartbeat.proto`, `metrics.proto`, `diagnostic.proto`)
-- ✅ C++ agent: `Type=notify` + watchdog (`sd_notify`), SIGHUP handling, unprivileged user with `CAP_NET_RAW`+`CAP_NET_ADMIN`, journald logging, diagnostic gRPC server
-- ✅ **NTP offset probe** (`ntp_adjtime()`, `CHECK_TYPE_NTP_OFFSET`), clock-skew detection at the collector (`--skew-threshold-ms`, `pudim_clock_skew_warnings_total`), collector-assigned timestamps as source of truth
-- ✅ **Service discovery**: `--collector-endpoints` failover list with 3-strike rotation (`FailoverClient`), DNS/K8s discovery documented
-- ✅ **Deep network probes**: TLS cert validation, DNS records, TCP handshake (libpcap), TCP retransmit, HTTP/1.1-vs-2-vs-3
-- ✅ **Diagnostic mode**: collector-triggered `traceroute` + `tcpdump` on the agent
-- ✅ Kafka backbone (KRaft broker, storage + alert consumers, at-least-once + idempotent writes)
-- ✅ Dashboard: NTP offset chart, TLS expiry timeline, HTTP protocol comparison, diagnostic runner, alerts + history
-- ✅ Docs: ADRs 001–007, `docs/networking-deep-dive.md`, `docs/kernel-tuning.md`, runbooks
-- ✅ CI: C++ build/test (Debug), TypeScript lint/build
+- ✅ **W3C Trace Context**: `traceparent` propagated agent → collector (gRPC metadata) → Kafka (headers) → consumers. Every hop logs the trace; a single measurement is traceable end-to-end
+- ✅ **Prometheus + Grafana**: Grafana provisioned in Compose with a curated `network-monitor` dashboard (agents, throughput, Kafka lag, storage latency, skew, backpressure); SLO burn-rate alert rules in `infra/prometheus/alerts.yml`
+- ✅ **Overload handling (ADR 008)**: agent bounded buffer (`--max-buffer-size`, oldest dropped), collector `x-overloaded` gRPC backpressure signal, agent adaptive interval (back off 2× up to 10×)
+- ✅ **Chaos experiments** (`docs/chaos-experiments.md`): collector kill, network partition, Kafka restart, DNS failure, clock-skew injection — all verified with graceful degradation
+- ✅ **Two postmortems** (`docs/postmortems/`): collector overload OOM, clock-skew alert storm
+- ✅ **Runbooks**: `docs/runbooks/incident-response.md` (reconnection, scale-up, rebalancing, skew) + high-latency
+- ✅ **Deep probes** (Phase 4): TLS cert, DNS records, TCP handshake (libpcap), retransmit, HTTP/1.1-vs-2-vs-3
+- ✅ **Daemon/Time/Discovery** (Phase 5): `Type=notify`+watchdog, NTP offset, clock-skew detection, collector-endpoints failover
+- ✅ **Kafka backbone** (Phase 3): KRaft broker, storage + alert consumers, at-least-once + idempotent writes
+- ✅ ADRs 001–008, CI (C++ build/test + TS lint/build)
 
 ### Architecture
 
 ```
 Agent ──gRPC──▶ Collector ──produce──▶ Kafka ──consume──▶ pudim-consumer-storage ──▶ TimescaleDB
-       │                  (network.metrics)             └──▶ pudim-consumer-alert ──▶ AlertManager
+       │        (traceparent)          (traceparent hdr) └──▶ pudim-consumer-alert ──▶ AlertManager
+       │           ▲  x-overloaded (backpressure)
        └── diagnostic gRPC (:50052) ◀── POST /diagnostic ── Collector :8080
+
+Collector :8080/metrics · storage :9091 · alert :9092  →  Grafana :3100
 ```
 
 ### Running the full stack
@@ -131,28 +134,23 @@ Agent ──gRPC──▶ Collector ──produce──▶ Kafka ──consume�
 docker compose up --build
 # dashboard:     http://localhost:3000
 # collector:     http://localhost:8080 (health/metrics)
+# Grafana:       http://localhost:3100 (provisioned dashboard, anonymous login)
 # storage cons.: http://localhost:9091/metrics (Prometheus)
 # alert cons.:   http://localhost:9092/metrics (Prometheus)
 ```
 
-### Service discovery & clock hygiene (Phase 5)
+### Overload handling (Phase 6)
 
 ```bash
-# Failover: try collector-a first, then collector-b after 3 consecutive failures
-./build-agent/pudim-agent --collector-endpoints=collector-a:50051,collector-b:50051 ...
+# Agent: bounded buffer + adaptive backoff (on x-overloaded)
+./build-agent/pudim-agent --max-buffer-size=200 ...
 
-# Skew threshold on the collector (default 5000 ms)
-./build-collector/pudim-collector --skew-threshold-ms=5000 ...
-```
+# Collector: signal agents to back off when ingest exceeds 1s
+./build-collector/pudim-collector --backpressure-threshold-ms=1000 ...
 
-### Deep diagnostics (Phase 4)
-
-```bash
-./build-agent/pudim-agent \
-  --tls-targets=example.com:443 \
-  --http-targets=https://example.com --http-protocols=http1.1,http2 \
-  --dns-targets=example.com --dns-expected=example.com=A:93.184.216.34 \
-  --diagnostic-address=agent.example.com:50052
+# Simulate overload
+./scripts/overload-collector.sh 10 500      # 10 agents at 500 ms
+./scripts/overload-kafka.sh 30              # pause/resume Kafka for 30 s
 ```
 
 ## License

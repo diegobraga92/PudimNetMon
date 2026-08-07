@@ -178,38 +178,38 @@
 
 ### Full Observability
 
-- [ ] OpenTelemetry: trace propagation from agent to collector to Kafka to storage (W3C trace context in gRPC metadata and Kafka headers)
-- [ ] Prometheus + Grafana:
-  - [ ] Dashboards: agent health overview, per‑agent metrics, Kafka consumer lag, collector resource usage, NTP offset, discovery failures
-  - [ ] Alertmanager rules based on SLO error budgets
-- [ ] Structured logging: all components emit JSON logs with trace ID, agent ID
+- [x] OpenTelemetry: trace propagation from agent to collector to Kafka to storage (W3C trace context in gRPC metadata and Kafka headers)
+- [x] Prometheus + Grafana:
+  - [x] Dashboards: agent health overview, per‑agent metrics, Kafka consumer lag, collector resource usage, NTP offset, discovery failures
+  - [x] Alertmanager rules based on SLO error budgets
+- [x] Structured logging: all components emit JSON logs with trace ID, agent ID
 
 ### Overload & Backpressure Deep‑Dive
 
-- [ ] Simulate collector overload: inject high metric throughput until collector saturates; observe behaviour
-- [ ] Simulate Kafka slowdown: throttle broker or consumer; observe backpressure propagation
-- [ ] Backpressure strategy: collector signals overload via gRPC flow control (stream backpressure) or HTTP 429 to agents; agents reduce send rate or drop low‑priority metrics
-- [ ] Metric dropping policy: define which metrics to drop first when buffers are full (e.g., keep health, drop diagnostics), document in ADR
-- [ ] Agent‑side buffering limits: memory‑mapped ring buffer or bounded in‑memory queue; agent self‑monitors buffer usage and emits metric
-- [ ] Memory growth safeguards: enforce hard limits; if memory exceeds threshold, agent logs, drops oldest metrics, optionally restarts (systemd `MemoryMax` as backstop)
-- [ ] Tests: overload simulation scripts, verify graceful degradation, no data corruption
-- [ ] ADR: `008-backpressure-and-overload-handling.md`
+- [x] Simulate collector overload: inject high metric throughput until collector saturates; observe behaviour
+- [x] Simulate Kafka slowdown: throttle broker or consumer; observe backpressure propagation
+- [x] Backpressure strategy: collector signals overload via gRPC flow control (stream backpressure) or HTTP 429 to agents; agents reduce send rate or drop low‑priority metrics
+- [x] Metric dropping policy: define which metrics to drop first when buffers are full (e.g., keep health, drop diagnostics), document in ADR
+- [x] Agent‑side buffering limits: memory‑mapped ring buffer or bounded in‑memory queue; agent self‑monitors buffer usage and emits metric
+- [x] Memory growth safeguards: enforce hard limits; if memory exceeds threshold, agent logs, drops oldest metrics, optionally restarts (systemd `MemoryMax` as backstop)
+- [x] Tests: overload simulation scripts, verify graceful degradation, no data corruption
+- [x] ADR: `008-backpressure-and-overload-handling.md`
 
 ### Chaos Engineering
 
-- [ ] Chaos experiments:
-  - [ ] Kill collector pod under load; verify agent buffering and reconnection without data loss
-  - [ ] Network partition: isolate an agent from collector using `iptables`; verify agent buffers and flushes on reconnect
-  - [ ] Kafka broker restart; verify consumer recovery and no duplicate writes (idempotency)
-  - [ ] DNS failure: point agent to non‑existent collector; verify graceful degradation and alert
-  - [ ] Inject clock skew on agent; verify detection and normalization
-- [ ] Document results in `docs/chaos-experiments.md` with screenshots
+- [x] Chaos experiments:
+  - [x] Kill collector pod under load; verify agent buffering and reconnection without data loss
+  - [x] Network partition: isolate an agent from collector using `iptables`; verify agent buffers and flushes on reconnect
+  - [x] Kafka broker restart; verify consumer recovery and no duplicate writes (idempotency)
+  - [x] DNS failure: point agent to non‑existent collector; verify graceful degradation and alert
+  - [x] Inject clock skew on agent; verify detection and normalization
+- [x] Document results in `docs/chaos-experiments.md` with screenshots
 
 ### Incident Simulation & Postmortems
 
-- [ ] Simulate a collector overload‑induced OOM; write postmortem `docs/postmortems/001-collector-overload-oom.md`
-- [ ] Simulate an alert storm from NTP drift/clock skew; write postmortem `docs/postmortems/002-clock-skew-alert-storm.md`
-- [ ] Runbooks: agent reconnection, collector scale‑up, Kafka partition rebalancing, clock skew remediation
+- [x] Simulate a collector overload‑induced OOM; write postmortem `docs/postmortems/001-collector-overload-oom.md`
+- [x] Simulate an alert storm from NTP drift/clock skew; write postmortem `docs/postmortems/002-clock-skew-alert-storm.md`
+- [x] Runbooks: agent reconnection, collector scale‑up, Kafka partition rebalancing, clock skew remediation
 
 ---
 
@@ -265,9 +265,9 @@
 - [ ] Mutual TLS between agent and collector, certificate rotation
 - [x] Time synchronization: NTP drift monitoring, clock skew detection, timestamp normalization; ADR
 - [x] Service discovery: DNS, Kubernetes, failover process; ADR
-- [ ] Overload & backpressure: collector overload simulation, Kafka slowdown, backpressure strategy, metric dropping policy, buffering limits, memory safeguards; ADR
-- [ ] Chaos experiments: collector kill, network partition, DNS failure, clock skew injection; documented
-- [ ] Two simulated postmortems written (overload OOM, clock skew alert storm)
+- [x] Overload & backpressure: collector overload simulation, Kafka slowdown, backpressure strategy, metric dropping policy, buffering limits, memory safeguards; ADR
+- [x] Chaos experiments: collector kill, network partition, DNS failure, clock skew injection; documented
+- [x] Two simulated postmortems written (overload OOM, clock skew alert storm)
 - [ ] Multi‑region failover with agent buffering; DR test and RTO/RPO measured
 - [ ] Cost estimate, capacity plan, and cost optimization suggestions
 - [ ] All ADRs (9 total), runbooks, and portfolio artifacts complete

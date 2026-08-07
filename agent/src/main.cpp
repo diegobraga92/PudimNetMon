@@ -1,3 +1,4 @@
+#include <deque>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -19,6 +20,7 @@
 #include "metrics/failover_client.h"
 #include "diagnostic_service.h"
 #include "systemd_notify.h"
+#include "trace_context.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -112,7 +114,8 @@ public:
         LOG_INFO("gRPC channel created to " + endpoint);
     }
 
-    bool SendHeartbeat(int interval_ms, const std::string &version) {
+    bool SendHeartbeat(int interval_ms, const std::string &version,
+                       const std::string &traceparent = "") {
         HeartbeatRequest req;
         req.set_agent_id(s_node_id);
         req.set_timestamp_unix_ms(
@@ -127,6 +130,9 @@ public:
 
         HeartbeatResponse resp;
         ClientContext ctx;
+        if (!traceparent.empty()) {
+            ctx.AddMetadata("traceparent", traceparent);
+        }
 
         // Set a deadline for the RPC
         auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
@@ -178,6 +184,7 @@ int main(int argc, char **argv) {
     std::string diagnostic_port = "50052";
     std::string diagnostic_address;  // e.g. "agent.example.com:50052"; empty = not advertised
     std::string collector_endpoints_input;  // comma-separated failover list
+    int max_buffer_size = 200;  // in-memory batch buffer cap (overload handling)
 
     auto parse_list = [](const std::string &s) {
         std::vector<std::string> out;
@@ -216,13 +223,14 @@ int main(int argc, char **argv) {
         {"diagnostic-port",    required_argument, nullptr, 'z'},
         {"diagnostic-address", required_argument, nullptr, 'a'},
         {"collector-endpoints", required_argument, nullptr, 'b'},
+        {"max-buffer-size",     required_argument, nullptr, 'f'},
         {"help",               no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:b:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:b:f:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
@@ -256,6 +264,7 @@ int main(int argc, char **argv) {
             case 'z': diagnostic_port = optarg; break;
             case 'a': diagnostic_address = optarg; break;
             case 'b': collector_endpoints_input = optarg; break;
+            case 'f': max_buffer_size = std::stoi(optarg); break;
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
@@ -278,6 +287,7 @@ int main(int argc, char **argv) {
                           << "  -z, --diagnostic-port     gRPC diagnostic server port (default: 50052)\n"
                           << "  -a, --diagnostic-address  Advertised diagnostic endpoint, e.g. agent.example.com:50052\n"
                           << "  -b, --collector-endpoints Comma-separated collector endpoints for failover\n"
+                          << "  -f, --max-buffer-size     Max queued metric batches before dropping (default: 200)\n"
                           << "  -h, --help                Show this help\n";
                 return 0;
             default:
@@ -376,8 +386,20 @@ int main(int argc, char **argv) {
 
     // Main loop
     uint64_t seq = 0;
+    uint64_t buffer_drops = 0;
+    int current_interval_ms = interval_ms;
+    bool backpressure = false;
+    // Bounded in-memory buffer (Phase 6 overload handling): oldest dropped
+    // first when full; sends drain the buffer FIFO so failed deliveries are
+    // retried rather than silently lost.
+    std::deque<MetricsBatch> buffer;
+
     while (s_running) {
-        bool hb_ok = clients.first->SendHeartbeat(interval_ms, version);
+        // Phase 6: one W3C traceparent per cycle, shared by the heartbeat and
+        // the metric batch so the collector/consumers can correlate them.
+        std::string traceparent = pudimagent::GenerateTraceParent();
+
+        bool hb_ok = clients.first->SendHeartbeat(interval_ms, version, traceparent);
         if (hb_ok) {
             failover.OnSendSuccess();
         } else if (failover.OnSendFailure()) {
@@ -402,25 +424,53 @@ int main(int argc, char **argv) {
             *batch.add_metrics() = std::move(m);
         }
 
-        LOG_INFO("Collected " + std::to_string(batch.metrics_size()) +
+        // Buffer the batch; drop oldest when over the cap.
+        buffer.push_back(std::move(batch));
+        while (static_cast<int>(buffer.size()) > max_buffer_size) {
+            buffer.pop_front();
+            buffer_drops++;
+            LOG_WARN("Buffer full; dropped oldest metric batch (total drops=" +
+                     std::to_string(buffer_drops) + ")");
+        }
+
+        // Send the oldest buffered batch (FIFO drain).
+        MetricsBatch &to_send = buffer.front();
+        LOG_INFO("Collected " + std::to_string(to_send.metrics_size()) +
                  " metrics, sending to collector");
         bool ok = use_stream_metrics
-                      ? clients.second->StreamMetrics(node_id, batch.metrics())
-                      : clients.second->SendBatch(batch);
+                      ? clients.second->StreamMetrics(node_id,
+                                                      to_send.metrics(),
+                                                      traceparent)
+                      : clients.second->SendBatch(to_send, traceparent);
         if (ok) {
+            buffer.pop_front();
             LOG_INFO("Metrics batch accepted by collector");
             failover.OnSendSuccess();
+            backpressure = clients.second->BackpressureSignalled();
         } else {
-            LOG_WARN("Metrics batch rejected or send failed");
+            LOG_WARN("Metrics batch rejected or send failed; keeping it buffered");
             if (failover.OnSendFailure()) {
                 LOG_WARN("Failing over to " + failover.CurrentEndpoint());
                 clients = reconnect();
             }
         }
 
+        // Adaptive interval: back off (double, cap 10x) while the collector
+        // signals overload; restore once it clears.
+        if (backpressure) {
+            current_interval_ms = std::min(current_interval_ms * 2,
+                                           interval_ms * 10);
+            LOG_WARN("Collector signalled overload; backing off to " +
+                     std::to_string(current_interval_ms) + "ms");
+        } else if (current_interval_ms != interval_ms) {
+            current_interval_ms = interval_ms;
+            LOG_INFO("Backpressure cleared; interval restored to " +
+                     std::to_string(interval_ms) + "ms");
+        }
+
         // Sleep in small increments so we can respond to signals promptly
         int slept = 0;
-        while (slept < interval_ms && s_running) {
+        while (slept < current_interval_ms && s_running) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             slept += 100;
         }

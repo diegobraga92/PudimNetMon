@@ -87,7 +87,8 @@ bool KafkaProducer::Connect(const std::string &brokers, const std::string &topic
     return true;
 }
 
-bool KafkaProducer::Produce(const pudimnetmon::MetricsBatch &batch) {
+bool KafkaProducer::Produce(const pudimnetmon::MetricsBatch &batch,
+                            const std::string &traceparent) {
     if (!m_impl->producer) return false;
 
     std::string payload;
@@ -99,13 +100,23 @@ bool KafkaProducer::Produce(const pudimnetmon::MetricsBatch &batch) {
     // Key by agent_id → consistent partition → per-agent ordering.
     const std::string &key = batch.agent_id();
 
+    // Forward the W3C trace context as a Kafka header so consumers can
+    // correlate the message with the agent/collector trace.
+    RdKafka::Headers *headers = nullptr;
+    if (!traceparent.empty()) {
+        headers = RdKafka::Headers::create();
+        headers->add("traceparent", traceparent);
+    }
+
     RdKafka::ErrorCode rc = m_impl->producer->produce(
         m_topic, RdKafka::Topic::PARTITION_UA, RdKafka::Producer::RK_MSG_COPY,
-        payload.data(), payload.size(), key.data(), key.size(), -1, nullptr);
+        payload.data(), payload.size(), key.data(), key.size(), -1,
+        headers, nullptr);
 
     if (rc != RdKafka::ERR_NO_ERROR) {
         std::cerr << "Kafka produce failed for agent '" << key << "': "
                   << RdKafka::err2str(rc) << "\n";
+        delete headers;
         m_delivery_failures++;
         return false;
     }

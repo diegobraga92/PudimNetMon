@@ -284,6 +284,10 @@ static std::string format_prometheus_metrics() {
         out += "# TYPE pudim_clock_skew_warnings_total counter\n";
         out += "pudim_clock_skew_warnings_total " +
                std::to_string(s_metrics_service->SkewWarnings()) + "\n";
+        out += "# HELP pudim_backpressure_signals_sent_total x-overloaded signals sent to agents\n";
+        out += "# TYPE pudim_backpressure_signals_sent_total counter\n";
+        out += "pudim_backpressure_signals_sent_total " +
+               std::to_string(s_metrics_service->BackpressureSignalsSent()) + "\n";
     }
 
     if (s_storage) {
@@ -328,6 +332,7 @@ int main(int argc, char **argv) {
     std::string kafka_brokers;   // empty → Direct mode (Phases 1-2 behaviour)
     std::string kafka_topic = "network.metrics";
     int64_t skew_threshold_ms = 5000;  // clock-skew warning threshold (Phase 5)
+    int64_t backpressure_threshold_ms = 1000;  // ingest latency that triggers x-overloaded (Phase 6)
 
     auto get_env = [](const char *name, const std::string &def) {
         const char *v = std::getenv(name);
@@ -379,6 +384,8 @@ int main(int argc, char **argv) {
             kafka_topic = v;
         } else if ((v = opt(arg, "--skew-threshold-ms", i)) != "") {
             skew_threshold_ms = std::stoll(v);
+        } else if ((v = opt(arg, "--backpressure-threshold-ms", i)) != "") {
+            backpressure_threshold_ms = std::stoll(v);
         } else if (arg == "--help") {
             std::cout << "Usage: pudim-collector [options]\n"
                       << "  --grpc-addr         gRPC listen address (default: 0.0.0.0:50051)\n"
@@ -393,6 +400,7 @@ int main(int argc, char **argv) {
                       << "                      Kafka and consumers own storage + alerting (default: empty)\n"
                       << "  --kafka-topic       Kafka topic (default: network.metrics)\n"
                       << "  --skew-threshold-ms Clock-skew warning threshold (default: 5000)\n"
+                      << "  --backpressure-threshold-ms Ingest latency (ms) that triggers x-overloaded (default: 1000)\n"
                       << "  --help              Show this help\n";
             return 0;
         }
@@ -461,7 +469,8 @@ int main(int argc, char **argv) {
                                                              s_alert_manager,
                                                              s_kafka_producer,
                                                              storage_mode,
-                                                             skew_threshold_ms);
+                                                             skew_threshold_ms,
+                                                             backpressure_threshold_ms);
 
     // Start gRPC server
     AgentServiceImpl agent_service;

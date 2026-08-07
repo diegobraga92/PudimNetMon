@@ -1,0 +1,96 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["pudimnetmon"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "PudimNetMon - Network Monitoring",
+  "uid": "pudimnetmon",
+  "version": 1,
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Active Agents",
+      "datasource": { "type": "prometheus", "uid": "prom-collector" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "pudim_agents_active" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Heartbeats / s",
+      "datasource": { "type": "prometheus", "uid": "prom-collector" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "rate(pudim_heartbeats_received_total[1m])" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Metrics / s",
+      "datasource": { "type": "prometheus", "uid": "prom-collector" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "rate(pudim_metrics_received_total[1m])" }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Firing Alerts",
+      "datasource": { "type": "prometheus", "uid": "prom-alert" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "pudim_alerts_firing" }]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Kafka Consumer Lag",
+      "datasource": { "type": "prometheus", "uid": "prom-storage" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "pudim_kafka_consumer_lag" }]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Metrics Received",
+      "datasource": { "type": "prometheus", "uid": "prom-collector" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "refId": "A", "expr": "rate(pudim_metrics_received_total[1m])", "legendFormat": "received" },
+                  { "refId": "B", "expr": "rate(pudim_metrics_rejected_total[1m])", "legendFormat": "rejected" }]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Storage Write Latency (ms/s)",
+      "datasource": { "type": "prometheus", "uid": "prom-collector" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "refId": "A", "expr": "rate(pudim_storage_insert_latency_total_ms[1m])", "legendFormat": "insert-latency" }]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Kafka Consumer Lag",
+      "datasource": { "type": "prometheus", "uid": "prom-storage" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "refId": "A", "expr": "pudim_kafka_consumer_lag", "legendFormat": "lag" }]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Operational Signals",
+      "datasource": { "type": "prometheus", "uid": "prom-collector" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "refId": "A", "expr": "rate(pudim_clock_skew_warnings_total[1m])", "legendFormat": "skew-warnings" },
+                  { "refId": "B", "expr": "rate(pudim_backpressure_signals_sent_total[1m])", "legendFormat": "backpressure" }]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Storage Batches Processed (consumer)",
+      "datasource": { "type": "prometheus", "uid": "prom-storage" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "refId": "A", "expr": "rate(pudim_kafka_batches_processed_total[1m])", "legendFormat": "batches" }]
+    }
+  ]
+}

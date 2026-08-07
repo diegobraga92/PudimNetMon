@@ -1,0 +1,26 @@
+# Grafana provisioning: Prometheus datasource pointing at the PudimNetMon
+# metrics endpoints (collector, storage consumer, alert consumer).
+apiVersion: 1
+
+datasources:
+  - name: PudimNetMon
+    uid: prom-collector
+    type: prometheus
+    access: proxy
+    url: http://collector:8080
+    isDefault: true
+    editable: false
+
+  - name: Storage Consumer
+    uid: prom-storage
+    type: prometheus
+    access: proxy
+    url: http://consumer-storage:9091
+    editable: false
+
+  - name: Alert Consumer
+    uid: prom-alert
+    type: prometheus
+    access: proxy
+    url: http://consumer-alert:9092
+    editable: false

@@ -18,12 +18,24 @@ MetricsClient::MetricsClient(const std::string &endpoint)
     : m_stub(MetricsService::NewStub(
           grpc::CreateChannel(endpoint, grpc::InsecureChannelCredentials()))) {}
 
-bool MetricsClient::SendBatch(const MetricsBatch &batch) {
+bool MetricsClient::SendBatch(const MetricsBatch &batch,
+                              const std::string &traceparent) {
     MetricsResponse resp;
     ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+    if (!traceparent.empty()) {
+        ctx.AddMetadata("traceparent", traceparent);
+    }
 
     Status status = m_stub->SendMetrics(&ctx, batch, &resp);
+    m_backpressure = false;
+    if (status.ok()) {
+        for (const auto &md : ctx.GetServerTrailingMetadata()) {
+            if (md.first == "x-overloaded" && md.second == "true") {
+                m_backpressure = true;
+            }
+        }
+    }
 
     if (!status.ok()) {
         std::cerr << "SendMetrics failed: " << status.error_message()
@@ -35,11 +47,15 @@ bool MetricsClient::SendBatch(const MetricsBatch &batch) {
 
 bool MetricsClient::StreamMetrics(
     const std::string &agent_id,
-    const google::protobuf::RepeatedPtrField<pudimnetmon::Metric> &metrics) {
+    const google::protobuf::RepeatedPtrField<pudimnetmon::Metric> &metrics,
+    const std::string &traceparent) {
     MetricsResponse resp;
     ClientContext ctx;
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
     ctx.AddMetadata("x-agent-id", agent_id);
+    if (!traceparent.empty()) {
+        ctx.AddMetadata("traceparent", traceparent);
+    }
 
     auto writer = m_stub->StreamMetrics(&ctx, &resp);
     for (const auto &m : metrics) {
@@ -51,6 +67,14 @@ bool MetricsClient::StreamMetrics(
     writer->WritesDone();
 
     Status status = writer->Finish();
+    m_backpressure = false;
+    if (status.ok()) {
+        for (const auto &md : ctx.GetServerTrailingMetadata()) {
+            if (md.first == "x-overloaded" && md.second == "true") {
+                m_backpressure = true;
+            }
+        }
+    }
     if (!status.ok()) {
         std::cerr << "StreamMetrics failed: " << status.error_message()
                   << " (code=" << status.error_code() << ")\n";

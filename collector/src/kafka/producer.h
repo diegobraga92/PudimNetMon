@@ -25,7 +25,9 @@ public:
                  std::string &error);
 
     // Enqueues a batch for delivery. Returns true if accepted into the queue.
-    bool Produce(const pudimnetmon::MetricsBatch &batch);
+    // `traceparent` (optional W3C header) is attached as a Kafka message header.
+    bool Produce(const pudimnetmon::MetricsBatch &batch,
+                 const std::string &traceparent = "");
 
     // Blocks until queued messages are flushed or timeout_ms elapses.
     void Flush(int timeout_ms = 10000);

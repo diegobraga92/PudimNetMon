@@ -1,0 +1,52 @@
+# Prometheus alerting rules based on PudimNetMon SLOs (docs/slo.md).
+# Intended for a Prometheus server scraping the collector's /metrics endpoint,
+# paired with Alertmanager. Example burn-rate rules (100x for immediate page,
+# 5x for warning).
+
+groups:
+  - name: pudimnetmon-slo
+    rules:
+      - alert: HeartbeatDeliveryBelowSLO
+        # Error budget burn: ~0.1% failure per 5m window == 100x burn rate.
+        expr: |
+          (1 - (increase(pudim_heartbeats_received_total[5m])
+                / max(60, increase(pudim_heartbeats_received_total[5m]) + 1)))
+          > 0.001
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Heartbeat delivery below 99.9% SLO (5m burn)"
+          runbook: "docs/runbooks/incident-response.md#r1-agent-reconnection"
+
+      - alert: StorageWriteLatencyHigh
+        expr: |
+          rate(pudim_storage_insert_latency_total_ms[5m])
+          > (rate(pudim_storage_metrics_written_total[5m]) * 50 + 100)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Storage insert latency above budget"
+          runbook: "docs/runbooks/incident-response.md#r2-collector-scale-up"
+
+      - alert: ClockSkewWarning
+        expr: increase(pudim_clock_skew_warnings_total[5m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Multiple clock-skew warnings (check NTP)"
+          runbook: "docs/runbooks/incident-response.md#r4-clock-skew-remediation"
+
+      - alert: KafkaConsumerLagGrowing
+        expr: |
+          pudim_kafka_consumer_lag > 1000
+          and
+          (pudim_kafka_consumer_lag - pudim_kafka_consumer_lag offset 5m) > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer lag growing"
+          runbook: "docs/runbooks/incident-response.md#r3-kafka-partition-rebalancing"
