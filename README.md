@@ -91,16 +91,41 @@ npm run dev
 └── docker-compose.yml     # Local development environment
 ```
 
-## Current Phase: Phase 0 — Skeleton
+## Current Phase: Phase 2 — Alerting & Notification
 
-- ✅ Protobuf API contracts (`heartbeat.proto`)
-- ✅ C++ agent: gRPC client, JSON logging, CLI flags, systemd unit
-- ✅ C++ collector: gRPC server, in-memory agent registry, health/metrics endpoints
-- ✅ React dashboard: collector health status, agent list with alive/dead status
-- ✅ Docker Compose: collector + agent + dashboard
-- ✅ GitHub Actions CI: C++ build, TypeScript lint/build
-- ✅ ADR 001: C++ and gRPC rationale
-- ✅ SLO draft: heartbeat delivery success rate
+**Phase 0 (Skeleton) ✅ complete — Phase 1 (Core Metrics & Time-Series) ✅ complete — Phase 2 (Alerting) ✅ complete**
+
+- ✅ Protobuf API contracts (`heartbeat.proto`, `metrics.proto`)
+- ✅ C++ agent: gRPC client (unary + streaming), JSON logging, CLI flags, systemd unit
+- ✅ C++ collector: gRPC server, in-memory agent registry, health/metrics endpoints, TimescaleDB storage
+- ✅ Network probes: DNS, TCP connect, TLS handshake, HTTP, ICMP (packet loss + RTT + jitter)
+- ✅ Alerting engine: JSON rules, state machine (firing/repeat/resolved), Log + Webhook notifiers
+- ✅ Collector endpoints: `/health`, `/agents`, `/metrics`, `/alerts`, `/alert-history`, `/alert-rules`, `/api/metrics`
+- ✅ React dashboard: health, agent list, time-series graphs, active alerts pane, alert history
+- ✅ Docker Compose: collector + agent + dashboard + TimescaleDB
+- ✅ GitHub Actions CI: C++ build/test (Debug), TypeScript lint/build
+- ✅ ADRs 001–003, SLO draft, high-latency runbook
+
+### Alerting
+
+Alert rules live in `collector/config/alert_rules.json` (JSON, loaded at startup via
+`--alert-rules-path`). Each rule declares a check type, metric field, operator, threshold,
+repeat interval and severity:
+
+```json
+{
+  "webhook_url": "http://localhost:9000/hooks/pudim",
+  "rules": [
+    { "id": "high-tcp-latency", "check_type": "tcp_connect", "metric": "latency_ms",
+      "op": ">", "threshold": 500, "repeat_interval_sec": 300, "severity": "warning" },
+    { "id": "dns-failure", "check_type": "dns_resolution", "on_failure": true,
+      "severity": "critical" }
+  ]
+}
+```
+
+Alerts appear in the collector's structured JSON logs, are POSTed to the webhook (if set),
+and are visible in the dashboard's **Active Alerts** and **Alert History** panes.
 
 ## License
 

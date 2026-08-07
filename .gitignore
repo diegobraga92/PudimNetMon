@@ -1,13 +1,37 @@
 # Build artifacts (C++ agent & collector)
 agent/build/
 collector/build/
+build-agent/
+build-collector/
+build-collector-debug/
 
-# Dependencies fetched by CMake FetchContent
-collector/build/_deps/
+# Dependencies fetched by CMake FetchContent (inside ignored build dirs,
+# listed here for clarity)
+**/_deps/
+
+# CMake generated artifacts (incl. accidental in-source builds)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+CMakeUserPresets.json
+
+# CMake generated exports
+compile_commands.json
+
+# Core dumps (from crash debugging)
+core
+core.*
 
 # Node.js / dashboard
-dashboard/node_modules/
+node_modules/
 dashboard/dist/
+*.tsbuildinfo
+.vite/
+
+# Python (used for local dev/mock scripts)
+__pycache__/
+*.py[cod]
 
 # IDE / editor
 .vscode/
@@ -25,4 +49,5 @@ Thumbs.db
 
 # Environment / secrets
 .env
-.env.local
+.env.*
+!.env.example

@@ -2,64 +2,82 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
-  agent-build:
-    name: Build Agent (C++)
+  cpp-agent:
+    name: C++ Agent (build)
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: agent
     steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake protobuf-compiler libprotobuf-dev \
-            libgrpc++-dev libgrpc-dev protobuf-compiler-grpc build-essential
-      - name: Configure CMake
-        run: cmake -B build -S .
-      - name: Build
-        run: cmake --build build -j$(nproc)
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            protobuf-compiler libprotobuf-dev \
+            protobuf-compiler-grpc libgrpc++-dev libgrpc-dev \
+            libssl-dev libcurl4-openssl-dev libpq-dev
 
-  collector-build:
-    name: Build Collector (C++)
+      - name: Configure
+        run: cmake -S agent -B build/agent -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build/agent -j$(nproc)
+
+      - name: Test (CTest)
+        working-directory: build/agent
+        run: ctest --output-on-failure
+
+  cpp-collector:
+    name: C++ Collector (build)
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: collector
     steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake protobuf-compiler libprotobuf-dev \
-            libgrpc++-dev libgrpc-dev protobuf-compiler-grpc build-essential
-      - name: Configure CMake
-        run: cmake -B build -S .
-      - name: Build
-        run: cmake --build build -j$(nproc)
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            protobuf-compiler libprotobuf-dev \
+            protobuf-compiler-grpc libgrpc++-dev libgrpc-dev \
+            libssl-dev libcurl4-openssl-dev libpq-dev
 
-  dashboard-lint-build:
-    name: Lint & Build Dashboard
+      - name: Configure
+        run: cmake -S collector -B build/collector -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build/collector -j$(nproc)
+
+      - name: Test (CTest)
+        working-directory: build/collector
+        run: ctest --output-on-failure
+
+  dashboard:
+    name: Dashboard (lint + build)
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
+          node-version: 20
+          cache: npm
           cache-dependency-path: dashboard/package-lock.json
+
       - name: Install dependencies
         run: npm ci
-      - name: Lint (TypeScript check)
+
+      - name: Lint
         run: npm run lint
+
       - name: Build
         run: npm run build

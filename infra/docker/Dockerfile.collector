@@ -3,7 +3,8 @@ FROM ubuntu:24.04 AS builder
 RUN apt-get update && apt-get install -y -qq \
     cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
     libgrpc-dev protobuf-compiler-grpc build-essential \
-    pkg-config git ca-certificates
+    pkg-config git ca-certificates \
+    libpq-dev
 
 WORKDIR /build
 COPY collector/ ./collector/
@@ -16,12 +17,14 @@ RUN cmake -S collector -B build && \
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y -qq \
-    libprotobuf32t64 libgrpc++1.51t64 && \
+    libprotobuf32t64 libgrpc++1.51t64 \
+    libpq5 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/pudim-collector /usr/local/bin/pudim-collector
+COPY --from=builder /build/collector/config/alert_rules.json /etc/pudim/alert_rules.json
 
 EXPOSE 50051 8080
 
 ENTRYPOINT ["/usr/local/bin/pudim-collector"]
-CMD ["--grpc-addr=0.0.0.0:50051", "--http-addr=0.0.0.0:8080"]
+CMD ["--grpc-addr=0.0.0.0:50051", "--http-addr=0.0.0.0:8080", "--alert-rules-path=/etc/pudim/alert_rules.json"]

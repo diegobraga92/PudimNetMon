@@ -3,7 +3,8 @@ FROM ubuntu:24.04 AS builder
 RUN apt-get update && apt-get install -y -qq \
     cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
     libgrpc-dev protobuf-compiler-grpc build-essential \
-    pkg-config git ca-certificates
+    pkg-config git ca-certificates \
+    libcurl4-openssl-dev libssl-dev
 
 WORKDIR /build
 COPY agent/ ./agent/
@@ -16,7 +17,8 @@ RUN cmake -S agent -B build && \
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y -qq \
-    libprotobuf32t64 libgrpc++1.51t64 && \
+    libprotobuf32t64 libgrpc++1.51t64 \
+    libcurl4t64 libssl3t64 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/pudim-agent /usr/local/bin/pudim-agent

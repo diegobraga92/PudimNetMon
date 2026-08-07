@@ -1,0 +1,43 @@
+{
+  "webhook_url": "",
+  "rules": [
+    {
+      "id": "high-tcp-latency",
+      "name": "High TCP Connect Latency",
+      "check_type": "tcp_connect",
+      "metric": "latency_ms",
+      "op": ">",
+      "threshold": 500,
+      "repeat_interval_sec": 300,
+      "severity": "warning"
+    },
+    {
+      "id": "high-http-latency",
+      "name": "High HTTP Response Time",
+      "check_type": "http_request",
+      "metric": "latency_ms",
+      "op": ">",
+      "threshold": 1000,
+      "repeat_interval_sec": 300,
+      "severity": "warning"
+    },
+    {
+      "id": "high-packet-loss",
+      "name": "High Packet Loss",
+      "check_type": "icmp_ping",
+      "metric": "packet_loss_pct",
+      "op": ">",
+      "threshold": 5,
+      "repeat_interval_sec": 300,
+      "severity": "critical"
+    },
+    {
+      "id": "dns-failure",
+      "name": "DNS Resolution Failure",
+      "check_type": "dns_resolution",
+      "on_failure": true,
+      "repeat_interval_sec": 120,
+      "severity": "critical"
+    }
+  ]
+}

@@ -7,12 +7,17 @@
 #include <thread>
 #include <csignal>
 #include <atomic>
+#include <cstdlib>
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/server_builder.h>
 #include <httplib.h>
 
 #include "heartbeat.grpc.pb.h"
+#include "metrics.grpc.pb.h"
+#include "metrics_service.h"
+#include "storage/timescale_storage.h"
+#include "alerting/alert_manager.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -169,6 +174,11 @@ private:
 
 static AgentRegistry s_registry;
 
+// Storage + metrics service (initialized in main)
+static std::shared_ptr<pudimcollector::TimescaleStorage> s_storage;
+static std::shared_ptr<pudimcollector::MetricsServiceImpl> s_metrics_service;
+static std::shared_ptr<pudimcollector::alerting::AlertManager> s_alert_manager;
+
 // --------------------------------------------
 // gRPC service implementation
 // --------------------------------------------
@@ -214,6 +224,61 @@ static std::string format_prometheus_metrics() {
     out += "# HELP pudim_agents_registered Total registered agents\n";
     out += "# TYPE pudim_agents_registered gauge\n";
     out += "pudim_agents_registered " + std::to_string(total_count) + "\n";
+
+    if (s_metrics_service) {
+        out += "# HELP pudim_metrics_received_total Total metrics received\n";
+        out += "# TYPE pudim_metrics_received_total counter\n";
+        out += "pudim_metrics_received_total " +
+               std::to_string(s_metrics_service->ReceivedMetrics()) + "\n";
+        out += "# HELP pudim_metrics_batches_received_total Total metric batches received\n";
+        out += "# TYPE pudim_metrics_batches_received_total counter\n";
+        out += "pudim_metrics_batches_received_total " +
+               std::to_string(s_metrics_service->BatchesReceived()) + "\n";
+        out += "# HELP pudim_metrics_rejected_total Total metrics rejected\n";
+        out += "# TYPE pudim_metrics_rejected_total counter\n";
+        out += "pudim_metrics_rejected_total " +
+               std::to_string(s_metrics_service->RejectedMetrics()) + "\n";
+    }
+
+    if (s_alert_manager) {
+        out += "# HELP pudim_alerts_firing Currently firing alerts\n";
+        out += "# TYPE pudim_alerts_firing gauge\n";
+        out += "pudim_alerts_firing " +
+               std::to_string(s_alert_manager->ActiveAlertCount()) + "\n";
+        out += "# HELP pudim_alert_notifications_total Total alert notifications sent\n";
+        out += "# TYPE pudim_alert_notifications_total counter\n";
+        out += "pudim_alert_notifications_total " +
+               std::to_string(s_alert_manager->TotalAlertsFired()) + "\n";
+        out += "# HELP pudim_alert_rules_loaded Number of loaded alert rules\n";
+        out += "# TYPE pudim_alert_rules_loaded gauge\n";
+        out += "pudim_alert_rules_loaded " +
+               std::to_string(s_alert_manager->RuleCount()) + "\n";
+    }
+
+    if (s_storage) {
+        auto stats = s_storage->GetStats();
+        out += "# HELP pudim_storage_metrics_written_total Metrics written to storage\n";
+        out += "# TYPE pudim_storage_metrics_written_total counter\n";
+        out += "pudim_storage_metrics_written_total " +
+               std::to_string(stats.metrics_written) + "\n";
+        out += "# HELP pudim_storage_batches_written_total Batches written to storage\n";
+        out += "# TYPE pudim_storage_batches_written_total counter\n";
+        out += "pudim_storage_batches_written_total " +
+               std::to_string(stats.batches_written) + "\n";
+        out += "# HELP pudim_storage_errors_total Storage errors\n";
+        out += "# TYPE pudim_storage_errors_total counter\n";
+        out += "pudim_storage_errors_total " +
+               std::to_string(stats.errors) + "\n";
+        out += "# HELP pudim_storage_insert_latency_total_ms Cumulative storage insert latency\n";
+        out += "# TYPE pudim_storage_insert_latency_total_ms counter\n";
+        out += "pudim_storage_insert_latency_total_ms " +
+               std::to_string(stats.insert_latency_total_ms) + "\n";
+        out += "# HELP pudim_storage_healthy Storage health (1=ok, 0=unhealthy)\n";
+        out += "# TYPE pudim_storage_healthy gauge\n";
+        out += "pudim_storage_healthy " +
+               std::string(s_storage->IsHealthy() ? "1" : "0") + "\n";
+    }
+
     return out;
 }
 
@@ -223,19 +288,68 @@ static std::string format_prometheus_metrics() {
 int main(int argc, char **argv) {
     std::string grpc_addr = "0.0.0.0:50051";
     std::string http_addr = "0.0.0.0:8080";
+    std::string db_host = "localhost";
+    int db_port = 5432;
+    std::string db_name = "pudimnetmon";
+    std::string db_user = "pudim";
+    std::string db_password = "pudim";
+    std::string alert_rules_path;
 
-    // Simple CLI parsing
+    auto get_env = [](const char *name, const std::string &def) {
+        const char *v = std::getenv(name);
+        return v ? std::string(v) : def;
+    };
+
+    // Env overrides (Docker Compose friendly)
+    db_host = get_env("PUDIM_DB_HOST", db_host);
+    db_port = std::stoi(get_env("PUDIM_DB_PORT", std::to_string(db_port)));
+    db_name = get_env("PUDIM_DB_NAME", db_name);
+    db_user = get_env("PUDIM_DB_USER", db_user);
+    db_password = get_env("PUDIM_DB_PASSWORD", db_password);
+
+    // Simple CLI parsing. Supports both "--flag value" and "--flag=value".
+    auto opt = [&](const std::string &arg, const std::string &flag,
+                   int &i) -> std::string {
+        const std::string prefix = flag + "=";
+        if (arg.compare(0, prefix.size(), prefix) == 0) {
+            return arg.substr(prefix.size());
+        }
+        if (arg == flag && i + 1 < argc) {
+            return argv[++i];
+        }
+        return "";
+    };
+
     for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg == "--grpc-addr" && i + 1 < argc) {
-            grpc_addr = argv[++i];
-        } else if (arg == "--http-addr" && i + 1 < argc) {
-            http_addr = argv[++i];
+        const std::string arg = argv[i];
+        std::string v;
+        if ((v = opt(arg, "--grpc-addr", i)) != "") {
+            grpc_addr = v;
+        } else if ((v = opt(arg, "--http-addr", i)) != "") {
+            http_addr = v;
+        } else if ((v = opt(arg, "--db-host", i)) != "") {
+            db_host = v;
+        } else if ((v = opt(arg, "--db-port", i)) != "") {
+            db_port = std::stoi(v);
+        } else if ((v = opt(arg, "--db-name", i)) != "") {
+            db_name = v;
+        } else if ((v = opt(arg, "--db-user", i)) != "") {
+            db_user = v;
+        } else if ((v = opt(arg, "--db-password", i)) != "") {
+            db_password = v;
+        } else if ((v = opt(arg, "--alert-rules-path", i)) != "") {
+            alert_rules_path = v;
         } else if (arg == "--help") {
             std::cout << "Usage: pudim-collector [options]\n"
-                      << "  --grpc-addr  gRPC listen address (default: 0.0.0.0:50051)\n"
-                      << "  --http-addr  HTTP listen address (default: 0.0.0.0:8080)\n"
-                      << "  --help       Show this help\n";
+                      << "  --grpc-addr         gRPC listen address (default: 0.0.0.0:50051)\n"
+                      << "  --http-addr         HTTP listen address (default: 0.0.0.0:8080)\n"
+                      << "  --db-host           PostgreSQL/TimescaleDB host (default: localhost)\n"
+                      << "  --db-port           PostgreSQL/TimescaleDB port (default: 5432)\n"
+                      << "  --db-name           Database name (default: pudimnetmon)\n"
+                      << "  --db-user           Database user (default: pudim)\n"
+                      << "  --db-password       Database password (default: pudim)\n"
+                      << "  --alert-rules-path  JSON file with alert rules (default: none; disables alerting)\n"
+                      << "  --help              Show this help\n";
             return 0;
         }
     }
@@ -243,16 +357,55 @@ int main(int argc, char **argv) {
     logger::emit("info", "Collector starting up");
     logger::emit("info", "gRPC endpoint: " + grpc_addr);
     logger::emit("info", "HTTP endpoint: " + http_addr);
+    logger::emit("info", "DB endpoint: " + db_host + ":" + std::to_string(db_port) +
+                 "/" + db_name);
 
     // Setup signal handlers
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
+
+    // Initialize storage
+    pudimcollector::StorageConfig storage_cfg;
+    storage_cfg.host = db_host;
+    storage_cfg.port = db_port;
+    storage_cfg.dbname = db_name;
+    storage_cfg.user = db_user;
+    storage_cfg.password = db_password;
+
+    s_storage = std::make_shared<pudimcollector::TimescaleStorage>(storage_cfg);
+    if (!s_storage->Connect()) {
+        logger::emit("warn", "Storage connection failed; collector will run "
+                     "without persistent storage (metrics will be rejected)");
+    } else {
+        logger::emit("info", "Storage connected (TimescaleDB)");
+    }
+
+    // Initialize alert manager (optional; disabled when no rules file given)
+    s_alert_manager = std::make_shared<pudimcollector::alerting::AlertManager>();
+    if (!alert_rules_path.empty()) {
+        std::string err;
+        if (s_alert_manager->LoadRulesFromFile(alert_rules_path, err)) {
+            logger::emit("info",
+                         "Loaded " + std::to_string(s_alert_manager->RuleCount()) +
+                         " alert rules from " + alert_rules_path);
+        } else {
+            logger::emit("warn", "Failed to load alert rules: " + err);
+        }
+    } else {
+        logger::emit("info",
+                     "No alert rules configured (--alert-rules-path unset); alerting disabled");
+    }
+
+    s_metrics_service =
+        std::make_shared<pudimcollector::MetricsServiceImpl>(s_storage,
+                                                             s_alert_manager);
 
     // Start gRPC server
     AgentServiceImpl agent_service;
     ServerBuilder builder;
     builder.AddListeningPort(grpc_addr, grpc::InsecureServerCredentials());
     builder.RegisterService(&agent_service);
+    builder.RegisterService(s_metrics_service.get());
     builder.SetMaxReceiveMessageSize(4 * 1024 * 1024); // 4MB
 
     std::unique_ptr<Server> grpc_server = builder.BuildAndStart();
@@ -266,7 +419,12 @@ int main(int argc, char **argv) {
     httplib::Server http_server;
 
     http_server.Get("/health", [](const httplib::Request &, httplib::Response &resp) {
-        resp.set_content(R"({"status":"ok","component":"collector"})", "application/json");
+        bool db_ok = s_storage ? s_storage->IsHealthy() : false;
+        std::string status = db_ok ? "ok" : "degraded";
+        resp.set_content("{\"status\":\"" + status +
+                         "\",\"component\":\"collector\",\"storage\":" +
+                         std::string(db_ok ? "true" : "false") + "}",
+                         "application/json");
     });
 
     http_server.Get("/agents", [](const httplib::Request &, httplib::Response &resp) {
@@ -275,6 +433,67 @@ int main(int argc, char **argv) {
 
     http_server.Get("/metrics", [](const httplib::Request &, httplib::Response &resp) {
         resp.set_content(format_prometheus_metrics(), "text/plain; version=0.0.4");
+    });
+
+    // Dashboard JSON metrics endpoint: /api/metrics?agent_id=X&check_type=Y&window_seconds=300
+    http_server.Get("/api/metrics", [](const httplib::Request &req, httplib::Response &resp) {
+        if (!s_storage) {
+            resp.status = 503;
+            resp.set_content("{\"error\":\"storage not available\"}", "application/json");
+            return;
+        }
+
+        std::string agent_id;
+        std::string check_type;
+        int64_t window_seconds = 300;
+
+        if (req.has_param("agent_id")) agent_id = req.get_param_value("agent_id");
+        if (req.has_param("check_type")) check_type = req.get_param_value("check_type");
+        if (req.has_param("window_seconds")) {
+            try {
+                window_seconds = std::stoll(req.get_param_value("window_seconds"));
+            } catch (...) {
+                window_seconds = 300;
+            }
+        }
+
+        resp.set_content(s_storage->QueryMetricsJson(agent_id, check_type, window_seconds),
+                         "application/json");
+    });
+
+    // Alerting endpoints for the dashboard.
+    http_server.Get("/alerts", [](const httplib::Request &, httplib::Response &resp) {
+        if (!s_alert_manager || !s_alert_manager->Enabled()) {
+            resp.status = 200;
+            resp.set_content("[]", "application/json");
+            return;
+        }
+        resp.set_content(s_alert_manager->ActiveAlertsJson(), "application/json");
+    });
+
+    http_server.Get("/alert-history", [](const httplib::Request &req, httplib::Response &resp) {
+        if (!s_alert_manager) {
+            resp.set_content("[]", "application/json");
+            return;
+        }
+        size_t max_events = 200;
+        if (req.has_param("limit")) {
+            try {
+                max_events = static_cast<size_t>(std::stoll(req.get_param_value("limit")));
+            } catch (...) {
+                max_events = 200;
+            }
+        }
+        resp.set_content(s_alert_manager->AlertHistoryJson(max_events),
+                         "application/json");
+    });
+
+    http_server.Get("/alert-rules", [](const httplib::Request &, httplib::Response &resp) {
+        if (!s_alert_manager) {
+            resp.set_content("{\"rules\":[]}", "application/json");
+            return;
+        }
+        resp.set_content(s_alert_manager->RulesJson(), "application/json");
     });
 
     // Run HTTP server in a separate thread

@@ -1,6 +1,23 @@
 version: "3.8"
 
 services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_DB: pudimnetmon
+      POSTGRES_USER: pudim
+      POSTGRES_PASSWORD: pudim
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pudim -d pudimnetmon"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   collector:
     build:
       context: .
@@ -8,6 +25,15 @@ services:
     ports:
       - "50051:50051"  # gRPC
       - "8080:8080"    # HTTP health/metrics
+    environment:
+      PUDIM_DB_HOST: timescaledb
+      PUDIM_DB_PORT: "5432"
+      PUDIM_DB_NAME: pudimnetmon
+      PUDIM_DB_USER: pudim
+      PUDIM_DB_PASSWORD: pudim
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     restart: unless-stopped
 
   agent:
@@ -17,7 +43,15 @@ services:
     command: >
       --collector-endpoint=collector:50051
       --node-id=agent-docker-001
-      --interval=5000
+      --interval=10000
+      --dns-targets=example.com
+      --tcp-targets=example.com:443
+      --tls-targets=example.com:443
+      --http-targets=https://example.com
+      --ping-targets=1.1.1.1
+      --ping-count=4
+    cap_add:
+      - NET_RAW
     depends_on:
       - collector
     restart: unless-stopped
@@ -31,3 +65,6 @@ services:
     depends_on:
       - collector
     restart: unless-stopped
+
+volumes:
+  timescaledb-data:

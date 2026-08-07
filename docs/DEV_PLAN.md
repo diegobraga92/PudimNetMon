@@ -64,25 +64,25 @@
 
 **Goal:** Agents measure real network metrics; collector stores them; dashboard displays time‑series.
 
-- [ ] Agent metrics:
-  - [ ] DNS resolution time for a target domain
-  - [ ] TCP connect latency to a target host:port
-  - [ ] TLS handshake time for HTTPS endpoints
-  - [ ] HTTP response time, status code (HTTP/2 and HTTP/1.1)
-  - [ ] Packet loss (ICMP echo, raw socket fallback) and RTT
-  - [ ] Jitter calculation (standard deviation of successive RTTs)
-  - [ ] All metrics sent via gRPC streaming (or unary) to collector
-- [ ] Collector:
-  - [ ] gRPC service to receive metrics, parse, validate
-  - [ ] Storage backend: PostgreSQL with TimescaleDB extension for time‑series (or InfluxDB – document choice)
-  - [ ] Write path: batch inserts, handle high throughput
-- [ ] Dashboard:
-  - [ ] Agent list with last seen, health status (green/yellow/red)
-  - [ ] Time‑series graphs for latency, packet loss, DNS duration per agent
-  - [ ] Auto‑refresh via polling or WebSocket
-- [ ] Observability: collector emits metrics on ingestion rate, errors, storage latency; Grafana dashboard for pipeline health
-- [ ] Testing: unit tests for agent metrics collection (mock sockets), integration tests for collector storage
-- [ ] ADR: `002-time-series-storage-choice.md`
+- [x] Agent metrics:
+  - [x] DNS resolution time for a target domain
+  - [x] TCP connect latency to a target host:port
+  - [x] TLS handshake time for HTTPS endpoints
+  - [x] HTTP response time, status code (HTTP/2 and HTTP/1.1)
+  - [x] Packet loss (ICMP echo, raw socket fallback) and RTT
+  - [x] Jitter calculation (standard deviation of successive RTTs)
+  - [x] All metrics sent via gRPC streaming (or unary) to collector
+- [x] Collector:
+  - [x] gRPC service to receive metrics, parse, validate
+  - [x] Storage backend: PostgreSQL with TimescaleDB extension for time‑series (or InfluxDB – document choice)
+  - [x] Write path: batch inserts, handle high throughput
+- [x] Dashboard:
+  - [x] Agent list with last seen, health status (green/yellow/red)
+  - [x] Time‑series graphs for latency, packet loss, DNS duration per agent
+  - [x] Auto‑refresh via polling or WebSocket
+- [x] Observability: collector emits metrics on ingestion rate, errors, storage latency; Grafana dashboard for pipeline health
+- [x] Testing: unit tests for agent metrics collection (mock sockets), integration tests for collector storage
+- [x] ADR: `002-time-series-storage-choice.md`
 
 ---
 
@@ -90,15 +90,15 @@
 
 **Goal:** Detect anomalies and notify operators (or simulated on‑call).
 
-- [ ] Alert rules: configure thresholds (e.g., latency > 500ms, packet loss > 5%, DNS timeout) per agent or per check
-- [ ] Alert evaluation: collector evaluates incoming metrics against rules
-- [ ] Alert state machine: firing, resolved, repeat interval
-- [ ] Notification channels:
-  - [ ] Log alert to file/stdout (basic)
-  - [ ] Webhook to a mock incident service (or Slack/Discord for demo)
-  - [ ] Dashboard: alert timeline, active alerts pane
-- [ ] Runbook draft: how to respond to high latency alert
-- [ ] ADR: `003-alerting-design.md`
+- [x] Alert rules: configure thresholds (e.g., latency > 500ms, packet loss > 5%, DNS timeout) per agent or per check
+- [x] Alert evaluation: collector evaluates incoming metrics against rules
+- [x] Alert state machine: firing, resolved, repeat interval
+- [x] Notification channels:
+  - [x] Log alert to file/stdout (basic)
+  - [x] Webhook to a mock incident service (or Slack/Discord for demo)
+  - [x] Dashboard: alert timeline, active alerts pane
+- [x] Runbook draft: how to respond to high latency alert
+- [x] ADR: `003-alerting-design.md`
 
 ---
 

@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package pudimnetmon;
+
+option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
+
+// Metrics service: agent reports network measurement results to collector.
+service MetricsService {
+  // Unary send of a batch of metrics (simpler than streaming for Phase 1;
+  // can switch to client-streaming later for higher throughput).
+  rpc SendMetrics(MetricsBatch) returns (MetricsResponse);
+
+  // Client-streaming variant for future high-frequency data.
+  rpc StreamMetrics(stream Metric) returns (MetricsResponse);
+}
+
+// A batch of metrics produced by one agent in one collection cycle.
+message MetricsBatch {
+  string agent_id = 1;
+  int64 timestamp_unix_ms = 2;   // Agent wall clock at batch creation
+  repeated Metric metrics = 3;
+}
+
+// A single network measurement.
+message Metric {
+  // Type of network check performed (enum below).
+  CheckType check_type = 1;
+
+  // Target being measured, e.g. "example.com", "10.0.0.1:443", "example.com:443".
+  string target = 2;
+
+  // General success/failure flag (NOT part of the oneof so it can coexist
+  // with the value fields below).
+  bool success = 14;
+
+  // Free-form detail message (e.g. error string when success=false).
+  string detail = 15;
+
+  // The measured value(s). Exactly one of these is set depending on check_type.
+  oneof value {
+    double latency_ms = 10;      // For DNS, TCP, TLS, HTTP, RTT etc.
+    double packet_loss_pct = 11; // For packet loss checks
+    double jitter_ms = 12;       // For jitter (stddev of successive RTTs)
+    int64 status_code = 13;      // For HTTP status code
+    double rtt_ms = 16;          // Round-trip time for ICMP
+  }
+
+  // Optional metadata key-value pairs (e.g., {"dns_server": "8.8.8.8"}).
+  map<string, string> attributes = 20;
+
+  // Sequence number to detect duplicates (for idempotent writes in Phase 3+).
+  uint64 seq = 21;
+
+  // Agent's monotonic timestamp (for jitter/ordering analysis).
+  int64 monotonic_us = 22;
+}
+
+// Type of network check.
+enum CheckType {
+  CHECK_TYPE_UNSPECIFIED = 0;
+  CHECK_TYPE_DNS_RESOLUTION = 1;
+  CHECK_TYPE_TCP_CONNECT = 2;
+  CHECK_TYPE_TLS_HANDSHAKE = 3;
+  CHECK_TYPE_HTTP_REQUEST = 4;
+  CHECK_TYPE_ICMP_PING = 5;
+  CHECK_TYPE_JITTER = 6;
+}
+
+message MetricsResponse {
+  bool ack = 1;
+  int64 accepted_count = 2;
+  int64 rejected_count = 3;
+  string status_message = 4;
+}

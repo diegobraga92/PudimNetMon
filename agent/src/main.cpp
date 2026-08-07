@@ -1,6 +1,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 #include <chrono>
 #include <thread>
 #include <csignal>
@@ -9,6 +10,9 @@
 
 #include <grpcpp/grpcpp.h>
 #include "heartbeat.grpc.pb.h"
+#include "metrics.pb.h"
+#include "metrics/metrics_client.h"
+#include "metrics/probes.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -16,6 +20,9 @@ using grpc::Status;
 using pudimnetmon::AgentService;
 using pudimnetmon::HeartbeatRequest;
 using pudimnetmon::HeartbeatResponse;
+using pudimnetmon::MetricsBatch;
+using pudimagent::MetricsClient;
+using pudimagent::ProbeConfig;
 
 // --------------------------------------------
 // Globals (must be before logger macros)
@@ -134,6 +141,30 @@ int main(int argc, char **argv) {
     std::string trace_id = "";
     int interval_ms = 5000;
     std::string version = "0.1.0";
+    bool use_stream_metrics = false;
+
+    // Probe targets (comma-separated lists)
+    std::vector<std::string> dns_targets;
+    std::vector<std::string> tcp_targets;
+    std::vector<std::string> tls_targets;
+    std::vector<std::string> http_targets;
+    std::vector<std::string> ping_targets;
+    int ping_count = 4;
+
+    auto parse_list = [](const std::string &s) {
+        std::vector<std::string> out;
+        std::string cur;
+        for (char c : s) {
+            if (c == ',') {
+                if (!cur.empty()) out.push_back(cur);
+                cur.clear();
+            } else {
+                cur += c;
+            }
+        }
+        if (!cur.empty()) out.push_back(cur);
+        return out;
+    };
 
     // Parse CLI flags using getopt
     static struct option long_options[] = {
@@ -142,19 +173,33 @@ int main(int argc, char **argv) {
         {"interval",           required_argument, nullptr, 'i'},
         {"trace-id",           required_argument, nullptr, 't'},
         {"version",            required_argument, nullptr, 'v'},
+        {"dns-targets",        required_argument, nullptr, 'd'},
+        {"tcp-targets",        required_argument, nullptr, 'p'},
+        {"tls-targets",        required_argument, nullptr, 's'},
+        {"http-targets",       required_argument, nullptr, 'w'},
+        {"ping-targets",       required_argument, nullptr, 'g'},
+        {"ping-count",         required_argument, nullptr, 'k'},
+        {"stream-metrics",     no_argument,       nullptr, 'm'},
         {"help",               no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
             case 'i': interval_ms = std::stoi(optarg); break;
             case 't': trace_id = optarg; break;
             case 'v': version = optarg; break;
+            case 'd': dns_targets = parse_list(optarg); break;
+            case 'p': tcp_targets = parse_list(optarg); break;
+            case 's': tls_targets = parse_list(optarg); break;
+            case 'w': http_targets = parse_list(optarg); break;
+            case 'g': ping_targets = parse_list(optarg); break;
+            case 'k': ping_count = std::stoi(optarg); break;
+            case 'm': use_stream_metrics = true; break;
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
@@ -162,6 +207,13 @@ int main(int argc, char **argv) {
                           << "  -i, --interval            Heartbeat interval in ms (default: 5000)\n"
                           << "  -t, --trace-id            Trace ID for request correlation\n"
                           << "  -v, --version             Agent version string\n"
+                          << "  -d, --dns-targets         Comma-separated DNS resolution targets\n"
+                          << "  -p, --tcp-targets         Comma-separated host:port TCP connect targets\n"
+                          << "  -s, --tls-targets         Comma-separated host:port TLS handshake targets\n"
+                          << "  -w, --http-targets        Comma-separated HTTP(S) URLs\n"
+                          << "  -g, --ping-targets        Comma-separated ICMP ping targets\n"
+                          << "  -k, --ping-count          Number of pings per target (default: 4)\n"
+                          << "  -m, --stream-metrics      Use client-streaming RPC for metrics (default: unary)\n"
                           << "  -h, --help                Show this help\n";
                 return 0;
             default:
@@ -185,10 +237,64 @@ int main(int argc, char **argv) {
     LOG_INFO("Version: " + version);
 
     HeartbeatClient client(collector_endpoint);
+    MetricsClient metrics_client(collector_endpoint);
+
+    std::vector<std::string> probe_targets;
+    for (const auto *vec : {&dns_targets, &tcp_targets, &tls_targets,
+                            &http_targets, &ping_targets}) {
+        probe_targets.insert(probe_targets.end(), vec->begin(), vec->end());
+    }
+
+    if (probe_targets.empty()) {
+        // Default demo targets so a bare `pudim-agent` produces useful output
+        dns_targets = {"example.com"};
+        tcp_targets = {"example.com:443"};
+        tls_targets = {"example.com:443"};
+        http_targets = {"https://example.com"};
+        ping_targets = {"1.1.1.1"};
+    }
+
+    ProbeConfig probe_cfg;
+    probe_cfg.dns_targets = dns_targets;
+    probe_cfg.tcp_targets = tcp_targets;
+    probe_cfg.tls_targets = tls_targets;
+    probe_cfg.http_targets = http_targets;
+    probe_cfg.ping_targets = ping_targets;
+    probe_cfg.ping_count = ping_count;
+
+    LOG_INFO("Running metrics probes every " + std::to_string(interval_ms) + "ms");
 
     // Main loop
+    uint64_t seq = 0;
     while (s_running) {
         client.SendHeartbeat(interval_ms, version);
+
+        // Collect and send metrics
+        std::vector<pudimnetmon::Metric> metrics;
+        pudimagent::RunAllProbes(probe_cfg, metrics);
+
+        MetricsBatch batch;
+        batch.set_agent_id(node_id);
+        batch.set_timestamp_unix_ms(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
+
+        for (auto &m : metrics) {
+            m.set_seq(seq++);
+            *batch.add_metrics() = std::move(m);
+        }
+
+        LOG_INFO("Collected " + std::to_string(batch.metrics_size()) +
+                 " metrics, sending to collector");
+        bool ok = use_stream_metrics
+                      ? metrics_client.StreamMetrics(node_id, batch.metrics())
+                      : metrics_client.SendBatch(batch);
+        if (ok) {
+            LOG_INFO("Metrics batch accepted by collector");
+        } else {
+            LOG_WARN("Metrics batch rejected or send failed");
+        }
 
         // Sleep in small increments so we can respond to signals promptly
         int slept = 0;
