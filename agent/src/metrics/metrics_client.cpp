@@ -14,9 +14,13 @@ using pudimnetmon::MetricsService;
 
 namespace pudimagent {
 
-MetricsClient::MetricsClient(const std::string &endpoint)
+MetricsClient::MetricsClient(
+    const std::string &endpoint,
+    std::shared_ptr<grpc::ChannelCredentials> creds)
     : m_stub(MetricsService::NewStub(
-          grpc::CreateChannel(endpoint, grpc::InsecureChannelCredentials()))) {}
+          grpc::CreateChannel(endpoint,
+                              creds ? creds
+                                    : grpc::InsecureChannelCredentials()))) {}
 
 bool MetricsClient::SendBatch(const MetricsBatch &batch,
                               const std::string &traceparent) {

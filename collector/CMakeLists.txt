@@ -100,6 +100,7 @@ add_executable(pudim-collector
   src/alerting/alert_manager.cpp
   src/alerting/notifier.cpp
   src/kafka/producer.cpp
+  ../agent/src/tls_credentials.cpp
 )
 target_link_libraries(pudim-collector
   PRIVATE
@@ -112,7 +113,7 @@ target_link_libraries(pudim-collector
     PkgConfig::RDKAFKA
     PostgreSQL::PostgreSQL
 )
-target_include_directories(pudim-collector PRIVATE ${CMAKE_BINARY_DIR})
+target_include_directories(pudim-collector PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/../agent/src)
 
 # Tests
 enable_testing()

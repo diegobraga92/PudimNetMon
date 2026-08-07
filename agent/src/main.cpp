@@ -22,6 +22,7 @@
 #include "systemd_notify.h"
 #include "trace_context.h"
 #include "disk_buffer.h"
+#include "tls_credentials.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -109,9 +110,11 @@ static void handle_signal(int sig) {
 // --------------------------------------------
 class HeartbeatClient {
 public:
-    HeartbeatClient(const std::string &endpoint)
-        : m_stub(AgentService::NewStub(
-              grpc::CreateChannel(endpoint, grpc::InsecureChannelCredentials()))) {
+    HeartbeatClient(const std::string &endpoint,
+                    std::shared_ptr<grpc::ChannelCredentials> creds = nullptr)
+        : m_stub(AgentService::NewStub(grpc::CreateChannel(
+              endpoint,
+              creds ? creds : grpc::InsecureChannelCredentials()))) {
         LOG_INFO("gRPC channel created to " + endpoint);
     }
 
@@ -188,6 +191,9 @@ int main(int argc, char **argv) {
     int max_buffer_size = 200;  // in-memory batch buffer cap (overload handling)
     std::string disk_buffer_path = "/var/lib/pudim/pending.db";
     int disk_buffer_max_mb = 100;
+    std::string tls_ca;    // PEM CA used to verify the collector (mTLS)
+    std::string tls_cert;  // PEM client certificate
+    std::string tls_key;   // PEM client private key
 
     auto parse_list = [](const std::string &s) {
         std::vector<std::string> out;
@@ -229,13 +235,16 @@ int main(int argc, char **argv) {
         {"max-buffer-size",     required_argument, nullptr, 'f'},
         {"disk-buffer-path",    required_argument, nullptr, 'j'},
         {"disk-buffer-max-mb",  required_argument, nullptr, 'l'},
+        {"tls-ca",              required_argument, nullptr, 'C'},
+        {"tls-cert",            required_argument, nullptr, 'E'},
+        {"tls-key",             required_argument, nullptr, 'K'},
         {"help",               no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:b:f:j:l:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:b:f:j:l:C:E:K:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
@@ -272,6 +281,9 @@ int main(int argc, char **argv) {
             case 'f': max_buffer_size = std::stoi(optarg); break;
             case 'j': disk_buffer_path = optarg; break;
             case 'l': disk_buffer_max_mb = std::stoi(optarg); break;
+            case 'C': tls_ca = optarg; break;
+            case 'E': tls_cert = optarg; break;
+            case 'K': tls_key = optarg; break;
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
@@ -297,6 +309,9 @@ int main(int argc, char **argv) {
                           << "  -f, --max-buffer-size     Max queued metric batches before dropping (default: 200)\n"
                           << "  -j, --disk-buffer-path    SQLite path for persistent buffering (default: /var/lib/pudim/pending.db)\n"
                           << "  -l, --disk-buffer-max-mb  Max disk buffer size in MB (default: 100)\n"
+                          << "  -C, --tls-ca              PEM CA to verify the collector (mTLS)\n"
+                          << "  -E, --tls-cert             PEM client certificate (mTLS)\n"
+                          << "  -K, --tls-key              PEM client private key (mTLS)\n"
                           << "  -h, --help                Show this help\n";
                 return 0;
             default:
@@ -320,12 +335,16 @@ int main(int argc, char **argv) {
     LOG_INFO("Interval: " + std::to_string(interval_ms) + "ms");
     LOG_INFO("Version: " + version);
 
-    // Start the diagnostic gRPC server (collector-triggered traceroute/pcap)
-    std::thread diagnostic_thread([diagnostic_port]() {
+    // Start the diagnostic gRPC server (collector-triggered traceroute/pcap).
+    // Secured with mTLS when --tls-* flags are provided (the agent's own cert
+    // acts as the server cert here; the collector presents its client cert).
+    auto diag_server_creds =
+        pudimagent::MakeServerCredentials(tls_ca, tls_cert, tls_key);
+    std::thread diagnostic_thread([diagnostic_port, diag_server_creds]() {
         pudimagent::DiagnosticServiceImpl diag_service;
         grpc::ServerBuilder builder;
         builder.AddListeningPort("0.0.0.0:" + diagnostic_port,
-                                 grpc::InsecureServerCredentials());
+                                 diag_server_creds);
         builder.RegisterService(&diag_service);
         auto server = builder.BuildAndStart();
         if (!server) {
@@ -348,11 +367,16 @@ int main(int argc, char **argv) {
     }
     pudimagent::FailoverClient failover(endpoints);
 
+    // Phase 8 (Security): mutual TLS between agent and collector.
+    auto creds = pudimagent::MakeChannelCredentials(tls_ca, tls_cert, tls_key);
+    LOG_INFO(tls_ca.empty() ? "gRPC transport: insecure (no --tls-*)"
+                            : "gRPC transport: mTLS (client cert " + tls_cert + ")");
+
     auto reconnect = [&]() {
         const std::string &ep = failover.CurrentEndpoint();
         LOG_INFO("Connecting to collector endpoint: " + ep);
-        return std::make_pair(std::make_unique<HeartbeatClient>(ep),
-                              std::make_unique<MetricsClient>(ep));
+        return std::make_pair(std::make_unique<HeartbeatClient>(ep, creds),
+                              std::make_unique<MetricsClient>(ep, creds));
     };
     auto clients = reconnect();
 

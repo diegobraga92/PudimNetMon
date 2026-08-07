@@ -110,6 +110,7 @@ add_executable(pudim-agent
   src/systemd_notify.cpp
   src/trace_context.cpp
   src/disk_buffer.cpp
+  src/tls_credentials.cpp
 )
 target_link_libraries(pudim-agent
   PRIVATE

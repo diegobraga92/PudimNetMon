@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y -qq \
 
 WORKDIR /build
 COPY collector/ ./collector/
+COPY agent/ ./agent/
 COPY api/ ./api/
 
 RUN cmake -S collector -B build && \

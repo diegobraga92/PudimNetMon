@@ -102,18 +102,25 @@ npm run dev
 └── docker-compose.yml     # Local development environment
 ```
 
-## Current Phase: Phase 7 — Disaster Recovery, Multi-Region & Cost
+## Current Phase: Security & Portfolio (mTLS + Phase 8)
 
-**Phases 0–6 ✅ · Phase 7 (DR/Multi-region/Cost) ✅**
+**Phases 0–7 ✅ · mTLS ✅ · Phase 8 (dashboard polish / API / portfolio) ⏳**
 
-- ✅ **Agent disk buffer (SQLite)**: overflow from the in-memory FIFO spills to a local SQLite DB (`--disk-buffer-path`, cap `--disk-buffer-max-mb`); drained oldest-first on reconnect; survives agent restarts. `HAVE_SQLITE3`-guarded (graceful without libsqlite3)
-- ✅ **Multi-region failover**: `collector-secondary` in Compose (gRPC :50052, HTTP :8081); agents use `--collector-endpoints=primary,secondary` (3-strike failover from Phase 5)
-- ✅ **DR drill** (`docs/dr-test.md`): kill primary → agent fails over to secondary → restore → drain persisted batches. RTO ≈ 3× interval, RPO = in-memory + disk buffer
-- ✅ **Cost model** (`docs/cost-analysis.md`): AWS monthly estimate at 100/1000 agents (≈$453 / ≈$878), optimisation levers (spot, self-host Kafka, retention, compression)
-- ✅ **Capacity plan**: ~100 B/s/agent, storage ≈ 8.6 MB/day/agent, Kafka partition sizing, TimescaleDB compression/aggregates
-- ✅ **ADR 009** — active/passive regions, agent disk buffer as RPO boundary
-- ✅ All 9 ADRs, runbooks (high-latency + incident-response), postmortems, chaos log complete
-- ⚠️ **Open item**: mTLS between agent and collector (tracked in the Completion Checklist)
+- ✅ **Mutual TLS (agent ↔ collector)**: `scripts/gen-certs.sh` mints a CA + per-service certs; both components accept `--tls-ca/--tls-cert/--tls-key`. The collector's gRPC server **requires and verifies** the agent's client cert (handshake fails without one), and the collector also authenticates back to the agent's diagnostic server. Certificates are valid 1 year; rotation procedure in `docs/certificate-rotation.md`
+- ✅ All 10 ADRs, runbooks (high-latency + incident-response), postmortems, chaos log complete
+
+### Enable mTLS
+
+```bash
+./scripts/gen-certs.sh certs                        # ca.crt + collector/agent certs
+./build-collector/pudim-collector \
+    --tls-ca certs/ca.crt --tls-cert certs/collector.crt --tls-key certs/collector.key ...
+./build-agent/pudim-agent \
+    --tls-ca certs/ca.crt --tls-cert certs/agent.crt --tls-key certs/agent.key ...
+```
+
+Without `--tls-*` both fall back to insecure gRPC (local dev / CI convenience);
+both log the effective transport at startup.
 
 ### Architecture
 

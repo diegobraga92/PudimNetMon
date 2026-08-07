@@ -262,7 +262,7 @@
 - [x] Deep networking checks: DNS, TCP handshake, TLS cert, HTTP/2 vs HTTP/3, packet loss, jitter
 - [x] Network diagnostic mode (traceroute, pcap) with Wireshark/tcpdump annotated documentation
 - [x] Kernel tuning experiments and systemd hardening
-- [ ] Mutual TLS between agent and collector, certificate rotation
+- [x] Mutual TLS between agent and collector, certificate rotation
 - [x] Time synchronization: NTP drift monitoring, clock skew detection, timestamp normalization; ADR
 - [x] Service discovery: DNS, Kubernetes, failover process; ADR
 - [x] Overload & backpressure: collector overload simulation, Kafka slowdown, backpressure strategy, metric dropping policy, buffering limits, memory safeguards; ADR
@@ -270,4 +270,4 @@
 - [x] Two simulated postmortems written (overload OOM, clock skew alert storm)
 - [x] Multi‑region failover with agent buffering; DR test and RTO/RPO measured
 - [x] Cost estimate, capacity plan, and cost optimization suggestions
-- [x] All ADRs (9 total), runbooks, and portfolio artifacts complete
+- [x] All ADRs (10 total), runbooks, and portfolio artifacts complete

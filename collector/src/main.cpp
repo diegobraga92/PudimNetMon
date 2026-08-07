@@ -19,6 +19,7 @@
 #include "metrics_service.h"
 #include "storage/timescale_storage.h"
 #include "alerting/alert_manager.h"
+#include "tls_credentials.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -333,6 +334,9 @@ int main(int argc, char **argv) {
     std::string kafka_topic = "network.metrics";
     int64_t skew_threshold_ms = 5000;  // clock-skew warning threshold (Phase 5)
     int64_t backpressure_threshold_ms = 1000;  // ingest latency that triggers x-overloaded (Phase 6)
+    std::string tls_ca;    // PEM CA used to verify agent client certs (mTLS)
+    std::string tls_cert;  // PEM server certificate
+    std::string tls_key;   // PEM server private key
 
     auto get_env = [](const char *name, const std::string &def) {
         const char *v = std::getenv(name);
@@ -386,6 +390,12 @@ int main(int argc, char **argv) {
             skew_threshold_ms = std::stoll(v);
         } else if ((v = opt(arg, "--backpressure-threshold-ms", i)) != "") {
             backpressure_threshold_ms = std::stoll(v);
+        } else if ((v = opt(arg, "--tls-ca", i)) != "") {
+            tls_ca = v;
+        } else if ((v = opt(arg, "--tls-cert", i)) != "") {
+            tls_cert = v;
+        } else if ((v = opt(arg, "--tls-key", i)) != "") {
+            tls_key = v;
         } else if (arg == "--help") {
             std::cout << "Usage: pudim-collector [options]\n"
                       << "  --grpc-addr         gRPC listen address (default: 0.0.0.0:50051)\n"
@@ -401,6 +411,9 @@ int main(int argc, char **argv) {
                       << "  --kafka-topic       Kafka topic (default: network.metrics)\n"
                       << "  --skew-threshold-ms Clock-skew warning threshold (default: 5000)\n"
                       << "  --backpressure-threshold-ms Ingest latency (ms) that triggers x-overloaded (default: 1000)\n"
+                      << "  --tls-ca              PEM CA to verify agent client certs (mTLS)\n"
+                      << "  --tls-cert            PEM server certificate (mTLS)\n"
+                      << "  --tls-key             PEM server private key (mTLS)\n"
                       << "  --help              Show this help\n";
             return 0;
         }
@@ -472,10 +485,13 @@ int main(int argc, char **argv) {
                                                              skew_threshold_ms,
                                                              backpressure_threshold_ms);
 
-    // Start gRPC server
+    // Start gRPC server (mTLS when --tls-* flags are provided)
+    auto server_creds = pudimagent::MakeServerCredentials(tls_ca, tls_cert, tls_key);
+    logger::emit("info", tls_ca.empty() ? "gRPC transport: insecure (no --tls-*)"
+                                        : "gRPC transport: mTLS (server cert " + tls_cert + ")");
     AgentServiceImpl agent_service;
     ServerBuilder builder;
-    builder.AddListeningPort(grpc_addr, grpc::InsecureServerCredentials());
+    builder.AddListeningPort(grpc_addr, server_creds);
     builder.RegisterService(&agent_service);
     builder.RegisterService(s_metrics_service.get());
     builder.SetMaxReceiveMessageSize(4 * 1024 * 1024); // 4MB
@@ -571,8 +587,9 @@ int main(int argc, char **argv) {
     // Diagnostic endpoint: forwards a diagnostic request to the target agent's
     // DiagnosticService (traceroute + pcap). Requires the agent to have
     // advertised a diagnostic endpoint in its heartbeat.
-    http_server.Post("/diagnostic", [](const httplib::Request &req,
-                                       httplib::Response &resp) {
+    http_server.Post("/diagnostic",
+                     [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
+                                                    httplib::Response &resp) {
         std::string agent_id = req.get_param_value("agent_id");
         std::string trace_target = req.get_param_value("trace_target");
         int pcap_duration_s = 0;
@@ -596,8 +613,11 @@ int main(int argc, char **argv) {
             return;
         }
 
-        auto channel = grpc::CreateChannel(diag_endpoint,
-                                           grpc::InsecureChannelCredentials());
+        // mTLS channel to the agent's diagnostic server (reuses the collector's
+        // cert/key as the client identity when --tls-* is set).
+        auto channel = grpc::CreateChannel(
+            diag_endpoint, pudimagent::MakeChannelCredentials(
+                               tls_ca, tls_cert, tls_key));
         auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
         grpc::ClientContext ctx;
         ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));

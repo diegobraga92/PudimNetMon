@@ -4,6 +4,8 @@
 #include <memory>
 #include <string>
 
+#include <grpcpp/grpcpp.h>
+
 #include "metrics.grpc.pb.h"
 
 namespace pudimagent {
@@ -11,7 +13,9 @@ namespace pudimagent {
 // gRPC client for sending metric batches to the collector.
 class MetricsClient {
 public:
-    explicit MetricsClient(const std::string &endpoint);
+    explicit MetricsClient(
+        const std::string &endpoint,
+        std::shared_ptr<grpc::ChannelCredentials> creds = nullptr);
 
     // Sends a batch of metrics. Returns true if the collector ACKed.
     bool SendBatch(const pudimnetmon::MetricsBatch &batch,
