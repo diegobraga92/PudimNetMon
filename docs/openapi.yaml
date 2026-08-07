@@ -1,0 +1,442 @@
+openapi: 3.0.3
+info:
+  title: PudimNetMon Collector REST API
+  version: 1.0.0
+  description: |
+    REST API exposed by the collector on its HTTP endpoint (default :8080).
+
+    The dashboard talks to the collector through a reverse proxy that forwards
+    `/api/*` paths unchanged, so every endpoint is also available with an
+    `/api` prefix. The non-prefixed paths are kept for legacy tooling and
+    Prometheus scraping.
+
+    Two Phase 8 actions go through the collector to the agent's gRPC
+    DiagnosticService: agent reconfiguration (`POST /api/agents/config`) and
+    reading the current config (`GET /api/agents/config`). Both require the
+    agent to have advertised a diagnostic endpoint in its heartbeat.
+servers:
+  - url: http://collector:8080
+    description: In-stack (docker-compose) address
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /health:
+    get:
+      summary: Collector liveness + storage health
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /api/health:
+    get:
+      summary: Collector health (dashboard /api namespace)
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+  /agents:
+    get:
+      summary: Registered agents (from heartbeats)
+      responses:
+        '200':
+          description: Agent registry snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agents'
+  /api/agents:
+    get:
+      summary: Registered agents (dashboard /api namespace)
+      responses:
+        '200':
+          description: Agent registry snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agents'
+
+  /metrics:
+    get:
+      summary: Prometheus scrape endpoint (text format)
+      responses:
+        '200':
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/metrics:
+    get:
+      summary: Time-series metrics for the dashboard
+      parameters:
+        - name: agent_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by agent id
+        - name: check_type
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by check type (e.g. dns_resolution, tcp_connect)
+        - name: window_seconds
+          in: query
+          required: false
+          schema: { type: integer, default: 300 }
+          description: Look-back window
+      responses:
+        '200':
+          description: Metric points
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MetricPoint'
+        '503':
+          description: Storage (TimescaleDB) not available
+
+  /alerts:
+    get:
+      summary: Active (firing) alerts
+      responses:
+        '200':
+          description: List of firing alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActiveAlert'
+  /api/alerts:
+    get:
+      summary: Active alerts (dashboard /api namespace)
+      responses:
+        '200':
+          description: List of firing alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActiveAlert'
+
+  /alert-history:
+    get:
+      summary: Alert state-transition history
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 200 }
+      responses:
+        '200':
+          description: Alert events (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AlertEvent'
+  /api/alert-history:
+    get:
+      summary: Alert history (dashboard /api namespace)
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 200 }
+      responses:
+        '200':
+          description: Alert events (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AlertEvent'
+
+  /alert-rules:
+    get:
+      summary: Loaded alert rules
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rules'
+  /api/alert-rules:
+    get:
+      summary: Loaded alert rules (dashboard /api namespace)
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rules'
+  /diagnostic:
+    post:
+      summary: Trigger an on-demand diagnostic on an agent (traceroute/pcap)
+      description: Forwarded to the agent's gRPC DiagnosticService.
+      parameters:
+        - name: agent_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: trace_target
+          in: query
+          required: false
+          schema: { type: string }
+        - name: pcap_duration_s
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: pcap_filter
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Diagnostic report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiagnosticResult'
+        '404':
+          description: Agent has no advertised diagnostic endpoint
+        '502':
+          description: Agent unreachable
+  /api/diagnostic:
+    post:
+      summary: On-demand diagnostic (dashboard /api namespace)
+      parameters:
+        - name: agent_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: trace_target
+          in: query
+          required: false
+          schema: { type: string }
+        - name: pcap_duration_s
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: pcap_filter
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Diagnostic report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiagnosticResult'
+
+  /api/alerts/ack:
+    post:
+      summary: Acknowledge a firing alert (Phase 8)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rule_id, agent_id]
+              properties:
+                rule_id: { type: string }
+                agent_id: { type: string }
+                target: { type: string, description: 'empty = all targets' }
+      responses:
+        '200':
+          description: Ack result + updated active alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  acknowledged: { type: boolean }
+                  alerts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ActiveAlert'
+        '400':
+          description: Invalid body / missing fields
+        '503':
+          description: Alerting disabled
+
+  /api/agents/config:
+    get:
+      summary: Read an agent's current probe configuration (Phase 8)
+      description: Forwarded to the agent's DiagnosticService.GetConfig.
+      parameters:
+        - name: agent_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current config summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConfigResponse'
+        '404':
+          description: Agent has no advertised diagnostic endpoint
+    post:
+      summary: Reconfigure an agent's probes at runtime (Phase 8)
+      description: |
+        Forwarded to the agent's DiagnosticService.Reconfigure. The request is
+        the COMPLETE new config: empty arrays clear the corresponding target
+        list. Applies on the next probe cycle (no agent restart).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id]
+              properties:
+                agent_id: { type: string }
+                dns_targets: { type: array, items: { type: string } }
+                tcp_targets: { type: array, items: { type: string } }
+                tls_targets: { type: array, items: { type: string } }
+                http_targets: { type: array, items: { type: string } }
+                ping_targets: { type: array, items: { type: string } }
+                ping_count: { type: integer, default: 4 }
+                tls_cert_check: { type: boolean, default: true }
+                tcp_retransmit_check: { type: boolean, default: true }
+                tcp_handshake_capture: { type: boolean, default: true }
+                http_protocols:
+                  type: array
+                  items: { type: string }
+                  description: http1.1, http2, http3
+      responses:
+        '200':
+          description: Applied config summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConfigResponse'
+        '400':
+          description: Invalid body / missing agent_id
+        '404':
+          description: Agent has no advertised diagnostic endpoint
+        '502':
+          description: Agent unreachable
+
+components:
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        component: { type: string }
+        storage: { type: boolean }
+
+    Agents:
+      type: object
+      properties:
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agent'
+    Agent:
+      type: object
+      properties:
+        agent_id: { type: string }
+        last_seen_unix_ms: { type: integer }
+        interval_ms: { type: integer }
+        version: { type: string }
+        diagnostic_endpoint: { type: string }
+        first_seen_unix_ms: { type: integer }
+        alive: { type: boolean }
+
+    MetricPoint:
+      type: object
+      properties:
+        time_ms: { type: number }
+        agent_id: { type: string }
+        check_type: { type: string }
+        target: { type: string }
+        success: { type: boolean }
+        value: { type: number }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+
+    ActiveAlert:
+      type: object
+      properties:
+        rule_id: { type: string }
+        rule_name: { type: string }
+        severity: { type: string, enum: [info, warning, critical] }
+        agent_id: { type: string }
+        target: { type: string }
+        value: { type: number }
+        threshold: { type: number }
+        acknowledged: { type: boolean }
+        fired_ms: { type: integer }
+
+    AlertEvent:
+      type: object
+      properties:
+        rule_id: { type: string }
+        rule_name: { type: string }
+        agent_id: { type: string }
+        check_type: { type: string }
+        target: { type: string }
+        severity: { type: string }
+        status: { type: string, enum: [firing, resolved] }
+        value: { type: number }
+        threshold: { type: number }
+        detail: { type: string }
+        time_ms: { type: integer }
+
+    Rules:
+      type: object
+      properties:
+        rules:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              agent_id: { type: string }
+              check_type: { type: string }
+              metric: { type: string }
+              op: { type: string, enum: ['>', '<'] }
+              threshold: { type: number }
+              repeat_interval_sec: { type: integer }
+              severity: { type: string }
+              on_failure: { type: boolean }
+
+    DiagnosticResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        timestamp_unix_ms: { type: integer }
+        result: { type: string }
+
+    AgentConfigResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        applied:
+          type: string
+          description: Human-readable summary, e.g. "dns=example.com tcp= tls= http= ping=1.1.1.1 ping_count=4 tls_cert=on ..."
+        error: { type: string }
+

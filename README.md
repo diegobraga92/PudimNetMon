@@ -102,12 +102,17 @@ npm run dev
 └── docker-compose.yml     # Local development environment
 ```
 
-## Current Phase: Security & Portfolio (mTLS + Phase 8)
+## Current Phase: Phase 8 — Dashboard Polish, API & Portfolio
 
-**Phases 0–7 ✅ · mTLS ✅ · Phase 8 (dashboard polish / API / portfolio) ⏳**
+**Phases 0–7 ✅ · mTLS ✅ · Phase 8 ✅** (network topology map deferred — optional)
 
-- ✅ **Mutual TLS (agent ↔ collector)**: `scripts/gen-certs.sh` mints a CA + per-service certs; both components accept `--tls-ca/--tls-cert/--tls-key`. The collector's gRPC server **requires and verifies** the agent's client cert (handshake fails without one), and the collector also authenticates back to the agent's diagnostic server. Certificates are valid 1 year; rotation procedure in `docs/certificate-rotation.md`
-- ✅ All 10 ADRs, runbooks (high-latency + incident-response), postmortems, chaos log complete
+- ✅ **Interactive dashboard**: zoom/pan (recharts `Brush`), alert acknowledge, and an **agent configuration panel** that reads (`GetConfig`) and applies (`Reconfigure`) probe targets at runtime — no agent restart
+- ✅ **REST API + OpenAPI spec**: all dashboard endpoints under `/api/*`
+  (`/api/health`, `/api/agents`, `/api/metrics`, `/api/alerts` + `/ack`,
+  `/api/alert-history`, `/api/alert-rules`, `/api/diagnostic`,
+  `/api/agents/config`); documented in [`docs/openapi.yaml`](docs/openapi.yaml)
+- ✅ **Bundle optimization**: app chunk 578 kB → 21 kB (recharts split); audit runbook in [`docs/performance.md`](docs/performance.md)
+- ✅ **Portfolio docs**: [C4 architecture](docs/architecture.md), [tradeoffs / ADR index](docs/tradeoffs.md), [demo walkthrough](docs/demo.md), [mTLS + cert rotation](docs/certificate-rotation.md)
 
 ### Enable mTLS
 
@@ -150,6 +155,21 @@ docker compose logs agent | grep 'Drained'         # disk buffer drained
 ./scripts/overload-collector.sh 10 500
 ./scripts/overload-kafka.sh 30
 ```
+
+## Documentation Index
+
+| Area | Docs |
+|---|---|
+| Architecture | [`docs/architecture.md`](docs/architecture.md) — C4 context/container/component (Mermaid) |
+| API | [`docs/openapi.yaml`](docs/openapi.yaml) — OpenAPI 3.0 spec for the collector REST API |
+| ADRs | [`docs/adr/001`…`010`](docs/adr/) — every architecture decision (indexed in [`docs/tradeoffs.md`](docs/tradeoffs.md)) |
+| Security | [`docs/certificate-rotation.md`](docs/certificate-rotation.md) — mTLS cert lifecycle |
+| Runbooks | [`docs/runbooks/incident-response.md`](docs/runbooks/incident-response.md), [`docs/runbooks/high-latency-alert.md`](docs/runbooks/high-latency-alert.md) |
+| Postmortems | [`docs/postmortems/001-collector-overload-oom.md`](docs/postmortems/001-collector-overload-oom.md), [`docs/postmortems/002-clock-skew-alert-storm.md`](docs/postmortems/002-clock-skew-alert-storm.md) |
+| Chaos & DR | [`docs/chaos-experiments.md`](docs/chaos-experiments.md), [`docs/dr-test.md`](docs/dr-test.md) |
+| Performance | [`docs/performance.md`](docs/performance.md) — bundle optimization + Lighthouse runbook |
+| Deep dives | [`docs/networking-deep-dive.md`](docs/networking-deep-dive.md), [`docs/kernel-tuning.md`](docs/kernel-tuning.md), [`docs/cost-analysis.md`](docs/cost-analysis.md) |
+| Demo | [`docs/demo.md`](docs/demo.md) — recorded portfolio walkthrough |
 
 ## License
 

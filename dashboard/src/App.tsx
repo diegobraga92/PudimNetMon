@@ -932,7 +932,7 @@ function App() {
       </main>
 
       <footer className="footer">
-        <p>PudimNetMon v0.2.0 &mdash; Phase 2 Alerting &amp; Notification</p>
+        <p>PudimNetMon v0.2.0 &mdash; Phases 0&ndash;8: probes, alerting, Kafka, deep diagnostics, DR, mTLS, dashboard</p>
       </footer>
     </div>
   )

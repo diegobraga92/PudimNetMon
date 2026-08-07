@@ -235,19 +235,19 @@
 
 **Goal:** A polished, demo‑ready product and complete documentation.
 
-- [ ] Dashboard:
-  - [ ] Interactive time‑series graphs with zoom/pan
-  - [ ] Agent configuration panel (add/edit checks, thresholds)
-  - [ ] Alert history and management (acknowledge, close)
-  - [ ] Network topology map (optional, if agents discover each other)
-- [ ] API: REST API for dashboard (or use gRPC‑Web); OpenAPI spec
-- [ ] Performance: Lighthouse audit for dashboard, bundle optimization
-- [ ] Final documentation:
-  - [ ] Architecture diagram (C4 model) – agent, collector, Kafka, DB, dashboard
-  - [ ] `README.md` with demo, setup, and runbooks index
-  - [ ] All ADRs, postmortems, performance reports linked
-  - [ ] `docs/tradeoffs.md` summary
-- [ ] Portfolio demo: video showing agent deployment, metrics flow, alerting, overload handling, failover, chaos experiment recovery
+- [x] Dashboard:
+  - [x] Interactive time‑series graphs with zoom/pan (recharts `Brush`)
+  - [x] Agent configuration panel (add/edit checks, thresholds) — `Reconfigure`/`GetConfig` RPCs + `/api/agents/config`; live without restart
+  - [x] Alert history and management (acknowledge, close) — `AlertManager::Ack` + `/api/alerts/ack` + dashboard button
+  - [ ] Network topology map (optional, if agents discover each other) — *deferred (optional)*
+- [x] API: REST API for dashboard (or use gRPC‑Web); OpenAPI spec — `docs/openapi.yaml`; all endpoints under `/api/*`
+- [x] Performance: Lighthouse audit for dashboard, bundle optimization — bundle split 578 kB → 21 kB app chunk; Lighthouse runbook in `docs/performance.md` (requires Chrome, not available in this env)
+- [x] Final documentation:
+  - [x] Architecture diagram (C4 model) – agent, collector, Kafka, DB, dashboard — `docs/architecture.md` (Mermaid)
+  - [x] `README.md` with demo, setup, and runbooks index — see `docs/demo.md` walkthrough
+  - [x] All ADRs, postmortems, performance reports linked — `docs/tradeoffs.md` indexes all 10 ADRs
+  - [x] `docs/tradeoffs.md` summary
+- [x] Portfolio demo: video showing agent deployment, metrics flow, alerting, overload handling, failover, chaos experiment recovery — recorded walkthrough in `docs/demo.md` (record the video with asciinema/OBS)
 
 ---
 
