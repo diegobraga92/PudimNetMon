@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cstdio>
+#include <sstream>
 #include <string>
 
 #include "diagnostic_service.h"
@@ -28,6 +29,30 @@ int64_t NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch())
         .count();
+}
+
+std::string JoinList(const std::vector<std::string> &items) {
+    std::ostringstream os;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (i > 0) os << ",";
+        os << items[i];
+    }
+    return os.str();
+}
+
+std::string SummaryOf(const ProbeConfig &c) {
+    std::ostringstream summary;
+    summary << "dns=" << JoinList(c.dns_targets)
+            << " tcp=" << JoinList(c.tcp_targets)
+            << " tls=" << JoinList(c.tls_targets)
+            << " http=" << JoinList(c.http_targets)
+            << " ping=" << JoinList(c.ping_targets)
+            << " ping_count=" << c.ping_count
+            << " tls_cert=" << (c.tls_cert_check ? "on" : "off")
+            << " tcp_retransmit=" << (c.tcp_retransmit_check ? "on" : "off")
+            << " tcp_handshake=" << (c.tcp_handshake_capture ? "on" : "off")
+            << " http_protocols=" << JoinList(c.http_protocols);
+    return summary.str();
 }
 
 } // anonymous namespace
@@ -85,6 +110,65 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
     response->set_success(ok);
     response->set_result(result);
     response->set_timestamp_unix_ms(NowMs());
+    return grpc::Status::OK;
+}
+
+grpc::Status DiagnosticServiceImpl::Reconfigure(
+    grpc::ServerContext *ctx,
+    const pudimnetmon::AgentConfigRequest *request,
+    pudimnetmon::AgentConfigResponse *response) {
+    (void)ctx;
+    if (!request || !response || !m_store) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "request/response/store must not be null");
+    }
+
+    // Full replacement semantics: the request is the COMPLETE new config.
+    // Empty repeated fields clear the corresponding target list.
+    ProbeConfig next;
+    next.dns_targets.assign(request->dns_targets().begin(),
+                            request->dns_targets().end());
+    next.tcp_targets.assign(request->tcp_targets().begin(),
+                            request->tcp_targets().end());
+    next.tls_targets.assign(request->tls_targets().begin(),
+                            request->tls_targets().end());
+    next.http_targets.assign(request->http_targets().begin(),
+                             request->http_targets().end());
+    next.ping_targets.assign(request->ping_targets().begin(),
+                             request->ping_targets().end());
+    next.ping_count = request->ping_count() > 0 ? request->ping_count()
+                                                : ProbeConfig{}.ping_count;
+    if (request->has_tls_cert_check()) {
+        next.tls_cert_check = request->tls_cert_check();
+    }
+    if (request->has_tcp_retransmit_check()) {
+        next.tcp_retransmit_check = request->tcp_retransmit_check();
+    }
+    if (request->has_tcp_handshake_capture()) {
+        next.tcp_handshake_capture = request->tcp_handshake_capture();
+    }
+    next.http_protocols.assign(request->http_protocols().begin(),
+                               request->http_protocols().end());
+
+    m_store->Set(next);
+
+    response->set_success(true);
+    response->set_applied(SummaryOf(next));
+    return grpc::Status::OK;
+}
+
+grpc::Status DiagnosticServiceImpl::GetConfig(
+    grpc::ServerContext *ctx,
+    const pudimnetmon::GetConfigRequest *request,
+    pudimnetmon::AgentConfigResponse *response) {
+    (void)ctx;
+    (void)request;
+    if (!response || !m_store) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "response/store must not be null");
+    }
+    response->set_success(true);
+    response->set_applied(SummaryOf(m_store->Get()));
     return grpc::Status::OK;
 }
 

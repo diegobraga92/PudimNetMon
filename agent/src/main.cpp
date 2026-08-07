@@ -335,26 +335,29 @@ int main(int argc, char **argv) {
     LOG_INFO("Interval: " + std::to_string(interval_ms) + "ms");
     LOG_INFO("Version: " + version);
 
-    // Start the diagnostic gRPC server (collector-triggered traceroute/pcap).
+    // Start the diagnostic gRPC server (collector-triggered traceroute/pcap +
+    // Phase 8 runtime reconfiguration).
     // Secured with mTLS when --tls-* flags are provided (the agent's own cert
     // acts as the server cert here; the collector presents its client cert).
     auto diag_server_creds =
         pudimagent::MakeServerCredentials(tls_ca, tls_cert, tls_key);
-    std::thread diagnostic_thread([diagnostic_port, diag_server_creds]() {
-        pudimagent::DiagnosticServiceImpl diag_service;
-        grpc::ServerBuilder builder;
-        builder.AddListeningPort("0.0.0.0:" + diagnostic_port,
-                                 diag_server_creds);
-        builder.RegisterService(&diag_service);
-        auto server = builder.BuildAndStart();
-        if (!server) {
-            std::cerr << "Failed to start diagnostic server on port "
-                      << diagnostic_port << "\n";
-            return;
-        }
-        LOG_INFO("Diagnostic gRPC server listening on port " + diagnostic_port);
-        server->Wait();
-    });
+    auto probe_store = std::make_shared<pudimagent::ProbeConfigStore>();
+    std::thread diagnostic_thread(
+        [diagnostic_port, diag_server_creds, probe_store]() {
+            pudimagent::DiagnosticServiceImpl diag_service(probe_store);
+            grpc::ServerBuilder builder;
+            builder.AddListeningPort("0.0.0.0:" + diagnostic_port,
+                                     diag_server_creds);
+            builder.RegisterService(&diag_service);
+            auto server = builder.BuildAndStart();
+            if (!server) {
+                std::cerr << "Failed to start diagnostic server on port "
+                          << diagnostic_port << "\n";
+                return;
+            }
+            LOG_INFO("Diagnostic gRPC server listening on port " + diagnostic_port);
+            server->Wait();
+        });
     diagnostic_thread.detach();
 
     // Phase 5 service discovery: --collector-endpoints is a comma-separated
@@ -415,6 +418,10 @@ int main(int argc, char **argv) {
     probe_cfg.http_protocols = http_protocols;
     probe_cfg.dns_expected = dns_expected;
 
+    // Phase 8: seed the runtime config store; the Reconfigure RPC and the
+    // metric loop both share this.
+    probe_store->Set(probe_cfg);
+
     LOG_INFO("Running metrics probes every " + std::to_string(interval_ms) + "ms");
 
     // Phase 7 DR: persistent disk buffer (SQLite). Metrics overflowed from the
@@ -459,7 +466,7 @@ int main(int argc, char **argv) {
 
         // Collect and send metrics
         std::vector<pudimnetmon::Metric> metrics;
-        pudimagent::RunAllProbes(probe_cfg, metrics);
+        pudimagent::RunAllProbes(probe_store->Get(), metrics);
 
         MetricsBatch batch;
         batch.set_agent_id(node_id);

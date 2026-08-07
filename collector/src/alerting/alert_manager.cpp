@@ -322,6 +322,8 @@ std::string AlertManager::ActiveAlertsJson() const {
         json += "\"value\":" + FormatDouble(st.last_value) + ",";
         json += "\"threshold\":" +
                 (rule ? FormatDouble(rule->threshold) : "0") + ",";
+        json += "\"acknowledged\":" +
+                std::string(st.acknowledged ? "true" : "false") + ",";
         json += "\"fired_ms\":" + std::to_string(st.first_fired_ms);
         json += "}";
     }
@@ -374,6 +376,17 @@ size_t AlertManager::ActiveAlertCount() const {
         if (st.firing) count++;
     }
     return count;
+}
+
+bool AlertManager::Ack(const std::string &rule_id, const std::string &agent_id,
+                       const std::string &target) {
+    std::lock_guard lock(m_mutex);
+    auto it = m_states.find(StateKey(rule_id, agent_id, target));
+    if (it == m_states.end() || !it->second.firing || it->second.acknowledged) {
+        return false;
+    }
+    it->second.acknowledged = true;
+    return true;
 }
 
 uint64_t AlertManager::TotalAlertsFired() const {

@@ -10,6 +10,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  Brush,
 } from 'recharts'
 
 interface HealthResponse {
@@ -49,6 +50,12 @@ interface DiagnosticResult {
   error?: string
 }
 
+interface AgentConfigResponse {
+  success: boolean
+  applied: string
+  error: string
+}
+
 interface ActiveAlert {
   rule_id: string
   rule_name: string
@@ -57,6 +64,7 @@ interface ActiveAlert {
   target: string
   value: number
   threshold: number
+  acknowledged: boolean
   fired_ms: number
 }
 
@@ -122,6 +130,23 @@ function App() {
   const [selectedAgent, setSelectedAgent] = useState<string>('all')
   const [selectedCheck, setSelectedCheck] = useState<CheckTypeFilter>('all')
   const [windowSeconds, setWindowSeconds] = useState(300)
+
+  // --- Phase 8: agent configuration panel ---
+  const [configAgent, setConfigAgent] = useState<string>('')
+  const [configForm, setConfigForm] = useState({
+    dns: '',
+    tcp: '',
+    tls: '',
+    http: '',
+    ping: '',
+    pingCount: '4',
+    tlsCert: true,
+    tcpRetransmit: true,
+    tcpHandshake: true,
+    httpProtocols: '',
+  })
+  const [configResult, setConfigResult] = useState<AgentConfigResponse | null>(null)
+  const [configLoading, setConfigLoading] = useState(false)
 
   useEffect(() => {
     const fetchHealth = async () => {
@@ -353,6 +378,110 @@ function App() {
     }
   }
 
+  // --- Phase 8: acknowledge an active alert ---
+  const ackAlert = async (alert: ActiveAlert) => {
+    try {
+      const resp = await fetch('/api/alerts/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rule_id: alert.rule_id,
+          agent_id: alert.agent_id,
+          target: alert.target,
+        }),
+      })
+      if (!resp.ok) return
+      const data = await resp.json()
+      setAlerts(data.alerts ?? [])
+    } catch {
+      // leave alerts as-is; next poll refreshes
+    }
+  }
+
+  // --- Phase 8: load the current agent config into the form ---
+  const parseApplied = (applied: string) => {
+    const fields: Record<string, string> = {}
+    applied.split(/\s+/).forEach((pair) => {
+      const eq = pair.indexOf('=')
+      if (eq > 0) fields[pair.slice(0, eq)] = pair.slice(eq + 1)
+    })
+    const setField = (key: string) => fields[key] ?? ''
+    return {
+      dns: setField('dns'),
+      tcp: setField('tcp'),
+      tls: setField('tls'),
+      http: setField('http'),
+      ping: setField('ping'),
+      pingCount: setField('ping_count') || '4',
+      tlsCert: setField('tls_cert') !== 'off',
+      tcpRetransmit: setField('tcp_retransmit') !== 'off',
+      tcpHandshake: setField('tcp_handshake') !== 'off',
+      httpProtocols: setField('http_protocols'),
+    }
+  }
+
+  const loadAgentConfig = async (agentId: string) => {
+    if (!agentId) return
+    setConfigLoading(true)
+    setConfigResult(null)
+    try {
+      const resp = await fetch(`/api/agents/config?agent_id=${encodeURIComponent(agentId)}`)
+      if (!resp.ok) {
+        const body = await resp.json()
+        setConfigResult({ success: false, applied: '', error: body.error ?? `HTTP ${resp.status}` })
+        return
+      }
+      const data: AgentConfigResponse = await resp.json()
+      if (data.success) {
+        setConfigForm((prev) => ({ ...prev, ...parseApplied(data.applied) }))
+      }
+      setConfigResult(data)
+    } catch (err) {
+      setConfigResult({
+        success: false,
+        applied: '',
+        error: err instanceof Error ? err.message : 'failed to load config',
+      })
+    } finally {
+      setConfigLoading(false)
+    }
+  }
+
+  const applyAgentConfig = async () => {
+    if (!configAgent) return
+    setConfigLoading(true)
+    try {
+      const split = (s: string) => s.split(',').map((x) => x.trim()).filter((x) => x.length > 0)
+      const resp = await fetch('/api/agents/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: configAgent,
+          dns_targets: split(configForm.dns),
+          tcp_targets: split(configForm.tcp),
+          tls_targets: split(configForm.tls),
+          http_targets: split(configForm.http),
+          ping_targets: split(configForm.ping),
+          ping_count: Number(configForm.pingCount) || 4,
+          tls_cert_check: configForm.tlsCert,
+          tcp_retransmit_check: configForm.tcpRetransmit,
+          tcp_handshake_capture: configForm.tcpHandshake,
+          http_protocols: split(configForm.httpProtocols),
+        }),
+      })
+      const data: AgentConfigResponse = await resp.json()
+      setConfigResult(data)
+    } catch (err) {
+      setConfigResult({
+        success: false,
+        applied: '',
+        error: err instanceof Error ? err.message : 'failed to apply config',
+      })
+    } finally {
+      setConfigLoading(false)
+    }
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -414,7 +543,15 @@ function App() {
                     <p className="alert-detail">
                       value <strong>{alert.value}</strong> &gt; threshold <strong>{alert.threshold}</strong>
                     </p>
-                    <p className="alert-time">Fired {formatTime(alert.fired_ms)}</p>
+                    <p className="alert-time">
+                      Fired {formatTime(alert.fired_ms)}
+                      {alert.acknowledged && <span className="ack-badge">✓ acknowledged</span>}
+                    </p>
+                    {!alert.acknowledged && (
+                      <button className="ack-button" onClick={() => ackAlert(alert)}>
+                        Acknowledge
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -494,6 +631,13 @@ function App() {
                     />
                   )
                 })}
+                <Brush
+                  dataKey="time"
+                  height={28}
+                  stroke="#45b7d1"
+                  fill="#1e272e"
+                  travellerWidth={12}
+                />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -621,6 +765,134 @@ function App() {
               {diag.result && <pre className="diag-pre">{diag.result}</pre>}
             </div>
           ))}
+        </section>
+
+        <section className="config-section">
+          <h2>Agent Configuration</h2>
+          <p className="config-hint">
+            Select an agent, load its current checks, edit the target lists (comma-separated),
+            then apply. Changes take effect on the next probe cycle without restarting the agent.
+          </p>
+          <div className="config-row">
+            <select
+              value={configAgent}
+              onChange={(e) => {
+                setConfigAgent(e.target.value)
+                loadAgentConfig(e.target.value)
+              }}
+            >
+              <option value="">Select agent…</option>
+              {agents.map((a) => (
+                <option key={a.agent_id} value={a.agent_id}>{a.agent_id}</option>
+              ))}
+            </select>
+            <button
+              className="diag-button"
+              onClick={() => loadAgentConfig(configAgent)}
+              disabled={!configAgent || configLoading}
+            >
+              {configLoading ? 'Loading…' : '↻ Load config'}
+            </button>
+          </div>
+          {configAgent && (
+            <div className="config-form">
+              <div className="config-grid">
+                <label>
+                  DNS targets
+                  <input
+                    value={configForm.dns}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, dns: e.target.value }))}
+                    placeholder="example.com,cloudflare.com"
+                  />
+                </label>
+                <label>
+                  TCP targets (host:port)
+                  <input
+                    value={configForm.tcp}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, tcp: e.target.value }))}
+                    placeholder="example.com:443"
+                  />
+                </label>
+                <label>
+                  TLS targets (host:port)
+                  <input
+                    value={configForm.tls}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, tls: e.target.value }))}
+                    placeholder="example.com:443"
+                  />
+                </label>
+                <label>
+                  HTTP targets
+                  <input
+                    value={configForm.http}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, http: e.target.value }))}
+                    placeholder="https://example.com"
+                  />
+                </label>
+                <label>
+                  Ping targets
+                  <input
+                    value={configForm.ping}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, ping: e.target.value }))}
+                    placeholder="1.1.1.1,8.8.8.8"
+                  />
+                </label>
+                <label>
+                  Ping count
+                  <input
+                    type="number"
+                    min={1}
+                    value={configForm.pingCount}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, pingCount: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  HTTP protocols (http1.1,http2,http3)
+                  <input
+                    value={configForm.httpProtocols}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, httpProtocols: e.target.value }))}
+                    placeholder="http1.1,http2,http3"
+                  />
+                </label>
+              </div>
+              <div className="config-checks">
+                <label className="check-inline">
+                  <input
+                    type="checkbox"
+                    checked={configForm.tlsCert}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, tlsCert: e.target.checked }))}
+                  />
+                  TLS cert validation
+                </label>
+                <label className="check-inline">
+                  <input
+                    type="checkbox"
+                    checked={configForm.tcpRetransmit}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, tcpRetransmit: e.target.checked }))}
+                  />
+                  TCP retransmit probe
+                </label>
+                <label className="check-inline">
+                  <input
+                    type="checkbox"
+                    checked={configForm.tcpHandshake}
+                    onChange={(e) => setConfigForm((p) => ({ ...p, tcpHandshake: e.target.checked }))}
+                  />
+                  TCP handshake capture (pcap)
+                </label>
+              </div>
+              <button className="apply-button" onClick={applyAgentConfig} disabled={configLoading}>
+                {configLoading ? 'Applying…' : 'Apply configuration'}
+              </button>
+              {configResult && (
+                <div className={`config-result ${configResult.success ? 'ok' : 'fail'}`}>
+                  {configResult.success
+                    ? <span>✓ Applied — {configResult.applied}</span>
+                    : <span>✗ {configResult.error || configResult.applied}</span>}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="history-section">

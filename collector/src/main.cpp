@@ -20,6 +20,7 @@
 #include "storage/timescale_storage.h"
 #include "alerting/alert_manager.h"
 #include "tls_credentials.h"
+#include <nlohmann/json.hpp>
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -506,19 +507,28 @@ int main(int argc, char **argv) {
     // Start HTTP server (health + metrics)
     httplib::Server http_server;
 
-    http_server.Get("/health", [](const httplib::Request &, httplib::Response &resp) {
+    // Every dashboard-facing endpoint is served at BOTH /path and /api/path so
+    // it works through reverse proxies that strip the /api prefix (legacy) and
+    // those that pass it through. Prometheus scraping uses /metrics directly.
+
+    auto health_handler = [](const httplib::Request &, httplib::Response &resp) {
         bool db_ok = s_storage ? s_storage->IsHealthy() : false;
         std::string status = db_ok ? "ok" : "degraded";
         resp.set_content("{\"status\":\"" + status +
                          "\",\"component\":\"collector\",\"storage\":" +
                          std::string(db_ok ? "true" : "false") + "}",
                          "application/json");
-    });
+    };
+    http_server.Get("/health", health_handler);
+    http_server.Get("/api/health", health_handler);
 
-    http_server.Get("/agents", [](const httplib::Request &, httplib::Response &resp) {
+    auto agents_handler = [](const httplib::Request &, httplib::Response &resp) {
         resp.set_content(s_registry.DumpAgents(), "application/json");
-    });
+    };
+    http_server.Get("/agents", agents_handler);
+    http_server.Get("/api/agents", agents_handler);
 
+    // Prometheus scrape endpoint (text format, no /api alias).
     http_server.Get("/metrics", [](const httplib::Request &, httplib::Response &resp) {
         resp.set_content(format_prometheus_metrics(), "text/plain; version=0.0.4");
     });
@@ -550,16 +560,18 @@ int main(int argc, char **argv) {
     });
 
     // Alerting endpoints for the dashboard.
-    http_server.Get("/alerts", [](const httplib::Request &, httplib::Response &resp) {
+    auto alerts_handler = [](const httplib::Request &, httplib::Response &resp) {
         if (!s_alert_manager || !s_alert_manager->Enabled()) {
             resp.status = 200;
             resp.set_content("[]", "application/json");
             return;
         }
         resp.set_content(s_alert_manager->ActiveAlertsJson(), "application/json");
-    });
+    };
+    http_server.Get("/alerts", alerts_handler);
+    http_server.Get("/api/alerts", alerts_handler);
 
-    http_server.Get("/alert-history", [](const httplib::Request &req, httplib::Response &resp) {
+    auto alert_history_handler = [](const httplib::Request &req, httplib::Response &resp) {
         if (!s_alert_manager) {
             resp.set_content("[]", "application/json");
             return;
@@ -574,22 +586,25 @@ int main(int argc, char **argv) {
         }
         resp.set_content(s_alert_manager->AlertHistoryJson(max_events),
                          "application/json");
-    });
+    };
+    http_server.Get("/alert-history", alert_history_handler);
+    http_server.Get("/api/alert-history", alert_history_handler);
 
-    http_server.Get("/alert-rules", [](const httplib::Request &, httplib::Response &resp) {
+    auto alert_rules_handler = [](const httplib::Request &, httplib::Response &resp) {
         if (!s_alert_manager) {
             resp.set_content("{\"rules\":[]}", "application/json");
             return;
         }
         resp.set_content(s_alert_manager->RulesJson(), "application/json");
-    });
+    };
+    http_server.Get("/alert-rules", alert_rules_handler);
+    http_server.Get("/api/alert-rules", alert_rules_handler);
 
     // Diagnostic endpoint: forwards a diagnostic request to the target agent's
     // DiagnosticService (traceroute + pcap). Requires the agent to have
     // advertised a diagnostic endpoint in its heartbeat.
-    http_server.Post("/diagnostic",
-                     [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
-                                                    httplib::Response &resp) {
+    auto diagnostic_handler = [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
+                                                            httplib::Response &resp) {
         std::string agent_id = req.get_param_value("agent_id");
         std::string trace_target = req.get_param_value("trace_target");
         int pcap_duration_s = 0;
@@ -640,6 +655,153 @@ int main(int argc, char **argv) {
                            std::to_string(dresp.timestamp_unix_ms()) +
                            ",\"result\":\"" + logger::escape(dresp.result()) +
                            "\"}";
+        resp.set_content(json, "application/json");
+    };
+    http_server.Post("/diagnostic", diagnostic_handler);
+    http_server.Post("/api/diagnostic", diagnostic_handler);
+
+    // Alert acknowledge (Phase 8 dashboard): POST JSON
+    // {"rule_id","agent_id","target"} → marks the active alert acknowledged.
+    http_server.Post("/api/alerts/ack",
+                     [](const httplib::Request &req, httplib::Response &resp) {
+        if (!s_alert_manager) {
+            resp.status = 503;
+            resp.set_content("{\"error\":\"alerting disabled\"}", "application/json");
+            return;
+        }
+        std::string rule_id, agent_id, target;
+        try {
+            auto body = nlohmann::json::parse(req.body);
+            rule_id = body.value("rule_id", "");
+            agent_id = body.value("agent_id", "");
+            target = body.value("target", "");
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}", "application/json");
+            return;
+        }
+        if (rule_id.empty() || agent_id.empty()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"rule_id and agent_id are required\"}",
+                             "application/json");
+            return;
+        }
+        bool acked = s_alert_manager->Ack(rule_id, agent_id, target);
+        resp.set_content("{\"acknowledged\":" + std::string(acked ? "true" : "false") +
+                             ",\"alerts\":" + s_alert_manager->ActiveAlertsJson() + "}",
+                         "application/json");
+    });
+
+    // Agent config endpoint (Phase 8 dashboard): POST JSON AgentConfigRequest →
+    // forwards the Reconfigure RPC to the agent's diagnostic service.
+    // {"agent_id","dns_targets":[...],"tcp_targets":[...],"tls_targets":[...],
+    //  "http_targets":[...],"ping_targets":[...],"ping_count":N,
+    //  "tls_cert_check":bool,"tcp_retransmit_check":bool,
+    //  "tcp_handshake_capture":bool,"http_protocols":[...]}
+    http_server.Post("/api/agents/config",
+                     [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
+                                                    httplib::Response &resp) {
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}", "application/json");
+            return;
+        }
+        std::string agent_id = body.value("agent_id", "");
+        if (agent_id.empty()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"agent_id is required\"}", "application/json");
+            return;
+        }
+        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
+        if (diag_endpoint.empty()) {
+            resp.status = 404;
+            resp.set_content("{\"error\":\"agent has no advertised diagnostic "
+                             "endpoint\"}", "application/json");
+            return;
+        }
+
+        auto channel = grpc::CreateChannel(
+            diag_endpoint, pudimagent::MakeChannelCredentials(
+                               tls_ca, tls_cert, tls_key));
+        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(15));
+
+        pudimnetmon::AgentConfigRequest creq;
+        creq.set_agent_id(agent_id);
+        auto put = [&body](const char *key,
+                           google::protobuf::RepeatedPtrField<std::string> *field) {
+            if (body.contains(key) && body[key].is_array()) {
+                for (const auto &v : body[key]) field->Add(v.get<std::string>());
+            }
+        };
+        put("dns_targets", creq.mutable_dns_targets());
+        put("tcp_targets", creq.mutable_tcp_targets());
+        put("tls_targets", creq.mutable_tls_targets());
+        put("http_targets", creq.mutable_http_targets());
+        put("ping_targets", creq.mutable_ping_targets());
+        if (body.contains("ping_count")) creq.set_ping_count(body["ping_count"].get<int32_t>());
+        if (body.contains("tls_cert_check")) creq.set_tls_cert_check(body["tls_cert_check"].get<bool>());
+        if (body.contains("tcp_retransmit_check")) creq.set_tcp_retransmit_check(body["tcp_retransmit_check"].get<bool>());
+        if (body.contains("tcp_handshake_capture")) creq.set_tcp_handshake_capture(body["tcp_handshake_capture"].get<bool>());
+        put("http_protocols", creq.mutable_http_protocols());
+
+        pudimnetmon::AgentConfigResponse cresp;
+        grpc::Status status = stub->Reconfigure(&ctx, creq, &cresp);
+        if (!status.ok()) {
+            resp.status = 502;
+            resp.set_content("{\"error\":\"" + logger::escape(status.error_message()) +
+                                 "\"}", "application/json");
+            return;
+        }
+        std::string json = "{\"success\":" +
+                           std::string(cresp.success() ? "true" : "false") +
+                           ",\"applied\":\"" + logger::escape(cresp.applied()) +
+                           "\",\"error\":\"" + logger::escape(cresp.error()) + "\"}";
+        resp.set_content(json, "application/json");
+    });
+
+    // Current agent config (Phase 8 dashboard form population): forwards the
+    // GetConfig RPC to the agent. Query param: ?agent_id=...
+    http_server.Get("/api/agents/config",
+                    [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
+                                                   httplib::Response &resp) {
+        std::string agent_id = req.get_param_value("agent_id");
+        if (agent_id.empty()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"agent_id is required\"}", "application/json");
+            return;
+        }
+        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
+        if (diag_endpoint.empty()) {
+            resp.status = 404;
+            resp.set_content("{\"error\":\"agent has no advertised diagnostic "
+                             "endpoint\"}", "application/json");
+            return;
+        }
+        auto channel = grpc::CreateChannel(
+            diag_endpoint, pudimagent::MakeChannelCredentials(
+                               tls_ca, tls_cert, tls_key));
+        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+        pudimnetmon::GetConfigRequest greq;
+        greq.set_agent_id(agent_id);
+        pudimnetmon::AgentConfigResponse gresp;
+        grpc::Status status = stub->GetConfig(&ctx, greq, &gresp);
+        if (!status.ok()) {
+            resp.status = 502;
+            resp.set_content("{\"error\":\"" + logger::escape(status.error_message()) +
+                                 "\"}", "application/json");
+            return;
+        }
+        std::string json = "{\"success\":" +
+                           std::string(gresp.success() ? "true" : "false") +
+                           ",\"applied\":\"" + logger::escape(gresp.applied()) +
+                           "\",\"error\":\"" + logger::escape(gresp.error()) + "\"}";
         resp.set_content(json, "application/json");
     });
 

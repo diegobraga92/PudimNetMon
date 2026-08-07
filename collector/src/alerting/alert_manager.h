@@ -59,6 +59,11 @@ public:
     std::string AlertHistoryJson(size_t max_events = 200) const;
     std::string RulesJson() const;
 
+    // Marks a firing alert acknowledged (dashboard "Acknowledge" action).
+    // No-op if the alert is not currently firing. Returns true if changed.
+    bool Ack(const std::string &rule_id, const std::string &agent_id,
+             const std::string &target);
+
     size_t ActiveAlertCount() const;
     uint64_t TotalAlertsFired() const;
     size_t RuleCount() const { return m_rules.size(); }
@@ -67,6 +72,7 @@ public:
 private:
     struct FiringState {
         bool firing = false;
+        bool acknowledged = false;
         int64_t first_fired_ms = 0;
         int64_t last_notified_ms = 0;
         double last_value = 0.0;

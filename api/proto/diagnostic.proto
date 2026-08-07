@@ -6,8 +6,12 @@ option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
 
 // Diagnostic service: the collector triggers one-off deep diagnostics on an
 // agent (traceroute, packet capture) and receives a human-readable report.
+// Phase 8 also adds runtime probe reconfiguration (Reconfigure) so the
+// dashboard can add/edit checks without restarting the agent.
 service DiagnosticService {
   rpc RunDiagnostic(DiagnosticRequest) returns (DiagnosticResponse);
+  rpc Reconfigure(AgentConfigRequest) returns (AgentConfigResponse);
+  rpc GetConfig(GetConfigRequest) returns (AgentConfigResponse);
 }
 
 message DiagnosticRequest {
@@ -22,4 +26,33 @@ message DiagnosticResponse {
   string result = 2;             // human-readable report (traceroute output, pcap summary)
   int64 timestamp_unix_ms = 3;   // agent wall clock when the run completed
   string error = 4;              // error message when success=false
+}
+
+// Runtime probe configuration (Phase 8). Reconfigure applies the request as
+// the COMPLETE new config: empty repeated fields clear the corresponding
+// target list, absent bools default to their proto defaults (true).
+message AgentConfigRequest {
+  string agent_id = 1;
+  repeated string dns_targets = 2;
+  repeated string tcp_targets = 3;
+  repeated string tls_targets = 4;
+  repeated string http_targets = 5;
+  repeated string ping_targets = 6;
+  int32 ping_count = 7;              // 0 resets to default (4)
+  optional bool tls_cert_check = 8;           // default true
+  optional bool tcp_retransmit_check = 9;     // default true
+  optional bool tcp_handshake_capture = 10;   // default true
+  repeated string http_protocols = 11;  // e.g. "http1.1","http2","http3"
+}
+
+message GetConfigRequest {
+  string agent_id = 1;
+}
+
+// Carries the current config; `applied` holds the same string summary used by
+// Reconfigure so the dashboard can display/parse it.
+message AgentConfigResponse {
+  bool success = 1;
+  string error = 2;             // when success=false
+  string applied = 3;           // human-readable summary of the applied config
 }

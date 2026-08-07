@@ -167,7 +167,36 @@ void TestActiveAlertsJson() {
     assert(active.find("high-loss") != std::string::npos);
     assert(active.find("agent-a") != std::string::npos);
     assert(active.find("30") != std::string::npos);
+    assert(active.find("\"acknowledged\":false") != std::string::npos);
     std::cout << "PASS: ActiveAlertsJson: " << active << "\n";
+}
+
+// Phase 8: acknowledging a firing alert is reflected in ActiveAlertsJson.
+void TestAck() {
+    AlertManager mgr;
+    std::string err;
+    assert(mgr.LoadRulesFromJson(R"({
+        "rules": [ { "id": "high-loss", "check_type": "icmp_ping",
+                     "metric": "packet_loss_pct", "op": ">", "threshold": 5,
+                     "repeat_interval_sec": 0 } ]
+    })", err));
+
+    MetricsBatch b;
+    b.set_agent_id("agent-a");
+    *b.add_metrics() = LossMetric("1.1.1.1", 30.0);
+    mgr.Evaluate(b.agent_id(), b.metrics());
+    assert(mgr.ActiveAlertCount() == 1);
+
+    // Ack a non-existent alert → no-op.
+    assert(!mgr.Ack("nope", "agent-a", "1.1.1.1"));
+
+    // Ack the real one.
+    assert(mgr.Ack("high-loss", "agent-a", "1.1.1.1"));
+    assert(mgr.ActiveAlertsJson().find("\"acknowledged\":true") != std::string::npos);
+
+    // Acking twice is a no-op.
+    assert(!mgr.Ack("high-loss", "agent-a", "1.1.1.1"));
+    std::cout << "PASS: alert ack marks firing alert acknowledged\n";
 }
 
 } // anonymous namespace
@@ -179,6 +208,7 @@ int main() {
     TestFiltering();
     TestOnFailure();
     TestActiveAlertsJson();
+    TestAck();
     std::cout << "ALL ALERTING TESTS PASSED\n";
     return 0;
 }

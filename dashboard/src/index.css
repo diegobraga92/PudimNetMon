@@ -588,3 +588,129 @@ body {
   font-size: 1.1rem;
   color: #c9d1d9;
 }
+
+/* ---------- Phase 8: alert ack + agent config panel ---------- */
+.ack-badge {
+  margin-left: 0.5rem;
+  font-size: 0.7rem;
+  color: #3fb950;
+}
+
+.ack-button {
+  margin-top: 0.5rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.72rem;
+  border: 1px solid #3fb950;
+  border-radius: 6px;
+  background: transparent;
+  color: #3fb950;
+  cursor: pointer;
+}
+
+.ack-button:hover {
+  background: rgba(63, 185, 80, 0.15);
+}
+
+.config-section {
+  margin-bottom: 1.5rem;
+  padding: 1.25rem;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.config-section h2 {
+  margin-bottom: 0.4rem;
+  font-size: 1.1rem;
+  color: #c9d1d9;
+}
+
+.config-hint {
+  margin-bottom: 0.9rem;
+  font-size: 0.8rem;
+  color: #8b949e;
+}
+
+.config-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.config-row select {
+  flex: 1;
+  max-width: 340px;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.9rem;
+}
+
+.config-grid label,
+.config-checks label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: #8b949e;
+}
+
+.config-grid input {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-size: 0.85rem;
+}
+
+.config-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.check-inline {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.4rem !important;
+  cursor: pointer;
+}
+
+.apply-button {
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  border: 1px solid #3fb950;
+  border-radius: 6px;
+  background: rgba(63, 185, 80, 0.12);
+  color: #3fb950;
+  cursor: pointer;
+}
+
+.apply-button:hover:not(:disabled) {
+  background: rgba(63, 185, 80, 0.22);
+}
+
+.apply-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.config-result {
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  font-size: 0.8rem;
+}
+
+.config-result.ok   { border-left: 4px solid #3fb950; color: #3fb950; }
+.config-result.fail { border-left: 4px solid #f85149; color: #f85149; }
