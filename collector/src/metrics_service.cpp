@@ -16,8 +16,29 @@ namespace pudimcollector {
 
 MetricsServiceImpl::MetricsServiceImpl(
     std::shared_ptr<TimescaleStorage> storage,
-    std::shared_ptr<alerting::AlertManager> alerts)
-    : m_storage(std::move(storage)), m_alerts(std::move(alerts)) {}
+    std::shared_ptr<alerting::AlertManager> alerts,
+    std::shared_ptr<kafka::KafkaProducer> producer,
+    StorageMode mode)
+    : m_storage(std::move(storage)),
+      m_alerts(std::move(alerts)),
+      m_producer(std::move(producer)),
+      m_mode(mode) {}
+
+bool MetricsServiceImpl::IngestBatch(const MetricsBatch &batch) {
+    if (m_mode == StorageMode::Kafka) {
+        // Produce to Kafka; storage + alerting are handled by consumers.
+        if (!m_producer) return false;
+        return m_producer->Produce(batch);
+    }
+    // Direct mode (Phases 1-2): write to TimescaleDB, then evaluate alerts.
+    bool ok = m_storage->InsertMetrics(batch.agent_id(),
+                                       batch.timestamp_unix_ms(),
+                                       batch.metrics());
+    if (ok && m_alerts) {
+        m_alerts->Evaluate(batch.agent_id(), batch.metrics());
+    }
+    return ok;
+}
 
 Status MetricsServiceImpl::SendMetrics(
     ServerContext *ctx,
@@ -49,22 +70,15 @@ Status MetricsServiceImpl::SendMetrics(
 
     m_received_metrics += request->metrics_size();
 
-    bool stored = m_storage->InsertMetrics(
-        request->agent_id(),
-        request->timestamp_unix_ms(),
-        request->metrics());
-
-    if (!stored) {
+    if (!IngestBatch(*request)) {
         m_rejected_metrics += request->metrics_size();
         response->set_ack(false);
         response->set_accepted_count(0);
         response->set_rejected_count(request->metrics_size());
-        response->set_status_message("storage write failed");
+        response->set_status_message(
+            m_mode == StorageMode::Kafka ? "kafka produce failed"
+                                         : "storage write failed");
         return Status::OK;
-    }
-
-    if (m_alerts) {
-        m_alerts->Evaluate(request->agent_id(), request->metrics());
     }
 
     response->set_ack(true);
@@ -128,16 +142,13 @@ Status MetricsServiceImpl::StreamMetrics(
     int64_t accepted = 0;
     int64_t rejected = 0;
 
-    // Flushes accumulated metrics to storage; returns false on storage failure.
+    // Flushes accumulated metrics (to storage in Direct mode, to Kafka in
+    // Kafka mode); returns false on failure.
     auto flush = [&]() -> bool {
         if (batch.metrics_size() == 0) return true;
-        bool ok = m_storage->InsertMetrics(
-            agent_id, batch_timestamp_ms, batch.metrics());
+        bool ok = IngestBatch(batch);
         if (ok) {
             accepted += batch.metrics_size();
-            if (m_alerts) {
-                m_alerts->Evaluate(agent_id, batch.metrics());
-            }
         } else {
             rejected += batch.metrics_size();
         }

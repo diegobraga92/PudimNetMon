@@ -9,6 +9,10 @@ find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PostgreSQL REQUIRED)
+# librdkafka has no CMake package; CMake 4.x also dropped FindRdKafka, so we
+# locate it via pkg-config (librdkafka-dev on Ubuntu/CI).
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka++)
 
 # Fetch cpp-httplib for the HTTP health/metrics endpoints
 include(FetchContent)
@@ -90,6 +94,7 @@ add_executable(pudim-collector
   src/alerting/alert_rule.cpp
   src/alerting/alert_manager.cpp
   src/alerting/notifier.cpp
+  src/kafka/producer.cpp
 )
 target_link_libraries(pudim-collector
   PRIVATE
@@ -99,6 +104,7 @@ target_link_libraries(pudim-collector
     Threads::Threads
     httplib::httplib
     nlohmann_json::nlohmann_json
+    PkgConfig::RDKAFKA
     PostgreSQL::PostgreSQL
 )
 target_include_directories(pudim-collector PRIVATE ${CMAKE_BINARY_DIR})
@@ -129,6 +135,7 @@ add_executable(test-e2e-grpc
   src/alerting/alert_rule.cpp
   src/alerting/alert_manager.cpp
   src/alerting/notifier.cpp
+  src/kafka/producer.cpp
   ../agent/src/metrics/metrics_client.cpp
 )
 target_link_libraries(test-e2e-grpc
@@ -139,6 +146,7 @@ target_link_libraries(test-e2e-grpc
     Threads::Threads
     httplib::httplib
     nlohmann_json::nlohmann_json
+    PkgConfig::RDKAFKA
     PostgreSQL::PostgreSQL
 )
 target_include_directories(test-e2e-grpc
@@ -172,5 +180,67 @@ target_include_directories(test-alerting
 )
 add_test(NAME alerting-tests COMMAND test-alerting)
 
+# Kafka consumers (Phase 3, ADR 004). Storage consumer persists to TimescaleDB;
+# alert consumer evaluates alert rules. Both share consumer_common.
+add_executable(pudim-consumer-storage
+  src/kafka/storage_consumer.cpp
+  src/kafka/consumer_common.cpp
+  src/storage/timescale_storage.cpp
+)
+target_link_libraries(pudim-consumer-storage
+  PRIVATE
+    pudim_proto
+    protobuf::libprotobuf
+    gRPC::grpc++
+    Threads::Threads
+    httplib::httplib
+    PkgConfig::RDKAFKA
+    PostgreSQL::PostgreSQL
+)
+target_include_directories(pudim-consumer-storage PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
+
+add_executable(pudim-consumer-alert
+  src/kafka/alert_consumer.cpp
+  src/kafka/consumer_common.cpp
+  src/alerting/alert_rule.cpp
+  src/alerting/alert_manager.cpp
+  src/alerting/notifier.cpp
+)
+target_link_libraries(pudim-consumer-alert
+  PRIVATE
+    pudim_proto
+    protobuf::libprotobuf
+    gRPC::grpc++
+    Threads::Threads
+    httplib::httplib
+    nlohmann_json::nlohmann_json
+    PkgConfig::RDKAFKA
+)
+target_include_directories(pudim-consumer-alert PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
+
+# Kafka round-trip integration test: producer → consumer via a real broker.
+# Skips gracefully when no broker is reachable (PUDIM_TEST_KAFKA_BROKERS).
+add_executable(test-e2e-kafka
+  tests/test_e2e_kafka.cpp
+  src/kafka/producer.cpp
+  src/kafka/consumer_common.cpp
+)
+target_link_libraries(test-e2e-kafka
+  PRIVATE
+    pudim_proto
+    protobuf::libprotobuf
+    gRPC::grpc++
+    Threads::Threads
+    httplib::httplib
+    PkgConfig::RDKAFKA
+)
+target_include_directories(test-e2e-kafka
+  PRIVATE
+    ${CMAKE_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}/src
+)
+add_test(NAME e2e-kafka-tests COMMAND test-e2e-kafka)
+
 # Install
-install(TARGETS pudim-collector DESTINATION /usr/local/bin)
+install(TARGETS pudim-collector pudim-consumer-storage pudim-consumer-alert
+        DESTINATION /usr/local/bin)

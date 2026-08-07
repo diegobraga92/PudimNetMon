@@ -200,7 +200,10 @@ bool TimescaleStorage::InsertMetrics(
 
     auto flush = [&]() -> bool {
         if (batch_rows == 0) return true;
-        sql += ";";
+        // Idempotent writes: redelivered metrics (same time, agent, check,
+        // target, seq) are silently skipped. This is the at-least-once
+        // companion to Kafka mode (ADR 004).
+        sql += " ON CONFLICT DO NOTHING;";
         PGresult *res = PQexec(m_impl->conn, sql.c_str());
         bool ok = (PQresultStatus(res) == PGRES_COMMAND_OK);
         PQclear(res);

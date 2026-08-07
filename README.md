@@ -5,13 +5,24 @@
 ## Architecture Overview
 
 ```
-┌─────────────┐     gRPC      ┌─────────────┐     HTTP      ┌──────────────┐
-│  Agent(s)    │──────────────▶│  Collector   │──────────────▶│  Dashboard    │
-│  (C++ daemon)│   heartbeat   │  (C++ server)│  /health      │  (React/TS)  │
-└─────────────┘               │              │               └──────────────┘
-                              │  Port 50051  │
-                              │  Port 8080   │
-                              └─────────────┘
+          gRPC (heartbeat + metrics)       produce (protobuf, keyed by agent)
+  ┌──────────────┐      ┌──────────────┐     ┌──────────────────────┐
+  │  Agent(s)     │─────▶│  Collector   │────▶│   Kafka broker       │
+  │  (C++ daemon) │      │  (C++ server)│     │   network.metrics     │
+  └──────────────┘      └──────────────┘     └───────────┬──────────┘
+     Port 50051 gRPC           HTTP :8080               │ consume (groups:
+     /health /agents /api/metrics                       │  storage, alert)
+                                                         ▼
+                                           ┌──────────────────────────────────┐
+                                           │ pudim-consumer-storage ──▶ TimescaleDB │
+                                           │ pudim-consumer-alert   ──▶ AlertManager│
+                                           └──────────────────────────────────┘
+                                             Prometheus :9091 (storage) / :9092 (alert)
+
+  ┌──────────────┐     HTTP     ┌──────────────┐
+  │  Dashboard    │◀────────────│  Collector   │  :3000
+  │  (React/TS)  │   :3000      │  :8080       │
+  └──────────────┘              └──────────────┘
 ```
 
 ## Quick Start
@@ -91,26 +102,48 @@ npm run dev
 └── docker-compose.yml     # Local development environment
 ```
 
-## Current Phase: Phase 2 — Alerting & Notification
+## Current Phase: Phase 3 — Kafka Event Backbone
 
-**Phase 0 (Skeleton) ✅ complete — Phase 1 (Core Metrics & Time-Series) ✅ complete — Phase 2 (Alerting) ✅ complete**
+**Phase 0 (Skeleton) ✅ — Phase 1 (Metrics & Storage) ✅ — Phase 2 (Alerting) ✅ — Phase 3 (Kafka) ✅**
 
 - ✅ Protobuf API contracts (`heartbeat.proto`, `metrics.proto`)
 - ✅ C++ agent: gRPC client (unary + streaming), JSON logging, CLI flags, systemd unit
-- ✅ C++ collector: gRPC server, in-memory agent registry, health/metrics endpoints, TimescaleDB storage
+- ✅ C++ collector: gRPC server, agent registry, HTTP endpoints, TimescaleDB storage
 - ✅ Network probes: DNS, TCP connect, TLS handshake, HTTP, ICMP (packet loss + RTT + jitter)
-- ✅ Alerting engine: JSON rules, state machine (firing/repeat/resolved), Log + Webhook notifiers
-- ✅ Collector endpoints: `/health`, `/agents`, `/metrics`, `/alerts`, `/alert-history`, `/alert-rules`, `/api/metrics`
+- ✅ Alerting engine: JSON rules, state machine, Log + Webhook notifiers
+- ✅ **Kafka backbone**: KRaft broker (Docker Compose), collector produces `network.metrics`
+  (keyed by agent ID), separate `pudim-consumer-storage` + `pudim-consumer-alert` consumers,
+  at-least-once with idempotent DB writes (`ON CONFLICT DO NOTHING`), consumer-lag metrics
 - ✅ React dashboard: health, agent list, time-series graphs, active alerts pane, alert history
-- ✅ Docker Compose: collector + agent + dashboard + TimescaleDB
 - ✅ GitHub Actions CI: C++ build/test (Debug), TypeScript lint/build
-- ✅ ADRs 001–003, SLO draft, high-latency runbook
+- ✅ ADRs 001–004, SLO draft, runbooks
+
+### Architecture (Phase 3)
+
+```
+Agent ──gRPC──▶ Collector ──produce──▶ Kafka ──consume──▶ pudim-consumer-storage ──▶ TimescaleDB
+                       (network.metrics)                 └──▶ pudim-consumer-alert ──▶ AlertManager
+```
+
+### Running the full stack
+
+```bash
+docker compose up --build
+# dashboard:     http://localhost:3000
+# collector:     http://localhost:8080 (health/metrics)
+# storage cons.: http://localhost:9091/metrics (Prometheus)
+# alert cons.:   http://localhost:9092/metrics (Prometheus)
+```
+
+The collector runs in **Kafka mode** (via `--kafka-brokers=kafka:9092`) and no longer
+writes to TimescaleDB or evaluates alerts in-process — the two consumers own those
+concerns. Without `--kafka-brokers` the collector falls back to the direct path.
 
 ### Alerting
 
-Alert rules live in `collector/config/alert_rules.json` (JSON, loaded at startup via
-`--alert-rules-path`). Each rule declares a check type, metric field, operator, threshold,
-repeat interval and severity:
+Alert rules live in `collector/config/alert_rules.json`, evaluated by the **alert
+consumer** in Kafka mode. Each rule declares a check type, metric field, operator,
+threshold, repeat interval and severity:
 
 ```json
 {
@@ -123,9 +156,6 @@ repeat interval and severity:
   ]
 }
 ```
-
-Alerts appear in the collector's structured JSON logs, are POSTed to the webhook (if set),
-and are visible in the dashboard's **Active Alerts** and **Alert History** panes.
 
 ## License
 

@@ -1,0 +1,34 @@
+# Builds the Phase 3 Kafka consumers (pudim-consumer-storage,
+# pudim-consumer-alert) from a single CMake invocation.
+FROM ubuntu:24.04 AS builder
+
+RUN apt-get update && apt-get install -y -qq \
+    cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
+    libgrpc-dev protobuf-compiler-grpc build-essential \
+    pkg-config git ca-certificates \
+    libpq-dev librdkafka-dev
+
+WORKDIR /build
+COPY collector/ ./collector/
+COPY api/ ./api/
+
+RUN cmake -S collector -B build && \
+    cmake --build build -j$(nproc) --target pudim-consumer-storage pudim-consumer-alert && \
+    cp build/pudim-consumer-storage /usr/local/bin/ && \
+    cp build/pudim-consumer-alert /usr/local/bin/ && \
+    cp collector/config/alert_rules.json /etc/pudim/alert_rules.json
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y -qq \
+    libprotobuf32t64 libgrpc++1.51t64 \
+    libpq5 librdkafka1 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/pudim-consumer-storage /usr/local/bin/
+COPY --from=builder /usr/local/bin/pudim-consumer-alert /usr/local/bin/
+COPY --from=builder /etc/pudim/alert_rules.json /etc/pudim/alert_rules.json
+
+# The compose file passes the full command (binary + flags) explicitly.
+ENTRYPOINT []
+CMD []

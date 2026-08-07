@@ -178,6 +178,7 @@ static AgentRegistry s_registry;
 static std::shared_ptr<pudimcollector::TimescaleStorage> s_storage;
 static std::shared_ptr<pudimcollector::MetricsServiceImpl> s_metrics_service;
 static std::shared_ptr<pudimcollector::alerting::AlertManager> s_alert_manager;
+static std::shared_ptr<pudimcollector::kafka::KafkaProducer> s_kafka_producer;
 
 // --------------------------------------------
 // gRPC service implementation
@@ -255,6 +256,17 @@ static std::string format_prometheus_metrics() {
                std::to_string(s_alert_manager->RuleCount()) + "\n";
     }
 
+    if (s_kafka_producer) {
+        out += "# HELP pudim_kafka_produced_total Metrics batches produced to Kafka\n";
+        out += "# TYPE pudim_kafka_produced_total counter\n";
+        out += "pudim_kafka_produced_total " +
+               std::to_string(s_kafka_producer->ProducedTotal()) + "\n";
+        out += "# HELP pudim_kafka_delivery_failures_total Kafka delivery failures\n";
+        out += "# TYPE pudim_kafka_delivery_failures_total counter\n";
+        out += "pudim_kafka_delivery_failures_total " +
+               std::to_string(s_kafka_producer->DeliveryFailures()) + "\n";
+    }
+
     if (s_storage) {
         auto stats = s_storage->GetStats();
         out += "# HELP pudim_storage_metrics_written_total Metrics written to storage\n";
@@ -294,6 +306,8 @@ int main(int argc, char **argv) {
     std::string db_user = "pudim";
     std::string db_password = "pudim";
     std::string alert_rules_path;
+    std::string kafka_brokers;   // empty → Direct mode (Phases 1-2 behaviour)
+    std::string kafka_topic = "network.metrics";
 
     auto get_env = [](const char *name, const std::string &def) {
         const char *v = std::getenv(name);
@@ -339,6 +353,10 @@ int main(int argc, char **argv) {
             db_password = v;
         } else if ((v = opt(arg, "--alert-rules-path", i)) != "") {
             alert_rules_path = v;
+        } else if ((v = opt(arg, "--kafka-brokers", i)) != "") {
+            kafka_brokers = v;
+        } else if ((v = opt(arg, "--kafka-topic", i)) != "") {
+            kafka_topic = v;
         } else if (arg == "--help") {
             std::cout << "Usage: pudim-collector [options]\n"
                       << "  --grpc-addr         gRPC listen address (default: 0.0.0.0:50051)\n"
@@ -349,6 +367,9 @@ int main(int argc, char **argv) {
                       << "  --db-user           Database user (default: pudim)\n"
                       << "  --db-password       Database password (default: pudim)\n"
                       << "  --alert-rules-path  JSON file with alert rules (default: none; disables alerting)\n"
+                      << "  --kafka-brokers     Kafka bootstrap servers; when set, collector produces to\n"
+                      << "                      Kafka and consumers own storage + alerting (default: empty)\n"
+                      << "  --kafka-topic       Kafka topic (default: network.metrics)\n"
                       << "  --help              Show this help\n";
             return 0;
         }
@@ -380,9 +401,25 @@ int main(int argc, char **argv) {
         logger::emit("info", "Storage connected (TimescaleDB)");
     }
 
-    // Initialize alert manager (optional; disabled when no rules file given)
+    // Determine ingestion mode (ADR 004). Kafka mode is enabled by passing
+    // --kafka-brokers; consumers then own storage + alerting.
+    pudimcollector::StorageMode storage_mode = pudimcollector::StorageMode::Direct;
+    if (!kafka_brokers.empty()) {
+        storage_mode = pudimcollector::StorageMode::Kafka;
+        s_kafka_producer = std::make_shared<pudimcollector::kafka::KafkaProducer>();
+        std::string err;
+        if (!s_kafka_producer->Connect(kafka_brokers, kafka_topic, err)) {
+            logger::emit("error", "Kafka producer connection failed: " + err);
+            return 1;
+        }
+        logger::emit("info", "Kafka mode enabled (topic=" + kafka_topic + ")");
+    }
+
+    // Initialize alert manager (optional; only used in Direct mode. In Kafka
+    // mode the alert consumer owns alerting.)
     s_alert_manager = std::make_shared<pudimcollector::alerting::AlertManager>();
-    if (!alert_rules_path.empty()) {
+    if (storage_mode == pudimcollector::StorageMode::Direct &&
+        !alert_rules_path.empty()) {
         std::string err;
         if (s_alert_manager->LoadRulesFromFile(alert_rules_path, err)) {
             logger::emit("info",
@@ -391,14 +428,16 @@ int main(int argc, char **argv) {
         } else {
             logger::emit("warn", "Failed to load alert rules: " + err);
         }
-    } else {
+    } else if (storage_mode == pudimcollector::StorageMode::Direct) {
         logger::emit("info",
                      "No alert rules configured (--alert-rules-path unset); alerting disabled");
     }
 
     s_metrics_service =
         std::make_shared<pudimcollector::MetricsServiceImpl>(s_storage,
-                                                             s_alert_manager);
+                                                             s_alert_manager,
+                                                             s_kafka_producer,
+                                                             storage_mode);
 
     // Start gRPC server
     AgentServiceImpl agent_service;

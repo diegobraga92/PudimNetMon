@@ -106,14 +106,14 @@
 
 **Goal:** Replace direct collector storage with Kafka for decoupled, scalable stream processing.
 
-- [ ] Kafka cluster: single broker (KRaft) in Docker Compose; document production multi‑broker setup
-- [ ] Collector produces all received metrics to Kafka topic `network.metrics` (partitioned by agent ID)
-- [ ] Storage consumer: separate C++ service (or thread) reads from Kafka and writes to TimescaleDB
-- [ ] Alert consumer: reads same topic, evaluates alert rules in real‑time (or reuse existing evaluator but via topic)
-- [ ] Consumer groups: ensure multiple consumers can scale
-- [ ] Exactly‑once / at‑least‑once semantics: document choice; implement idempotent writing to DB (dedup by metric ID)
-- [ ] Observability: monitor consumer lag, Kafka broker metrics in Grafana
-- [ ] ADR: `004-kafka-as-event-backbone.md`
+- [x] Kafka cluster: single broker (KRaft) in Docker Compose; document production multi‑broker setup
+- [x] Collector produces all received metrics to Kafka topic `network.metrics` (partitioned by agent ID)
+- [x] Storage consumer: separate C++ service (or thread) reads from Kafka and writes to TimescaleDB
+- [x] Alert consumer: reads same topic, evaluates alert rules in real‑time (or reuse existing evaluator but via topic)
+- [x] Consumer groups: ensure multiple consumers can scale
+- [x] Exactly‑once / at‑least‑once semantics: document choice; implement idempotent writing to DB (dedup by metric ID)
+- [x] Observability: monitor consumer lag, Kafka broker metrics in Grafana
+- [x] ADR: `004-kafka-as-event-backbone.md`
 
 ---
 
@@ -258,7 +258,7 @@
 - [x] Time‑series storage (TimescaleDB) with efficient writes and reads
 - [x] Real‑time dashboard with agent health and metric graphs
 - [x] Alerting engine with notifications (webhook or log)
-- [ ] Kafka integration as metrics backbone; consumer lag monitored
+- [x] Kafka integration as metrics backbone; consumer lag monitored
 - [ ] Deep networking checks: DNS, TCP handshake, TLS cert, HTTP/2 vs HTTP/3, packet loss, jitter
 - [ ] Network diagnostic mode (traceroute, pcap) with Wireshark/tcpdump annotated documentation
 - [ ] Kernel tuning experiments and systemd hardening
