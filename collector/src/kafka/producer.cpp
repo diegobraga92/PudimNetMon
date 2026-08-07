@@ -7,34 +7,35 @@
 
 namespace pudimcollector::kafka {
 
-namespace {
-
-// Collects delivery report outcomes for the producer.
-class DeliveryReportCb : public RdKafka::DeliveryReportCb {
-public:
-    void dr_cb(RdKafka::Message &message) override {
-        if (message.err() != RdKafka::ERR_NO_ERROR) {
-            std::cerr << "Kafka delivery failed for key '"
-                      << (message.key() ? *message.key() : "")
-                      << "': " << message.errstr() << "\n";
-            failures++;
-        } else {
-            successes++;
-        }
-    }
-
-    std::atomic<uint64_t> failures{0};
-    std::atomic<uint64_t> successes{0};
-};
-
-} // anonymous namespace
-
 struct KafkaProducer::Impl {
+    // Delivery report callback; increments the owning producer's counters.
+    class DeliveryCb : public RdKafka::DeliveryReportCb {
+    public:
+        explicit DeliveryCb(KafkaProducer *owner) : m_owner(owner) {}
+
+        void dr_cb(RdKafka::Message &message) override {
+            if (message.err() != RdKafka::ERR_NO_ERROR) {
+                std::cerr << "Kafka delivery failed for key '"
+                          << (message.key() ? *message.key() : "")
+                          << "': " << message.errstr() << "\n";
+                m_owner->m_delivery_failures++;
+            } else {
+                m_owner->m_delivery_successes++;
+            }
+        }
+
+    private:
+        KafkaProducer *m_owner;
+    };
+
+    explicit Impl(KafkaProducer *owner) : dr_cb(owner) {}
+
     std::unique_ptr<RdKafka::Producer> producer;
-    DeliveryReportCb dr_cb;
+    DeliveryCb dr_cb;
 };
 
-KafkaProducer::KafkaProducer() : m_impl(std::make_unique<Impl>()) {}
+KafkaProducer::KafkaProducer()
+    : m_impl(std::make_unique<Impl>(this)) {}
 
 KafkaProducer::~KafkaProducer() {
     if (m_impl->producer) {

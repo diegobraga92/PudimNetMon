@@ -6,9 +6,13 @@
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <string>
 
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "metrics.pb.h"
@@ -22,11 +26,67 @@ using pudimcollector::kafka::ConsumerStats;
 using pudimcollector::kafka::CreateConsumer;
 using pudimcollector::kafka::KafkaProducer;
 
+namespace {
+
+// Fast pre-check: can we open a TCP connection to the bootstrap broker? This
+// makes the "no Kafka in CI" case skip in ~0s instead of waiting for
+// message.timeout.ms. The delivery-report guard below remains the backstop.
+bool BrokerReachable(const std::string &brokers, int timeout_ms = 2000) {
+    // Use the first host:port of the bootstrap list.
+    std::string hostport = brokers.substr(0, brokers.find(','));
+    auto colon = hostport.rfind(':');
+    if (colon == std::string::npos) return false;
+    std::string host = hostport.substr(0, colon);
+    int port = std::stoi(hostport.substr(colon + 1));
+
+    struct addrinfo hints {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo *res = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0) return false;
+    int family = res->ai_family;
+    std::size_t addrlen = res->ai_addrlen;
+
+    int fd = socket(res->ai_family, SOCK_STREAM, 0);
+    if (fd < 0) {
+        freeaddrinfo(res);
+        return false;
+    }
+
+    // Non-blocking connect with a deadline so filtered ports don't hang.
+    struct timeval tv {};
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_storage addr {};
+    std::memcpy(&addr, res->ai_addr, addrlen);
+    freeaddrinfo(res);
+    if (family == AF_INET) {
+        reinterpret_cast<struct sockaddr_in *>(&addr)->sin_port = htons(port);
+    } else {
+        reinterpret_cast<struct sockaddr_in6 *>(&addr)->sin6_port = htons(port);
+    }
+
+    bool ok = connect(fd, reinterpret_cast<struct sockaddr *>(&addr),
+                      sizeof(addr)) == 0;
+    close(fd);
+    return ok;
+}
+
+} // anonymous namespace
+
 int main() {
     const char *env = std::getenv("PUDIM_TEST_KAFKA_BROKERS");
     std::string brokers = env ? env : "localhost:9092";
     const std::string topic = "network.metrics";
     const std::string group = "pudim-e2e-" + std::to_string(getpid());
+
+    if (!BrokerReachable(brokers)) {
+        std::cout << "SKIP: Kafka broker not reachable at " << brokers << "\n";
+        return 0;
+    }
 
     // --- 1. Produce a batch ---
     KafkaProducer producer;
@@ -59,7 +119,20 @@ int main() {
 
     bool ok = producer.Produce(batch);
     assert(ok);
-    producer.Flush(10000);  // ensure delivery
+    // Block long enough for message.timeout.ms (15s) to fire delivery reports
+    // for an unreachable broker, so the SKIP guard below is reliable.
+    producer.Flush(20000);
+
+    // RdKafka::Producer::create() succeeds even with no reachable broker, so
+    // detect an unreachable cluster via the delivery report: if the batch was
+    // enqueued but never delivered successfully, skip gracefully (e.g. CI has
+    // no Kafka broker).
+    if (producer.ProducedTotal() > 0 && producer.DeliverySuccesses() == 0) {
+        std::cout << "SKIP: Kafka broker unreachable at " << brokers
+                  << " (delivery failures=" << producer.DeliveryFailures() << ")\n";
+        return 0;
+    }
+
     assert(producer.DeliveryFailures() == 0);
     assert(producer.ProducedTotal() == 1);
     std::cout << "PASS: produced batch to " << topic << " (delivery failures="
