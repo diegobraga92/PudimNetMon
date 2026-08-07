@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -18,11 +19,13 @@ MetricsServiceImpl::MetricsServiceImpl(
     std::shared_ptr<TimescaleStorage> storage,
     std::shared_ptr<alerting::AlertManager> alerts,
     std::shared_ptr<kafka::KafkaProducer> producer,
-    StorageMode mode)
+    StorageMode mode,
+    int64_t skew_threshold_ms)
     : m_storage(std::move(storage)),
       m_alerts(std::move(alerts)),
       m_producer(std::move(producer)),
-      m_mode(mode) {}
+      m_mode(mode),
+      m_skew_threshold_ms(skew_threshold_ms) {}
 
 bool MetricsServiceImpl::IngestBatch(const MetricsBatch &batch) {
     if (m_mode == StorageMode::Kafka) {
@@ -31,8 +34,12 @@ bool MetricsServiceImpl::IngestBatch(const MetricsBatch &batch) {
         return m_producer->Produce(batch);
     }
     // Direct mode (Phases 1-2): write to TimescaleDB, then evaluate alerts.
-    bool ok = m_storage->InsertMetrics(batch.agent_id(),
-                                       batch.timestamp_unix_ms(),
+    // ADR 006: the collector-assigned timestamp is the source of truth for
+    // storage (the agent's timestamp is preserved in logs/metadata only).
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
+    bool ok = m_storage->InsertMetrics(batch.agent_id(), now_ms,
                                        batch.metrics());
     if (ok && m_alerts) {
         m_alerts->Evaluate(batch.agent_id(), batch.metrics());
@@ -69,6 +76,24 @@ Status MetricsServiceImpl::SendMetrics(
     }
 
     m_received_metrics += request->metrics_size();
+
+    // Phase 5 clock hygiene (ADR 006): the collector's wall clock is the source
+    // of truth for storage. Detect large skew between the agent's reported
+    // timestamp and the collector's own clock and surface it as a warning.
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
+    int64_t skew = std::llabs(now_ms - request->timestamp_unix_ms());
+    if (skew > m_skew_threshold_ms) {
+        m_skew_warnings++;
+        std::cout << "{\"timestamp\":" << now_ms
+                  << ",\"level\":\"warn\",\"component\":\"collector\""
+                  << ",\"message\":\"clock skew detected\""
+                  << ",\"agent_id\":\"" << request->agent_id() << "\""
+                  << ",\"skew_ms\":" << skew
+                  << ",\"agent_ts_ms\":" << request->timestamp_unix_ms() << "}"
+                  << std::endl;
+    }
 
     if (!IngestBatch(*request)) {
         m_rejected_metrics += request->metrics_size();

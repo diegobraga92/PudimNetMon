@@ -15,7 +15,10 @@
 #include "metrics.pb.h"
 #include "metrics/metrics_client.h"
 #include "metrics/probes.h"
+#include "metrics/ntp_probe.h"
+#include "metrics/failover_client.h"
 #include "diagnostic_service.h"
+#include "systemd_notify.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -84,7 +87,15 @@ static inline void write(const std::string &level, const std::string &message,
 // --------------------------------------------
 static void handle_signal(int sig) {
     const char *sig_name = (sig == SIGTERM) ? "SIGTERM" :
-                           (sig == SIGINT)  ? "SIGINT" : "UNKNOWN";
+                           (sig == SIGINT)  ? "SIGINT" :
+                           (sig == SIGHUP)  ? "SIGHUP" : "UNKNOWN";
+    if (sig == SIGHUP) {
+        logger::write("info",
+                      "SIGHUP received: config reload not yet implemented (config "
+                      "is passed via CLI flags); ignoring",
+                      s_node_id, s_trace_id);
+        return;
+    }
     logger::write("info", std::string("Received ") + sig_name + ", shutting down...",
                s_node_id, "");
     s_running = false;
@@ -166,6 +177,7 @@ int main(int argc, char **argv) {
     std::map<std::string, std::vector<std::string>> dns_expected;
     std::string diagnostic_port = "50052";
     std::string diagnostic_address;  // e.g. "agent.example.com:50052"; empty = not advertised
+    std::string collector_endpoints_input;  // comma-separated failover list
 
     auto parse_list = [](const std::string &s) {
         std::vector<std::string> out;
@@ -203,13 +215,14 @@ int main(int argc, char **argv) {
         {"dns-expected",       required_argument, nullptr, 'y'},
         {"diagnostic-port",    required_argument, nullptr, 'z'},
         {"diagnostic-address", required_argument, nullptr, 'a'},
+        {"collector-endpoints", required_argument, nullptr, 'b'},
         {"help",               no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:b:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
@@ -242,6 +255,7 @@ int main(int argc, char **argv) {
             }
             case 'z': diagnostic_port = optarg; break;
             case 'a': diagnostic_address = optarg; break;
+            case 'b': collector_endpoints_input = optarg; break;
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
@@ -263,6 +277,7 @@ int main(int argc, char **argv) {
                           << "  -y, --dns-expected        Expected DNS records: host=A:1.2.3.4,host2=CNAME:x\n"
                           << "  -z, --diagnostic-port     gRPC diagnostic server port (default: 50052)\n"
                           << "  -a, --diagnostic-address  Advertised diagnostic endpoint, e.g. agent.example.com:50052\n"
+                          << "  -b, --collector-endpoints Comma-separated collector endpoints for failover\n"
                           << "  -h, --help                Show this help\n";
                 return 0;
             default:
@@ -304,8 +319,29 @@ int main(int argc, char **argv) {
     });
     diagnostic_thread.detach();
 
-    HeartbeatClient client(collector_endpoint);
-    MetricsClient metrics_client(collector_endpoint);
+    // Phase 5 service discovery: --collector-endpoints is a comma-separated
+    // failover list; --collector-endpoint (single) is kept as a fallback.
+    std::vector<std::string> endpoints;
+    if (!collector_endpoints_input.empty()) {
+        endpoints = parse_list(collector_endpoints_input);
+    } else {
+        endpoints.push_back(collector_endpoint);
+    }
+    pudimagent::FailoverClient failover(endpoints);
+
+    auto reconnect = [&]() {
+        const std::string &ep = failover.CurrentEndpoint();
+        LOG_INFO("Connecting to collector endpoint: " + ep);
+        return std::make_pair(std::make_unique<HeartbeatClient>(ep),
+                              std::make_unique<MetricsClient>(ep));
+    };
+    auto clients = reconnect();
+
+    // Phase 5 daemon hardening: notify systemd (Type=notify) and ping watchdog.
+    std::signal(SIGHUP, handle_signal);
+    pudimagent::NotifyReady();
+    bool watchdog_stop = false;
+    pudimagent::StartWatchdogThread(&watchdog_stop);
 
     std::vector<std::string> probe_targets;
     for (const auto *vec : {&dns_targets, &tcp_targets, &tls_targets,
@@ -341,7 +377,14 @@ int main(int argc, char **argv) {
     // Main loop
     uint64_t seq = 0;
     while (s_running) {
-        client.SendHeartbeat(interval_ms, version);
+        bool hb_ok = clients.first->SendHeartbeat(interval_ms, version);
+        if (hb_ok) {
+            failover.OnSendSuccess();
+        } else if (failover.OnSendFailure()) {
+            LOG_WARN("Heartbeat failed; failing over to " +
+                     failover.CurrentEndpoint());
+            clients = reconnect();
+        }
 
         // Collect and send metrics
         std::vector<pudimnetmon::Metric> metrics;
@@ -362,12 +405,17 @@ int main(int argc, char **argv) {
         LOG_INFO("Collected " + std::to_string(batch.metrics_size()) +
                  " metrics, sending to collector");
         bool ok = use_stream_metrics
-                      ? metrics_client.StreamMetrics(node_id, batch.metrics())
-                      : metrics_client.SendBatch(batch);
+                      ? clients.second->StreamMetrics(node_id, batch.metrics())
+                      : clients.second->SendBatch(batch);
         if (ok) {
             LOG_INFO("Metrics batch accepted by collector");
+            failover.OnSendSuccess();
         } else {
             LOG_WARN("Metrics batch rejected or send failed");
+            if (failover.OnSendFailure()) {
+                LOG_WARN("Failing over to " + failover.CurrentEndpoint());
+                clients = reconnect();
+            }
         }
 
         // Sleep in small increments so we can respond to signals promptly
@@ -378,6 +426,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    watchdog_stop = true;
     LOG_INFO("Agent shut down gracefully");
     return 0;
 }

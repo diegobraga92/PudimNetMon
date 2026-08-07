@@ -26,6 +26,8 @@ bool CheckTypeFromString(const std::string &s, pudimnetmon::CheckType &out) {
     if (s == "tcp_retransmit")      { out = pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT;  return true; }
     if (s == "dns_record")          { out = pudimnetmon::CHECK_TYPE_DNS_RECORD;      return true; }
     if (s == "tcp_handshake")       { out = pudimnetmon::CHECK_TYPE_TCP_HANDSHAKE;   return true; }
+    // Phase 5
+    if (s == "ntp_offset")          { out = pudimnetmon::CHECK_TYPE_NTP_OFFSET;      return true; }
     return false;
 }
 

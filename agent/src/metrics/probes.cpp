@@ -23,6 +23,7 @@
 #include <openssl/x509v3.h>
 
 #include "probes.h"
+#include "ntp_probe.h"
 
 namespace pudimagent {
 
@@ -911,6 +912,12 @@ void ProbeIcmp(const std::string &host, int count,
 
 void RunAllProbes(const ProbeConfig &config,
                   std::vector<pudimnetmon::Metric> &out_metrics) {
+    // Phase 5: kernel clock offset (always emitted when enabled).
+    if (config.ntp_check) {
+        pudimnetmon::Metric ntp;
+        ProbeNtpOffset(ntp);
+        out_metrics.push_back(std::move(ntp));
+    }
     for (const auto &t : config.dns_targets) {
         pudimnetmon::Metric m;
         RunDnsProbe(t, m);

@@ -102,24 +102,20 @@ npm run dev
 └── docker-compose.yml     # Local development environment
 ```
 
-## Current Phase: Phase 4 — Advanced Networking & Deep Diagnostics
+## Current Phase: Phase 5 — Systems Engineering, Time Sync & Service Discovery
 
-**Phase 0 (Skeleton) ✅ — Phase 1 (Metrics & Storage) ✅ — Phase 2 (Alerting) ✅ — Phase 3 (Kafka) ✅ — Phase 4 (Deep Networking) ✅**
+**Phase 0 (Skeleton) ✅ — Phase 1 (Metrics) ✅ — Phase 2 (Alerting) ✅ — Phase 3 (Kafka) ✅ — Phase 4 (Deep Networking) ✅ — Phase 5 (SysEng/Time/Discovery) ✅**
 
 - ✅ Protobuf API contracts (`heartbeat.proto`, `metrics.proto`, `diagnostic.proto`)
-- ✅ C++ agent: gRPC client (unary + streaming), diagnostic gRPC server, JSON logging, CLI flags, systemd unit
-- ✅ C++ collector: gRPC server, agent registry, HTTP endpoints, TimescaleDB storage
-- ✅ **Deep network probes**: TLS certificate validation (expiry/issuer/hostname), DNS record lookup + expected-value
-  alarm, TCP handshake capture (libpcap, SYN/SYN-ACK/ACK timing), TCP retransmission (`TCP_INFO`), HTTP/1.1 vs HTTP/2 vs HTTP/3
-- ✅ **Diagnostic mode**: collector-triggered `traceroute` + `tcpdump` on the agent, results returned via gRPC
-- ✅ Alerting engine: JSON rules, state machine, Log + Webhook notifiers
-- ✅ **Kafka backbone**: KRaft broker, `network.metrics` topic keyed by agent ID, storage + alert consumers,
-  at-least-once + idempotent writes, consumer-lag metrics
-- ✅ React dashboard: health, agent list, time-series graphs, **TLS expiry timeline**, **HTTP protocol comparison**,
-  **per-agent diagnostic runner**, active alerts + history
-- ✅ Metric attributes persisted as JSONB and exposed via `/api/metrics`
-- ✅ GitHub Actions CI: C++ build/test (Debug, incl. libpcap), TypeScript lint/build
-- ✅ ADRs 001–005, SLO draft, runbooks, `docs/networking-deep-dive.md`
+- ✅ C++ agent: `Type=notify` + watchdog (`sd_notify`), SIGHUP handling, unprivileged user with `CAP_NET_RAW`+`CAP_NET_ADMIN`, journald logging, diagnostic gRPC server
+- ✅ **NTP offset probe** (`ntp_adjtime()`, `CHECK_TYPE_NTP_OFFSET`), clock-skew detection at the collector (`--skew-threshold-ms`, `pudim_clock_skew_warnings_total`), collector-assigned timestamps as source of truth
+- ✅ **Service discovery**: `--collector-endpoints` failover list with 3-strike rotation (`FailoverClient`), DNS/K8s discovery documented
+- ✅ **Deep network probes**: TLS cert validation, DNS records, TCP handshake (libpcap), TCP retransmit, HTTP/1.1-vs-2-vs-3
+- ✅ **Diagnostic mode**: collector-triggered `traceroute` + `tcpdump` on the agent
+- ✅ Kafka backbone (KRaft broker, storage + alert consumers, at-least-once + idempotent writes)
+- ✅ Dashboard: NTP offset chart, TLS expiry timeline, HTTP protocol comparison, diagnostic runner, alerts + history
+- ✅ Docs: ADRs 001–007, `docs/networking-deep-dive.md`, `docs/kernel-tuning.md`, runbooks
+- ✅ CI: C++ build/test (Debug), TypeScript lint/build
 
 ### Architecture
 
@@ -139,43 +135,24 @@ docker compose up --build
 # alert cons.:   http://localhost:9092/metrics (Prometheus)
 ```
 
+### Service discovery & clock hygiene (Phase 5)
+
+```bash
+# Failover: try collector-a first, then collector-b after 3 consecutive failures
+./build-agent/pudim-agent --collector-endpoints=collector-a:50051,collector-b:50051 ...
+
+# Skew threshold on the collector (default 5000 ms)
+./build-collector/pudim-collector --skew-threshold-ms=5000 ...
+```
+
 ### Deep diagnostics (Phase 4)
 
 ```bash
-# Agent with deep probes enabled (default on)
 ./build-agent/pudim-agent \
   --tls-targets=example.com:443 \
   --http-targets=https://example.com --http-protocols=http1.1,http2 \
-  --dns-targets=example.com \
-  --dns-expected=example.com=A:93.184.216.34 \
+  --dns-targets=example.com --dns-expected=example.com=A:93.184.216.34 \
   --diagnostic-address=agent.example.com:50052
-
-# Trigger a diagnostic (traceroute + 5s of tcpdump on the agent)
-curl -s -X POST 'http://localhost:8080/diagnostic' \
-  --data-urlencode 'agent_id=agent-docker-001' \
-  --data-urlencode 'trace_target=example.com' \
-  --data-urlencode 'pcap_duration_s=5' \
-  --data-urlencode 'pcap_filter=tcp port 443'
-```
-
-Requires `libpcap` (compile), plus `traceroute` and `tcpdump` on the agent host.
-Without libpcap the TCP-handshake probe degrades gracefully (see ADR 005).
-
-### Alerting
-
-Alert rules live in `collector/config/alert_rules.json`, evaluated by the **alert
-consumer** in Kafka mode:
-
-```json
-{
-  "webhook_url": "http://localhost:9000/hooks/pudim",
-  "rules": [
-    { "id": "high-tcp-latency", "check_type": "tcp_connect", "metric": "latency_ms",
-      "op": ">", "threshold": 500, "repeat_interval_sec": 300, "severity": "warning" },
-    { "id": "dns-failure", "check_type": "dns_resolution", "on_failure": true,
-      "severity": "critical" }
-  ]
-}
 ```
 
 ## License

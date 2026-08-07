@@ -69,6 +69,8 @@ enum CheckType {
   CHECK_TYPE_TCP_RETRANSMIT = 8;    // status_code = tcpi_total_retrans
   CHECK_TYPE_DNS_RECORD = 9;        // attributes: A, AAAA, CNAME
   CHECK_TYPE_TCP_HANDSHAKE = 10;    // latency_ms = SYN->SYN-ACK; attributes: syn_synack_ms, synack_ack_ms
+  // Phase 5:
+  CHECK_TYPE_NTP_OFFSET = 11;       // latency_ms = kernel clock offset (ms), signed
 }
 
 message MetricsResponse {

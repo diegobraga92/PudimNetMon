@@ -5,13 +5,16 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+WatchdogSec=60
 ExecStart=/usr/local/bin/pudim-agent \
-    --collector-endpoint=collector.example.com:50051 \
+    --collector-endpoints=collector.example.com:50051 \
     --node-id=%H \
     --interval=5000
 
-# Security hardening
+# Security hardening: run unprivileged and retain only the capabilities the
+# probes need (CAP_NET_RAW for ICMP raw sockets, CAP_NET_ADMIN for libpcap).
 User=nobody
 Group=nogroup
 NoNewPrivileges=true
@@ -19,12 +22,18 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
-CapabilityBoundingSet=~CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
 
 # Resource limits
 LimitNOFILE=65536
 MemoryMax=256M
 CPUQuota=50%
+
+# Log rotation / journald: stdout+stderr captured and rotated by journald
+StandardOutput=journal
+StandardError=journal
+JournaldStreamRateIntervalSec=10
 
 # Restart behavior
 Restart=always

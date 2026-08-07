@@ -32,6 +32,8 @@ struct ProbeConfig {
     // A configured record that mismatches the resolved value marks the metric
     // success=false (alarm on mismatch).
     std::map<std::string, std::vector<std::string>> dns_expected;
+    // ---- Phase 5: clock hygiene ----
+    bool ntp_check = true;             // emit CHECK_TYPE_NTP_OFFSET each cycle
 };
 
 // Runs all configured probes and appends metrics to out_metrics.

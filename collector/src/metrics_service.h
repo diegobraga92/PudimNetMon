@@ -28,7 +28,8 @@ public:
         std::shared_ptr<TimescaleStorage> storage,
         std::shared_ptr<alerting::AlertManager> alerts = nullptr,
         std::shared_ptr<kafka::KafkaProducer> producer = nullptr,
-        StorageMode mode = StorageMode::Direct);
+        StorageMode mode = StorageMode::Direct,
+        int64_t skew_threshold_ms = 5000);
 
     grpc::Status SendMetrics(
         grpc::ServerContext *ctx,
@@ -43,6 +44,9 @@ public:
     // True when Kafka mode is active.
     bool KafkaEnabled() const { return m_mode == StorageMode::Kafka; }
 
+    // Number of clock-skew warnings observed on the unary ingest path.
+    uint64_t SkewWarnings() const { return m_skew_warnings.load(); }
+
 private:
     bool IngestBatch(const pudimnetmon::MetricsBatch &batch);
 
@@ -50,9 +54,11 @@ private:
     std::shared_ptr<alerting::AlertManager> m_alerts;
     std::shared_ptr<kafka::KafkaProducer> m_producer;
     StorageMode m_mode;
+    int64_t m_skew_threshold_ms;
     std::atomic<uint64_t> m_received_metrics{0};
     std::atomic<uint64_t> m_rejected_metrics{0};
     std::atomic<uint64_t> m_batches_received{0};
+    std::atomic<uint64_t> m_skew_warnings{0};
 
 public:
     uint64_t ReceivedMetrics() const { return m_received_metrics.load(); }

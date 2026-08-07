@@ -141,34 +141,34 @@
 
 ### Daemon & Hardening
 
-- [ ] Agent as a proper daemon:
-  - [ ] systemd unit with `Type=notify`, watchdog support, `Restart=always`
-  - [ ] Signal handling (SIGTERM graceful shutdown, SIGHUP config reload)
-  - [ ] Process lifecycle management, PID file, logging to stdout/stderr
-- [ ] Linux capabilities: drop all privileges, retain only `CAP_NET_RAW` and `CAP_SYS_ADMIN` (if needed)
-- [ ] Resource limits: set `LimitNOFILE`, `MemoryMax`, `CPUQuota` in systemd unit
-- [ ] Kernel tuning experiments:
-  - [ ] TCP buffer sizes (`tcp_rmem`, `tcp_wmem`), `tcp_congestion_control` comparison (cubic vs bbr)
-  - [ ] `tcp_fastopen`, `tcp_tw_reuse` – document impact on agent’s measurements
-  - [ ] Network namespace isolation (optional)
-- [ ] Log rotation: journald or logrotate configuration
-- [ ] Security: run agent as unprivileged user; AppArmor/SELinux profile (optional but documented)
+- [x] Agent as a proper daemon:
+  - [x] systemd unit with `Type=notify`, watchdog support, `Restart=always`
+  - [x] Signal handling (SIGTERM graceful shutdown, SIGHUP config reload)
+  - [x] Process lifecycle management, PID file, logging to stdout/stderr
+- [x] Linux capabilities: drop all privileges, retain only `CAP_NET_RAW` and `CAP_SYS_ADMIN` (if needed)
+- [x] Resource limits: set `LimitNOFILE`, `MemoryMax`, `CPUQuota` in systemd unit
+- [x] Kernel tuning experiments:
+  - [x] TCP buffer sizes (`tcp_rmem`, `tcp_wmem`), `tcp_congestion_control` comparison (cubic vs bbr)
+  - [x] `tcp_fastopen`, `tcp_tw_reuse` – document impact on agent’s measurements
+  - [x] Network namespace isolation (optional)
+- [x] Log rotation: journald or logrotate configuration
+- [x] Security: run agent as unprivileged user; AppArmor/SELinux profile (optional but documented)
 
 ### Time Synchronization & Clock Hygiene
 
-- [ ] NTP drift monitoring: agent periodically checks NTP offset via `ntp_gettime()` or external NTP query; includes `ntp.offset.ms` in health metrics
-- [ ] Clock skew detection: collector compares agent timestamp to its own wall clock on receipt; logs warning if skew exceeds configurable threshold
-- [ ] Timestamp normalization strategy: all metrics stored with collector‑assigned timestamp as source of truth; agent‑reported timestamp preserved as metadata for debugging
-- [ ] Dashboard: NTP offset graph per agent, skew warnings
-- [ ] ADR: `006-time-handling-across-agents.md`
+- [x] NTP drift monitoring: agent periodically checks NTP offset via `ntp_gettime()` or external NTP query; includes `ntp.offset.ms` in health metrics
+- [x] Clock skew detection: collector compares agent timestamp to its own wall clock on receipt; logs warning if skew exceeds configurable threshold
+- [x] Timestamp normalization strategy: all metrics stored with collector‑assigned timestamp as source of truth; agent‑reported timestamp preserved as metadata for debugging
+- [x] Dashboard: NTP offset graph per agent, skew warnings
+- [x] ADR: `006-time-handling-across-agents.md`
 
 ### Service Discovery & Configuration
 
-- [ ] DNS‑based discovery: agent resolves a configurable hostname (e.g., `collector.example.com`); repointable for failover
-- [ ] Kubernetes service discovery: when running in‑cluster, agent uses `collector-service.namespace.svc.cluster.local` via CoreDNS
-- [ ] Failover discovery process: agent holds a prioritized list of collector endpoints; on connection failure, tries next; success recorded in log and metric
-- [ ] Document discovery logic, retry backoff, and how this integrates with multi‑region failover (Phase 7)
-- [ ] ADR: `007-service-discovery-strategy.md`
+- [x] DNS‑based discovery: agent resolves a configurable hostname (e.g., `collector.example.com`); repointable for failover
+- [x] Kubernetes service discovery: when running in‑cluster, agent uses `collector-service.namespace.svc.cluster.local` via CoreDNS
+- [x] Failover discovery process: agent holds a prioritized list of collector endpoints; on connection failure, tries next; success recorded in log and metric
+- [x] Document discovery logic, retry backoff, and how this integrates with multi‑region failover (Phase 7)
+- [x] ADR: `007-service-discovery-strategy.md`
 
 ---
 
@@ -261,10 +261,10 @@
 - [x] Kafka integration as metrics backbone; consumer lag monitored
 - [x] Deep networking checks: DNS, TCP handshake, TLS cert, HTTP/2 vs HTTP/3, packet loss, jitter
 - [x] Network diagnostic mode (traceroute, pcap) with Wireshark/tcpdump annotated documentation
-- [ ] Kernel tuning experiments and systemd hardening
+- [x] Kernel tuning experiments and systemd hardening
 - [ ] Mutual TLS between agent and collector, certificate rotation
-- [ ] Time synchronization: NTP drift monitoring, clock skew detection, timestamp normalization; ADR
-- [ ] Service discovery: DNS, Kubernetes, failover process; ADR
+- [x] Time synchronization: NTP drift monitoring, clock skew detection, timestamp normalization; ADR
+- [x] Service discovery: DNS, Kubernetes, failover process; ADR
 - [ ] Overload & backpressure: collector overload simulation, Kafka slowdown, backpressure strategy, metric dropping policy, buffering limits, memory safeguards; ADR
 - [ ] Chaos experiments: collector kill, network partition, DNS failure, clock skew injection; documented
 - [ ] Two simulated postmortems written (overload OOM, clock skew alert storm)

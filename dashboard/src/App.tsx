@@ -74,7 +74,7 @@ interface AlertHistoryEntry {
   time_ms: number
 }
 
-type CheckTypeFilter = 'all' | 'dns_resolution' | 'tcp_connect' | 'tls_handshake' | 'http_request' | 'icmp_ping' | 'jitter' | 'tls_certificate' | 'tcp_retransmit' | 'dns_record' | 'tcp_handshake'
+type CheckTypeFilter = 'all' | 'dns_resolution' | 'tcp_connect' | 'tls_handshake' | 'http_request' | 'icmp_ping' | 'jitter' | 'tls_certificate' | 'tcp_retransmit' | 'dns_record' | 'tcp_handshake' | 'ntp_offset'
 
 const CHECK_TYPE_LABELS: Record<string, string> = {
   dns_resolution: 'DNS Resolution (ms)',
@@ -87,6 +87,7 @@ const CHECK_TYPE_LABELS: Record<string, string> = {
   tcp_retransmit: 'TCP Retransmits',
   dns_record: 'DNS Records',
   tcp_handshake: 'TCP Handshake (ms)',
+  ntp_offset: 'NTP Offset (ms)',
 }
 
 const CHECK_TYPE_COLORS: Record<string, string> = {
@@ -100,6 +101,7 @@ const CHECK_TYPE_COLORS: Record<string, string> = {
   tcp_retransmit: '#fd79a8',
   dns_record: '#00b894',
   tcp_handshake: '#e17055',
+  ntp_offset: '#fdcb6e',
 }
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -300,6 +302,24 @@ function App() {
       groups.set(v.url, g)
     })
     return Array.from(groups.values())
+  }, [metrics])
+
+  // --- Phase 5: NTP offset time series (per agent) ---
+  const ntpSeries = useMemo(() => {
+    return metrics
+      .filter((m) => m.check_type === 'ntp_offset' && m.success)
+      .map((m) => ({
+        time: new Date(m.time_ms).toLocaleTimeString(),
+        time_ms: m.time_ms,
+        [`${m.agent_id}`]: m.value,
+      }))
+  }, [metrics])
+  const ntpAgents = useMemo(() => {
+    const keys = new Set<string>()
+    metrics
+      .filter((m) => m.check_type === 'ntp_offset' && m.success)
+      .forEach((m) => keys.add(m.agent_id))
+    return Array.from(keys)
   }, [metrics])
 
   const runDiagnostic = async (agent: AgentInfo) => {
@@ -522,6 +542,34 @@ function App() {
                 <Bar dataKey="http2" name="HTTP/2" fill="#4ecdc4" />
                 <Bar dataKey="http3" name="HTTP/3" fill="#a29bfe" />
               </BarChart>
+            </ResponsiveContainer>
+          )}
+        </section>
+
+        <section className="ntp-section">
+          <h2>NTP Offset (ms)</h2>
+          {ntpAgents.length === 0 ? (
+            <p className="no-alerts">No NTP offset data yet. The agent probes ntp_adjtime() each cycle.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={ntpSeries} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2d3436" />
+                <XAxis dataKey="time" tick={{ fill: '#dfe6e9', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#dfe6e9', fontSize: 12 }} />
+                <Tooltip contentStyle={{ backgroundColor: '#2d3436', border: '1px solid #636e72', borderRadius: 6, color: '#dfe6e9' }} />
+                <Legend wrapperStyle={{ color: '#dfe6e9' }} />
+                {ntpAgents.map((agent, i) => (
+                  <Line
+                    key={agent}
+                    type="monotone"
+                    dataKey={agent}
+                    stroke={Object.values(CHECK_TYPE_COLORS)[i % Object.values(CHECK_TYPE_COLORS).length]}
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                ))}
+              </LineChart>
             </ResponsiveContainer>
           )}
         </section>

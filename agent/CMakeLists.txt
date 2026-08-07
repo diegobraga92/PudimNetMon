@@ -14,12 +14,19 @@ find_package(CURL REQUIRED)
 find_package(PkgConfig)
 if(PkgConfig_FOUND)
   pkg_check_modules(PCAP libpcap)
+  pkg_check_modules(SYSTEMD libsystemd)
 endif()
 if(PCAP_FOUND)
   add_compile_definitions(HAVE_LIBPCAP=1)
   message(STATUS "libpcap found: TCP handshake capture enabled")
 else()
   message(STATUS "libpcap NOT found: TCP handshake capture disabled")
+endif()
+if(SYSTEMD_FOUND)
+  add_compile_definitions(HAVE_LIBSYSTEMD=1)
+  message(STATUS "libsystemd found: sd_notify (Type=notify) enabled")
+else()
+  message(STATUS "libsystemd NOT found: sd_notify disabled")
 endif()
 
 # Proto generation
@@ -88,7 +95,10 @@ add_executable(pudim-agent
   src/metrics/probes.cpp
   src/metrics/pcap_probe.cpp
   src/metrics/metrics_client.cpp
+  src/metrics/ntp_probe.cpp
+  src/metrics/failover_client.cpp
   src/diagnostic_service.cpp
+  src/systemd_notify.cpp
 )
 target_link_libraries(pudim-agent
   PRIVATE
@@ -104,6 +114,10 @@ if(PCAP_FOUND)
   target_link_libraries(pudim-agent PRIVATE ${PCAP_LIBRARIES})
   target_include_directories(pudim-agent PRIVATE ${PCAP_INCLUDE_DIRS})
 endif()
+if(SYSTEMD_FOUND)
+  target_link_libraries(pudim-agent PRIVATE ${SYSTEMD_LIBRARIES})
+  target_include_directories(pudim-agent PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+endif()
 target_include_directories(pudim-agent PRIVATE ${CMAKE_BINARY_DIR})
 
 # Tests
@@ -112,6 +126,7 @@ add_executable(test-probes
   tests/test_probes.cpp
   src/metrics/probes.cpp
   src/metrics/pcap_probe.cpp
+  src/metrics/ntp_probe.cpp
 )
 target_link_libraries(test-probes
   PRIVATE

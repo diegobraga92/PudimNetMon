@@ -573,3 +573,18 @@ body {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* ---------- Phase 5: NTP offset ---------- */
+.ntp-section {
+  margin-bottom: 1.5rem;
+  padding: 1.25rem;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.ntp-section h2 {
+  margin-bottom: 0.75rem;
+  font-size: 1.1rem;
+  color: #c9d1d9;
+}

@@ -118,6 +118,7 @@ services:
       --diagnostic-address=agent:50052
     cap_add:
       - NET_RAW
+      - NET_ADMIN
     depends_on:
       - collector
     restart: unless-stopped

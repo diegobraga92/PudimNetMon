@@ -76,6 +76,8 @@ const char *CheckTypeToString(pudimnetmon::CheckType type) {
         case pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT:  return "tcp_retransmit";
         case pudimnetmon::CHECK_TYPE_DNS_RECORD:      return "dns_record";
         case pudimnetmon::CHECK_TYPE_TCP_HANDSHAKE:   return "tcp_handshake";
+        // Phase 5
+        case pudimnetmon::CHECK_TYPE_NTP_OFFSET:      return "ntp_offset";
         default:                                     return "unspecified";
     }
 }

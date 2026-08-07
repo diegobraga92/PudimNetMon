@@ -5,6 +5,7 @@
 
 #include "metrics.pb.h"
 #include "metrics/probes.h"
+#include "metrics/ntp_probe.h"
 
 using pudimnetmon::CheckType;
 using pudimnetmon::Metric;
@@ -13,6 +14,7 @@ using pudimagent::RunAllProbes;
 
 static void TestEmptyConfig() {
     ProbeConfig cfg; // No targets
+    cfg.ntp_check = false;
     std::vector<Metric> metrics;
     RunAllProbes(cfg, metrics);
     assert(metrics.empty());
@@ -119,10 +121,20 @@ static void TestAllProbesLocalhost() {
     std::vector<Metric> metrics;
     RunAllProbes(cfg, metrics);
 
-    // dns(+record) + tcp(+retransmit+handshake) + tls(+cert) + http = 8
-    assert(metrics.size() >= 8);
+    // ntp + dns(+record) + tcp(+retransmit+handshake) + tls(+cert) + http = 9
+    assert(metrics.size() >= 9);
     std::cout << "PASS: RunAllProbes produced " << metrics.size()
               << " metrics\n";
+}
+
+static void TestNtpOffset() {
+    Metric m;
+    pudimagent::ProbeNtpOffset(m);
+    assert(m.check_type() == CheckType::CHECK_TYPE_NTP_OFFSET);
+    assert(m.success());
+    assert(m.has_latency_ms());
+    std::cout << "PASS: NTP offset probe produced offset="
+              << m.latency_ms() << " ms\n";
 }
 
 int main() {
@@ -135,6 +147,7 @@ int main() {
     TestTcpRetransmitLocalhost();
     TestTlsCertMetric();
     TestHttpProtocolHttp11();
+    TestNtpOffset();
     TestAllProbesLocalhost();
     std::cout << "ALL AGENT PROBE TESTS PASSED\n";
     return 0;
