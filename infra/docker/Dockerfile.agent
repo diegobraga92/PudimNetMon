@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y -qq \
     cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
     libgrpc-dev protobuf-compiler-grpc build-essential \
     pkg-config git ca-certificates \
-    libcurl4-openssl-dev libssl-dev
+    libcurl4-openssl-dev libssl-dev libpcap-dev
 
 WORKDIR /build
 COPY agent/ ./agent/
@@ -18,7 +18,8 @@ FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y -qq \
     libprotobuf32t64 libgrpc++1.51t64 \
-    libcurl4t64 libssl3t64 && \
+    libcurl4t64 libssl3t64 libpcap0.8t64 \
+    traceroute tcpdump && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/pudim-agent /usr/local/bin/pudim-agent

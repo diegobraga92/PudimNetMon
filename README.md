@@ -102,27 +102,31 @@ npm run dev
 └── docker-compose.yml     # Local development environment
 ```
 
-## Current Phase: Phase 3 — Kafka Event Backbone
+## Current Phase: Phase 4 — Advanced Networking & Deep Diagnostics
 
-**Phase 0 (Skeleton) ✅ — Phase 1 (Metrics & Storage) ✅ — Phase 2 (Alerting) ✅ — Phase 3 (Kafka) ✅**
+**Phase 0 (Skeleton) ✅ — Phase 1 (Metrics & Storage) ✅ — Phase 2 (Alerting) ✅ — Phase 3 (Kafka) ✅ — Phase 4 (Deep Networking) ✅**
 
-- ✅ Protobuf API contracts (`heartbeat.proto`, `metrics.proto`)
-- ✅ C++ agent: gRPC client (unary + streaming), JSON logging, CLI flags, systemd unit
+- ✅ Protobuf API contracts (`heartbeat.proto`, `metrics.proto`, `diagnostic.proto`)
+- ✅ C++ agent: gRPC client (unary + streaming), diagnostic gRPC server, JSON logging, CLI flags, systemd unit
 - ✅ C++ collector: gRPC server, agent registry, HTTP endpoints, TimescaleDB storage
-- ✅ Network probes: DNS, TCP connect, TLS handshake, HTTP, ICMP (packet loss + RTT + jitter)
+- ✅ **Deep network probes**: TLS certificate validation (expiry/issuer/hostname), DNS record lookup + expected-value
+  alarm, TCP handshake capture (libpcap, SYN/SYN-ACK/ACK timing), TCP retransmission (`TCP_INFO`), HTTP/1.1 vs HTTP/2 vs HTTP/3
+- ✅ **Diagnostic mode**: collector-triggered `traceroute` + `tcpdump` on the agent, results returned via gRPC
 - ✅ Alerting engine: JSON rules, state machine, Log + Webhook notifiers
-- ✅ **Kafka backbone**: KRaft broker (Docker Compose), collector produces `network.metrics`
-  (keyed by agent ID), separate `pudim-consumer-storage` + `pudim-consumer-alert` consumers,
-  at-least-once with idempotent DB writes (`ON CONFLICT DO NOTHING`), consumer-lag metrics
-- ✅ React dashboard: health, agent list, time-series graphs, active alerts pane, alert history
-- ✅ GitHub Actions CI: C++ build/test (Debug), TypeScript lint/build
-- ✅ ADRs 001–004, SLO draft, runbooks
+- ✅ **Kafka backbone**: KRaft broker, `network.metrics` topic keyed by agent ID, storage + alert consumers,
+  at-least-once + idempotent writes, consumer-lag metrics
+- ✅ React dashboard: health, agent list, time-series graphs, **TLS expiry timeline**, **HTTP protocol comparison**,
+  **per-agent diagnostic runner**, active alerts + history
+- ✅ Metric attributes persisted as JSONB and exposed via `/api/metrics`
+- ✅ GitHub Actions CI: C++ build/test (Debug, incl. libpcap), TypeScript lint/build
+- ✅ ADRs 001–005, SLO draft, runbooks, `docs/networking-deep-dive.md`
 
-### Architecture (Phase 3)
+### Architecture
 
 ```
 Agent ──gRPC──▶ Collector ──produce──▶ Kafka ──consume──▶ pudim-consumer-storage ──▶ TimescaleDB
-                       (network.metrics)                 └──▶ pudim-consumer-alert ──▶ AlertManager
+       │                  (network.metrics)             └──▶ pudim-consumer-alert ──▶ AlertManager
+       └── diagnostic gRPC (:50052) ◀── POST /diagnostic ── Collector :8080
 ```
 
 ### Running the full stack
@@ -135,15 +139,32 @@ docker compose up --build
 # alert cons.:   http://localhost:9092/metrics (Prometheus)
 ```
 
-The collector runs in **Kafka mode** (via `--kafka-brokers=kafka:9092`) and no longer
-writes to TimescaleDB or evaluates alerts in-process — the two consumers own those
-concerns. Without `--kafka-brokers` the collector falls back to the direct path.
+### Deep diagnostics (Phase 4)
+
+```bash
+# Agent with deep probes enabled (default on)
+./build-agent/pudim-agent \
+  --tls-targets=example.com:443 \
+  --http-targets=https://example.com --http-protocols=http1.1,http2 \
+  --dns-targets=example.com \
+  --dns-expected=example.com=A:93.184.216.34 \
+  --diagnostic-address=agent.example.com:50052
+
+# Trigger a diagnostic (traceroute + 5s of tcpdump on the agent)
+curl -s -X POST 'http://localhost:8080/diagnostic' \
+  --data-urlencode 'agent_id=agent-docker-001' \
+  --data-urlencode 'trace_target=example.com' \
+  --data-urlencode 'pcap_duration_s=5' \
+  --data-urlencode 'pcap_filter=tcp port 443'
+```
+
+Requires `libpcap` (compile), plus `traceroute` and `tcpdump` on the agent host.
+Without libpcap the TCP-handshake probe degrades gracefully (see ADR 005).
 
 ### Alerting
 
 Alert rules live in `collector/config/alert_rules.json`, evaluated by the **alert
-consumer** in Kafka mode. Each rule declares a check type, metric field, operator,
-threshold, repeat interval and severity:
+consumer** in Kafka mode:
 
 ```json
 {

@@ -15,6 +15,7 @@ message HeartbeatRequest {
   int64 timestamp_unix_ms = 2; // Agent's wall clock at send time
   int32 interval_ms = 3;     // Configured heartbeat interval in ms
   string version = 4;        // Agent software version (semver)
+  string diagnostic_endpoint = 5; // host:port of the agent's diagnostic gRPC server (Phase 4)
 }
 
 message HeartbeatResponse {

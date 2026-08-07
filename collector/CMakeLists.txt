@@ -36,23 +36,28 @@ set(PROTO_DIR "${CMAKE_SOURCE_DIR}/../api/proto")
 set(PROTO_FILES
   "${PROTO_DIR}/heartbeat.proto"
   "${PROTO_DIR}/metrics.proto"
+  "${PROTO_DIR}/diagnostic.proto"
 )
 
 set(PROTO_GEN_SRCS
   "${CMAKE_BINARY_DIR}/heartbeat.pb.cc"
   "${CMAKE_BINARY_DIR}/metrics.pb.cc"
+  "${CMAKE_BINARY_DIR}/diagnostic.pb.cc"
 )
 set(PROTO_GEN_HDRS
   "${CMAKE_BINARY_DIR}/heartbeat.pb.h"
   "${CMAKE_BINARY_DIR}/metrics.pb.h"
+  "${CMAKE_BINARY_DIR}/diagnostic.pb.h"
 )
 set(GRPC_GEN_SRCS
   "${CMAKE_BINARY_DIR}/heartbeat.grpc.pb.cc"
   "${CMAKE_BINARY_DIR}/metrics.grpc.pb.cc"
+  "${CMAKE_BINARY_DIR}/diagnostic.grpc.pb.cc"
 )
 set(GRPC_GEN_HDRS
   "${CMAKE_BINARY_DIR}/heartbeat.grpc.pb.h"
   "${CMAKE_BINARY_DIR}/metrics.grpc.pb.h"
+  "${CMAKE_BINARY_DIR}/diagnostic.grpc.pb.h"
 )
 
 add_custom_command(

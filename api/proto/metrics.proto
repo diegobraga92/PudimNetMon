@@ -64,6 +64,11 @@ enum CheckType {
   CHECK_TYPE_HTTP_REQUEST = 4;
   CHECK_TYPE_ICMP_PING = 5;
   CHECK_TYPE_JITTER = 6;
+  // Phase 4 deep diagnostics:
+  CHECK_TYPE_TLS_CERTIFICATE = 7;   // attributes: tls_cert_expiry_days, tls_cert_subject, tls_cert_issuer, tls_cert_valid
+  CHECK_TYPE_TCP_RETRANSMIT = 8;    // status_code = tcpi_total_retrans
+  CHECK_TYPE_DNS_RECORD = 9;        // attributes: A, AAAA, CNAME
+  CHECK_TYPE_TCP_HANDSHAKE = 10;    // latency_ms = SYN->SYN-ACK; attributes: syn_synack_ms, synack_ack_ms
 }
 
 message MetricsResponse {

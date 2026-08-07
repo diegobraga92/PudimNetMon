@@ -10,29 +10,45 @@ find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
+# libpcap is optional: without it the TCP-handshake probe degrades gracefully.
+find_package(PkgConfig)
+if(PkgConfig_FOUND)
+  pkg_check_modules(PCAP libpcap)
+endif()
+if(PCAP_FOUND)
+  add_compile_definitions(HAVE_LIBPCAP=1)
+  message(STATUS "libpcap found: TCP handshake capture enabled")
+else()
+  message(STATUS "libpcap NOT found: TCP handshake capture disabled")
+endif()
 
 # Proto generation
 set(PROTO_DIR "${CMAKE_SOURCE_DIR}/../api/proto")
 set(PROTO_FILES
   "${PROTO_DIR}/heartbeat.proto"
   "${PROTO_DIR}/metrics.proto"
+  "${PROTO_DIR}/diagnostic.proto"
 )
 
 set(PROTO_GEN_SRCS
   "${CMAKE_BINARY_DIR}/heartbeat.pb.cc"
   "${CMAKE_BINARY_DIR}/metrics.pb.cc"
+  "${CMAKE_BINARY_DIR}/diagnostic.pb.cc"
 )
 set(PROTO_GEN_HDRS
   "${CMAKE_BINARY_DIR}/heartbeat.pb.h"
   "${CMAKE_BINARY_DIR}/metrics.pb.h"
+  "${CMAKE_BINARY_DIR}/diagnostic.pb.h"
 )
 set(GRPC_GEN_SRCS
   "${CMAKE_BINARY_DIR}/heartbeat.grpc.pb.cc"
   "${CMAKE_BINARY_DIR}/metrics.grpc.pb.cc"
+  "${CMAKE_BINARY_DIR}/diagnostic.grpc.pb.cc"
 )
 set(GRPC_GEN_HDRS
   "${CMAKE_BINARY_DIR}/heartbeat.grpc.pb.h"
   "${CMAKE_BINARY_DIR}/metrics.grpc.pb.h"
+  "${CMAKE_BINARY_DIR}/diagnostic.grpc.pb.h"
 )
 
 add_custom_command(
@@ -70,7 +86,9 @@ target_link_libraries(pudim_proto
 add_executable(pudim-agent
   src/main.cpp
   src/metrics/probes.cpp
+  src/metrics/pcap_probe.cpp
   src/metrics/metrics_client.cpp
+  src/diagnostic_service.cpp
 )
 target_link_libraries(pudim-agent
   PRIVATE
@@ -82,6 +100,10 @@ target_link_libraries(pudim-agent
     OpenSSL::Crypto
     CURL::libcurl
 )
+if(PCAP_FOUND)
+  target_link_libraries(pudim-agent PRIVATE ${PCAP_LIBRARIES})
+  target_include_directories(pudim-agent PRIVATE ${PCAP_INCLUDE_DIRS})
+endif()
 target_include_directories(pudim-agent PRIVATE ${CMAKE_BINARY_DIR})
 
 # Tests
@@ -89,6 +111,7 @@ enable_testing()
 add_executable(test-probes
   tests/test_probes.cpp
   src/metrics/probes.cpp
+  src/metrics/pcap_probe.cpp
 )
 target_link_libraries(test-probes
   PRIVATE
@@ -100,6 +123,10 @@ target_link_libraries(test-probes
     OpenSSL::Crypto
     CURL::libcurl
 )
+if(PCAP_FOUND)
+  target_link_libraries(test-probes PRIVATE ${PCAP_LIBRARIES})
+  target_include_directories(test-probes PRIVATE ${PCAP_INCLUDE_DIRS})
+endif()
 target_include_directories(test-probes PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME probe-tests COMMAND test-probes)
 

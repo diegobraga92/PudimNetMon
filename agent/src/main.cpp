@@ -1,4 +1,5 @@
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -9,10 +10,12 @@
 #include <getopt.h>
 
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/server_builder.h>
 #include "heartbeat.grpc.pb.h"
 #include "metrics.pb.h"
 #include "metrics/metrics_client.h"
 #include "metrics/probes.h"
+#include "diagnostic_service.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -30,6 +33,7 @@ using pudimagent::ProbeConfig;
 static std::atomic<bool> s_running{true};
 static std::string s_node_id;
 static std::string s_trace_id;
+static std::string s_diagnostic_endpoint;
 
 // --------------------------------------------
 // Logger: simple JSON-structured logging to stdout
@@ -106,6 +110,9 @@ public:
                 .count());
         req.set_interval_ms(interval_ms);
         req.set_version(version);
+        if (!s_diagnostic_endpoint.empty()) {
+            req.set_diagnostic_endpoint(s_diagnostic_endpoint);
+        }
 
         HeartbeatResponse resp;
         ClientContext ctx;
@@ -151,6 +158,15 @@ int main(int argc, char **argv) {
     std::vector<std::string> ping_targets;
     int ping_count = 4;
 
+    // Phase 4 deep-diagnostics configuration
+    bool tls_cert_check = true;
+    bool tcp_retransmit_check = true;
+    bool tcp_handshake_capture = true;
+    std::vector<std::string> http_protocols;
+    std::map<std::string, std::vector<std::string>> dns_expected;
+    std::string diagnostic_port = "50052";
+    std::string diagnostic_address;  // e.g. "agent.example.com:50052"; empty = not advertised
+
     auto parse_list = [](const std::string &s) {
         std::vector<std::string> out;
         std::string cur;
@@ -180,13 +196,20 @@ int main(int argc, char **argv) {
         {"ping-targets",       required_argument, nullptr, 'g'},
         {"ping-count",         required_argument, nullptr, 'k'},
         {"stream-metrics",     no_argument,       nullptr, 'm'},
+        {"no-tls-cert",        no_argument,       nullptr, 'q'},
+        {"no-tcp-retransmit",  no_argument,       nullptr, 'r'},
+        {"no-tcp-handshake",   no_argument,       nullptr, 'e'},
+        {"http-protocols",     required_argument, nullptr, 'x'},
+        {"dns-expected",       required_argument, nullptr, 'y'},
+        {"diagnostic-port",    required_argument, nullptr, 'z'},
+        {"diagnostic-address", required_argument, nullptr, 'a'},
         {"help",               no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
@@ -200,6 +223,25 @@ int main(int argc, char **argv) {
             case 'g': ping_targets = parse_list(optarg); break;
             case 'k': ping_count = std::stoi(optarg); break;
             case 'm': use_stream_metrics = true; break;
+            case 'q': tls_cert_check = false; break;
+            case 'r': tcp_retransmit_check = false; break;
+            case 'e': tcp_handshake_capture = false; break;
+            case 'x': http_protocols = parse_list(optarg); break;
+            case 'y': {
+                // Format: host=TYPE:value,host2=TYPE:value
+                for (auto &entry : parse_list(optarg)) {
+                    auto eq = entry.find('=');
+                    if (eq == std::string::npos) continue;
+                    std::string host = entry.substr(0, eq);
+                    std::string rec = entry.substr(eq + 1);
+                    if (!host.empty() && !rec.empty()) {
+                        dns_expected[host].push_back(rec);
+                    }
+                }
+                break;
+            }
+            case 'z': diagnostic_port = optarg; break;
+            case 'a': diagnostic_address = optarg; break;
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
@@ -214,6 +256,13 @@ int main(int argc, char **argv) {
                           << "  -g, --ping-targets        Comma-separated ICMP ping targets\n"
                           << "  -k, --ping-count          Number of pings per target (default: 4)\n"
                           << "  -m, --stream-metrics      Use client-streaming RPC for metrics (default: unary)\n"
+                          << "      --no-tls-cert         Disable TLS certificate validation probe\n"
+                          << "      --no-tcp-retransmit   Disable TCP retransmission probe\n"
+                          << "      --no-tcp-handshake    Disable TCP handshake capture (libpcap)\n"
+                          << "  -x, --http-protocols      HTTP versions to measure: http1.1,http2,http3\n"
+                          << "  -y, --dns-expected        Expected DNS records: host=A:1.2.3.4,host2=CNAME:x\n"
+                          << "  -z, --diagnostic-port     gRPC diagnostic server port (default: 50052)\n"
+                          << "  -a, --diagnostic-address  Advertised diagnostic endpoint, e.g. agent.example.com:50052\n"
                           << "  -h, --help                Show this help\n";
                 return 0;
             default:
@@ -225,6 +274,7 @@ int main(int argc, char **argv) {
     // Set globals
     s_node_id = node_id;
     s_trace_id = trace_id;
+    s_diagnostic_endpoint = diagnostic_address;
 
     // Setup signal handlers
     std::signal(SIGTERM, handle_signal);
@@ -235,6 +285,24 @@ int main(int argc, char **argv) {
     LOG_INFO("Node ID: " + node_id);
     LOG_INFO("Interval: " + std::to_string(interval_ms) + "ms");
     LOG_INFO("Version: " + version);
+
+    // Start the diagnostic gRPC server (collector-triggered traceroute/pcap)
+    std::thread diagnostic_thread([diagnostic_port]() {
+        pudimagent::DiagnosticServiceImpl diag_service;
+        grpc::ServerBuilder builder;
+        builder.AddListeningPort("0.0.0.0:" + diagnostic_port,
+                                 grpc::InsecureServerCredentials());
+        builder.RegisterService(&diag_service);
+        auto server = builder.BuildAndStart();
+        if (!server) {
+            std::cerr << "Failed to start diagnostic server on port "
+                      << diagnostic_port << "\n";
+            return;
+        }
+        LOG_INFO("Diagnostic gRPC server listening on port " + diagnostic_port);
+        server->Wait();
+    });
+    diagnostic_thread.detach();
 
     HeartbeatClient client(collector_endpoint);
     MetricsClient metrics_client(collector_endpoint);
@@ -261,6 +329,12 @@ int main(int argc, char **argv) {
     probe_cfg.http_targets = http_targets;
     probe_cfg.ping_targets = ping_targets;
     probe_cfg.ping_count = ping_count;
+    // Phase 4 deep diagnostics
+    probe_cfg.tls_cert_check = tls_cert_check;
+    probe_cfg.tcp_retransmit_check = tcp_retransmit_check;
+    probe_cfg.tcp_handshake_capture = tcp_handshake_capture;
+    probe_cfg.http_protocols = http_protocols;
+    probe_cfg.dns_expected = dns_expected;
 
     LOG_INFO("Running metrics probes every " + std::to_string(interval_ms) + "ms");
 

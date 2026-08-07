@@ -121,17 +121,17 @@
 
 **Goal:** Demonstrate deep networking expertise through additional checks and diagnostic tools.
 
-- [ ] Agent enhancements:
-  - [ ] DNS record lookup (A, AAAA, CNAME) and validate against expected values; alarm on mismatch
-  - [ ] TCP handshake capture and timing (SYN, SYN‑ACK, ACK) using raw sockets or `libpcap`
-  - [ ] Packet retransmission detection (via raw socket or `getsockopt(TCP_INFO)`)
-  - [ ] TLS certificate validation: check expiry, issuer, hostname match
-  - [ ] HTTP/2 vs HTTP/3 comparison: measure connect+request time over both protocols if server supports (or document simulation)
-  - [ ] Path MTU discovery and fragmentation detection
-- [ ] Diagnostic mode: agent can be triggered to run a one‑off detailed report (traceroute, extended pcap) and upload to collector
-- [ ] Dashboard: detailed per‑agent network diagnostic page, TLS certificate expiry timeline, HTTP protocol comparison chart
-- [ ] Documentation: `docs/networking-deep-dive.md` with tcpdump/Wireshark annotated examples of packet flows, handshake analysis, and troubleshooting steps
-- [ ] ADR: `005-raw-socket-capabilities-and-security.md`
+- [x] Agent enhancements:
+  - [x] DNS record lookup (A, AAAA, CNAME) and validate against expected values; alarm on mismatch
+  - [x] TCP handshake capture and timing (SYN, SYN‑ACK, ACK) using raw sockets or `libpcap`
+  - [x] Packet retransmission detection (via raw socket or `getsockopt(TCP_INFO)`)
+  - [x] TLS certificate validation: check expiry, issuer, hostname match
+  - [x] HTTP/2 vs HTTP/3 comparison: measure connect+request time over both protocols if server supports (or document simulation)
+  - [x] Path MTU discovery and fragmentation detection
+- [x] Diagnostic mode: agent can be triggered to run a one‑off detailed report (traceroute, extended pcap) and upload to collector
+- [x] Dashboard: detailed per‑agent network diagnostic page, TLS certificate expiry timeline, HTTP protocol comparison chart
+- [x] Documentation: `docs/networking-deep-dive.md` with tcpdump/Wireshark annotated examples of packet flows, handshake analysis, and troubleshooting steps
+- [x] ADR: `005-raw-socket-capabilities-and-security.md`
 
 ---
 
@@ -259,8 +259,8 @@
 - [x] Real‑time dashboard with agent health and metric graphs
 - [x] Alerting engine with notifications (webhook or log)
 - [x] Kafka integration as metrics backbone; consumer lag monitored
-- [ ] Deep networking checks: DNS, TCP handshake, TLS cert, HTTP/2 vs HTTP/3, packet loss, jitter
-- [ ] Network diagnostic mode (traceroute, pcap) with Wireshark/tcpdump annotated documentation
+- [x] Deep networking checks: DNS, TCP handshake, TLS cert, HTTP/2 vs HTTP/3, packet loss, jitter
+- [x] Network diagnostic mode (traceroute, pcap) with Wireshark/tcpdump annotated documentation
 - [ ] Kernel tuning experiments and systemd hardening
 - [ ] Mutual TLS between agent and collector, certificate rotation
 - [ ] Time synchronization: NTP drift monitoring, clock skew detection, timestamp normalization; ADR

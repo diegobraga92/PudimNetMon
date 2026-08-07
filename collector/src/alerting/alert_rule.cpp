@@ -21,6 +21,11 @@ bool CheckTypeFromString(const std::string &s, pudimnetmon::CheckType &out) {
     if (s == "http_request")        { out = pudimnetmon::CHECK_TYPE_HTTP_REQUEST;   return true; }
     if (s == "icmp_ping")           { out = pudimnetmon::CHECK_TYPE_ICMP_PING;      return true; }
     if (s == "jitter")              { out = pudimnetmon::CHECK_TYPE_JITTER;         return true; }
+    // Phase 4
+    if (s == "tls_certificate")     { out = pudimnetmon::CHECK_TYPE_TLS_CERTIFICATE; return true; }
+    if (s == "tcp_retransmit")      { out = pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT;  return true; }
+    if (s == "dns_record")          { out = pudimnetmon::CHECK_TYPE_DNS_RECORD;      return true; }
+    if (s == "tcp_handshake")       { out = pudimnetmon::CHECK_TYPE_TCP_HANDSHAKE;   return true; }
     return false;
 }
 

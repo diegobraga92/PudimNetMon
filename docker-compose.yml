@@ -112,8 +112,10 @@ services:
       --tcp-targets=example.com:443
       --tls-targets=example.com:443
       --http-targets=https://example.com
+      --http-protocols=http1.1,http2
       --ping-targets=1.1.1.1
       --ping-count=4
+      --diagnostic-address=agent:50052
     cap_add:
       - NET_RAW
     depends_on:

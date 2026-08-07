@@ -39,6 +39,24 @@ std::string JsonEscape(const std::string &s) {
     return out;
 }
 
+// Serializes a Metric's attributes map as a JSONB SQL literal
+// ("'{\"k\":\"v\"}'::jsonb"). Empty maps yield '{}'::jsonb.
+std::string AttributesJsonLiteral(PGconn *conn, const pudimnetmon::Metric &m) {
+    std::string body = "{";
+    bool first = true;
+    for (const auto &[k, v] : m.attributes()) {
+        if (!first) body += ",";
+        first = false;
+        body += "\"" + JsonEscape(k) + "\":\"" + JsonEscape(v) + "\"";
+    }
+    body += "}";
+    char *escaped = PQescapeLiteral(conn, body.c_str(), body.length());
+    if (!escaped) return "'{}'::jsonb";
+    std::string out(escaped);
+    PQfreemem(escaped);
+    return out + "::jsonb";
+}
+
 // PostgreSQL boolean column returns "t"/"f"; map to JSON true/false.
 const char *PgBoolToJson(const char *v) {
     return (v && v[0] == 't') ? "true" : "false";
@@ -53,6 +71,11 @@ const char *CheckTypeToString(pudimnetmon::CheckType type) {
         case pudimnetmon::CHECK_TYPE_HTTP_REQUEST:   return "http_request";
         case pudimnetmon::CHECK_TYPE_ICMP_PING:      return "icmp_ping";
         case pudimnetmon::CHECK_TYPE_JITTER:         return "jitter";
+        // Phase 4
+        case pudimnetmon::CHECK_TYPE_TLS_CERTIFICATE: return "tls_certificate";
+        case pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT:  return "tcp_retransmit";
+        case pudimnetmon::CHECK_TYPE_DNS_RECORD:      return "dns_record";
+        case pudimnetmon::CHECK_TYPE_TCP_HANDSHAKE:   return "tcp_handshake";
         default:                                     return "unspecified";
     }
 }
@@ -256,7 +279,7 @@ bool TimescaleStorage::InsertMetrics(
         sql += (m.detail().empty() ? "NULL" : EscapeLiteral(m_impl->conn, m.detail())) + ", ";
         sql += std::to_string(m.seq()) + ", ";
         sql += std::to_string(m.monotonic_us()) + ", ";
-        sql += "'{}'::jsonb)";
+        sql += AttributesJsonLiteral(m_impl->conn, m) + ")";
 
         batch_rows++;
 
@@ -289,7 +312,8 @@ std::string TimescaleStorage::QueryMetricsJson(
                       "  EXTRACT(EPOCH FROM time) * 1000 AS time_ms, "
                       "  agent_id, check_type, target, success, "
                       "  COALESCE(latency_ms, packet_loss_pct, jitter_ms, rtt_ms, "
-                      "           status_code::double precision, 0) AS value "
+                      "           status_code::double precision, 0) AS value, "
+                      "  attributes "
                       "FROM network_metrics "
                       "WHERE time > now() - make_interval(secs => " +
                       std::to_string(window_seconds) + ")";
@@ -322,7 +346,14 @@ std::string TimescaleStorage::QueryMetricsJson(
                 std::string(PgBoolToJson(PQgetvalue(res, i, 4))) + ",";
         std::string value = PQgetvalue(res, i, 5);
         if (value.empty()) value = "0";
-        json += "\"value\":" + value;
+        json += "\"value\":" + value + ",";
+        // Attributes column is JSONB; PostgreSQL renders it as JSON text.
+        std::string attrs = PQgetvalue(res, i, 6);
+        if (attrs.empty() || attrs == "{}") {
+            json += "\"attributes\":{}";
+        } else {
+            json += "\"attributes\":" + attrs;
+        }
         json += "}";
     }
     json += "]";

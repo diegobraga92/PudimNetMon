@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package pudimnetmon;
+
+option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
+
+// Diagnostic service: the collector triggers one-off deep diagnostics on an
+// agent (traceroute, packet capture) and receives a human-readable report.
+service DiagnosticService {
+  rpc RunDiagnostic(DiagnosticRequest) returns (DiagnosticResponse);
+}
+
+message DiagnosticRequest {
+  string agent_id = 1;        // target agent
+  string trace_target = 2;    // hostname/IP for traceroute (empty = skip)
+  int32 pcap_duration_s = 3;  // seconds of packet capture (0 = skip pcap)
+  string pcap_filter = 4;     // pcap filter expression, e.g. "tcp port 443"
+}
+
+message DiagnosticResponse {
+  bool success = 1;              // overall success
+  string result = 2;             // human-readable report (traceroute output, pcap summary)
+  int64 timestamp_unix_ms = 3;   // agent wall clock when the run completed
+  string error = 4;              // error message when success=false
+}

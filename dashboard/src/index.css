@@ -439,3 +439,137 @@ body {
   border-top: 1px solid #30363d;
   font-size: 0.875rem;
 }
+/* ---------- Phase 4: TLS certificate timeline ---------- */
+.tls-section {
+  margin-bottom: 1.5rem;
+  padding: 1.25rem;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.tls-section h2 {
+  margin-bottom: 0.75rem;
+  font-size: 1.1rem;
+  color: #c9d1d9;
+}
+
+.tls-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
+
+.tls-card {
+  padding: 0.75rem 1rem;
+  border: 1px solid #30363d;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #0d1117;
+}
+
+.tls-card.tls-ok       { border-left-color: #3fb950; }
+.tls-card.tls-warn     { border-left-color: #f9ca24; }
+.tls-card.tls-critical { border-left-color: #f85149; }
+.tls-card.tls-unknown  { border-left-color: #484f58; }
+
+.tls-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.tls-status {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+  background: rgba(63, 185, 80, 0.12);
+  color: #3fb950;
+}
+
+.tls-critical .tls-status {
+  background: rgba(248, 81, 73, 0.15);
+  color: #ff6b6b;
+}
+
+.tls-warn .tls-status {
+  background: rgba(249, 202, 36, 0.15);
+  color: #f9ca24;
+}
+
+.tls-meta {
+  font-size: 0.78rem;
+  color: #8b949e;
+  margin-bottom: 0.2rem;
+  word-break: break-all;
+}
+
+/* ---------- Phase 4: HTTP protocol comparison ---------- */
+.proto-section {
+  margin-bottom: 1.5rem;
+  padding: 1.25rem;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.proto-section h2 {
+  margin-bottom: 0.75rem;
+  font-size: 1.1rem;
+  color: #c9d1d9;
+}
+
+/* ---------- Phase 4: diagnostic mode ---------- */
+.diag-button {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  border: 1px solid #58a6ff;
+  border-radius: 6px;
+  background: transparent;
+  color: #58a6ff;
+  cursor: pointer;
+}
+
+.diag-button:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.15);
+}
+
+.diag-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.diag-result {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+}
+
+.diag-result.ok   { border-left: 4px solid #3fb950; }
+.diag-result.fail { border-left: 4px solid #f85149; }
+
+.diag-error {
+  color: #ff6b6b;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+}
+
+.diag-pre {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #0a0d12;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

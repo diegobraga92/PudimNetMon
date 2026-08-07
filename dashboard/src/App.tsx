@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   LineChart,
   Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -22,6 +24,7 @@ interface AgentInfo {
   interval_ms: number
   version: string
   first_seen_unix_ms: number
+  diagnostic_endpoint?: string
   alive: boolean
 }
 
@@ -36,6 +39,14 @@ interface MetricPoint {
   target: string
   success: boolean
   value: number
+  attributes?: Record<string, string>
+}
+
+interface DiagnosticResult {
+  success: boolean
+  timestamp_unix_ms: number
+  result: string
+  error?: string
 }
 
 interface ActiveAlert {
@@ -63,7 +74,7 @@ interface AlertHistoryEntry {
   time_ms: number
 }
 
-type CheckTypeFilter = 'all' | 'dns_resolution' | 'tcp_connect' | 'tls_handshake' | 'http_request' | 'icmp_ping' | 'jitter'
+type CheckTypeFilter = 'all' | 'dns_resolution' | 'tcp_connect' | 'tls_handshake' | 'http_request' | 'icmp_ping' | 'jitter' | 'tls_certificate' | 'tcp_retransmit' | 'dns_record' | 'tcp_handshake'
 
 const CHECK_TYPE_LABELS: Record<string, string> = {
   dns_resolution: 'DNS Resolution (ms)',
@@ -72,6 +83,10 @@ const CHECK_TYPE_LABELS: Record<string, string> = {
   http_request: 'HTTP Request (ms)',
   icmp_ping: 'ICMP RTT (ms)',
   jitter: 'Jitter (ms)',
+  tls_certificate: 'TLS Certificate',
+  tcp_retransmit: 'TCP Retransmits',
+  dns_record: 'DNS Records',
+  tcp_handshake: 'TCP Handshake (ms)',
 }
 
 const CHECK_TYPE_COLORS: Record<string, string> = {
@@ -81,6 +96,10 @@ const CHECK_TYPE_COLORS: Record<string, string> = {
   http_request: '#f9ca24',
   icmp_ping: '#ff6b6b',
   jitter: '#a29bfe',
+  tls_certificate: '#6c5ce7',
+  tcp_retransmit: '#fd79a8',
+  dns_record: '#00b894',
+  tcp_handshake: '#e17055',
 }
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -95,6 +114,8 @@ function App() {
   const [metrics, setMetrics] = useState<MetricPoint[]>([])
   const [alerts, setAlerts] = useState<ActiveAlert[]>([])
   const [alertHistory, setAlertHistory] = useState<AlertHistoryEntry[]>([])
+  const [diagnostics, setDiagnostics] = useState<Record<string, DiagnosticResult>>({})
+  const [runningDiag, setRunningDiag] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<string>('all')
   const [selectedCheck, setSelectedCheck] = useState<CheckTypeFilter>('all')
@@ -235,6 +256,82 @@ function App() {
     : 0
 
   const activeAgents = agents.filter((a) => a.alive).length
+
+  // --- Phase 4: TLS certificate expiry timeline ---
+  // Latest successful tls_certificate metric per target.
+  const tlsCerts = useMemo(() => {
+    const latest = new Map<string, MetricPoint>()
+    metrics
+      .filter((m) => m.check_type === 'tls_certificate' && m.success)
+      .forEach((m) => latest.set(m.target, m))
+    return Array.from(latest.entries()).map(([target, m]) => {
+      const days = Number(m.attributes?.tls_cert_expiry_days ?? NaN)
+      return {
+        target,
+        agent_id: m.agent_id,
+        expiry_days: Number.isFinite(days) ? days : null,
+        subject: m.attributes?.tls_cert_subject ?? '',
+        issuer: m.attributes?.tls_cert_issuer ?? '',
+        hostname_match: m.attributes?.tls_cert_hostname_match ?? 'unknown',
+      }
+    })
+  }, [metrics])
+
+  // --- Phase 4: HTTP protocol comparison ---
+  // Latest latency per (base URL, protocol) for http_request metrics whose
+  // target ends with ";http1.1"/";http2"/";http3".
+  const protocolComparison = useMemo(() => {
+    const latest = new Map<string, { url: string; protocol: string; latency: number }>()
+    metrics
+      .filter((m) => m.check_type === 'http_request' && m.success)
+      .forEach((m) => {
+        const semi = m.target.indexOf(';http')
+        if (semi === -1) return
+        const url = m.target.slice(0, semi)
+        const protocol = m.target.slice(semi + 1)
+        latest.set(`${url}|${protocol}`, { url, protocol, latency: m.value })
+      })
+    const groups = new Map<string, { url: string; http11?: number; http2?: number; http3?: number }>()
+    latest.forEach((v) => {
+      const g = groups.get(v.url) ?? { url: v.url }
+      if (v.protocol === 'http1.1') g.http11 = v.latency
+      if (v.protocol === 'http2') g.http2 = v.latency
+      if (v.protocol === 'http3') g.http3 = v.latency
+      groups.set(v.url, g)
+    })
+    return Array.from(groups.values())
+  }, [metrics])
+
+  const runDiagnostic = async (agent: AgentInfo) => {
+    if (!agent.diagnostic_endpoint) return
+    setRunningDiag(agent.agent_id)
+    try {
+      const resp = await fetch('/api/diagnostic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          agent_id: agent.agent_id,
+          trace_target: 'example.com',
+          pcap_duration_s: '5',
+          pcap_filter: 'tcp port 443',
+        }),
+      })
+      const data: DiagnosticResult = await resp.json()
+      setDiagnostics((prev) => ({ ...prev, [agent.agent_id]: data }))
+    } catch (err) {
+      setDiagnostics((prev) => ({
+        ...prev,
+        [agent.agent_id]: {
+          success: false,
+          timestamp_unix_ms: Date.now(),
+          result: '',
+          error: err instanceof Error ? err.message : 'diagnostic failed',
+        },
+      }))
+    } finally {
+      setRunningDiag(null)
+    }
+  }
 
   return (
     <div className="app">
@@ -382,6 +479,53 @@ function App() {
           )}
         </section>
 
+        <section className="tls-section">
+          <h2>TLS Certificate Expiry Timeline</h2>
+          {tlsCerts.length === 0 ? (
+            <p className="no-alerts">No TLS certificate data yet. Configure TLS targets on an agent.</p>
+          ) : (
+            <div className="tls-grid">
+              {tlsCerts.map((cert) => {
+                const days = cert.expiry_days
+                const cls = days === null ? 'unknown' : days < 7 ? 'critical' : days < 30 ? 'warn' : 'ok'
+                return (
+                  <div key={cert.target} className={`tls-card tls-${cls}`}>
+                    <div className="tls-header">
+                      <strong>{cert.target}</strong>
+                      <span className="tls-status">
+                        {days === null ? 'n/a' : days < 0 ? `${Math.abs(days)}d EXPIRED` : `${days}d left`}
+                      </span>
+                    </div>
+                    <p className="tls-meta">{cert.agent_id} · {cert.subject}</p>
+                    <p className="tls-meta">issuer: {cert.issuer}</p>
+                    <p className="tls-meta">hostname match: {cert.hostname_match}</p>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="proto-section">
+          <h2>HTTP Protocol Comparison (ms)</h2>
+          {protocolComparison.length === 0 ? (
+            <p className="no-alerts">No per-protocol data yet. Run the agent with --http-protocols=http1.1,http2,http3</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={protocolComparison} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2d3436" />
+                <XAxis dataKey="url" tick={{ fill: '#dfe6e9', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#dfe6e9', fontSize: 12 }} />
+                <Tooltip contentStyle={{ backgroundColor: '#2d3436', border: '1px solid #636e72', borderRadius: 6, color: '#dfe6e9' }} />
+                <Legend wrapperStyle={{ color: '#dfe6e9' }} />
+                <Bar dataKey="http11" name="HTTP/1.1" fill="#45b7d1" />
+                <Bar dataKey="http2" name="HTTP/2" fill="#4ecdc4" />
+                <Bar dataKey="http3" name="HTTP/3" fill="#a29bfe" />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </section>
+
         <section className="agents-section">
           <h2>Registered Agents ({agents.length})</h2>
           {agents.length === 0 ? (
@@ -405,11 +549,30 @@ function App() {
                     <p>Interval: {agent.interval_ms}ms</p>
                     <p>Version: {agent.version}</p>
                     <p>Status: {agent.alive ? '🟢 Alive' : '🔴 Offline'}</p>
+                    {agent.diagnostic_endpoint && (
+                      <button
+                        className="diag-button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          runDiagnostic(agent)
+                        }}
+                        disabled={runningDiag === agent.agent_id}
+                      >
+                        {runningDiag === agent.agent_id ? 'Running…' : '🔬 Run Diagnostic'}
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
           )}
+          {Object.entries(diagnostics).map(([agentId, diag]) => (
+            <div key={agentId} className={`diag-result ${diag.success ? 'ok' : 'fail'}`}>
+              <strong>Diagnostic · {agentId}</strong>
+              {diag.error && <p className="diag-error">{diag.error}</p>}
+              {diag.result && <pre className="diag-pre">{diag.result}</pre>}
+            </div>
+          ))}
         </section>
 
         <section className="history-section">

@@ -15,6 +15,7 @@
 
 #include "heartbeat.grpc.pb.h"
 #include "metrics.grpc.pb.h"
+#include "diagnostic.grpc.pb.h"
 #include "metrics_service.h"
 #include "storage/timescale_storage.h"
 #include "alerting/alert_manager.h"
@@ -87,6 +88,7 @@ struct AgentEntry {
     int32_t interval_ms;
     std::string version;
     int64_t first_seen_unix_ms;
+    std::string diagnostic_endpoint;  // host:port of the agent's diagnostic server
 };
 
 class AgentRegistry {
@@ -104,12 +106,14 @@ public:
             entry.interval_ms = req.interval_ms();
             entry.version = req.version();
             entry.first_seen_unix_ms = now;
+            entry.diagnostic_endpoint = req.diagnostic_endpoint();
             m_agents[req.agent_id()] = entry;
             logger::emit("info", "New agent registered", req.agent_id());
         } else {
             it->second.last_seen_unix_ms = now;
             it->second.interval_ms = req.interval_ms();
             it->second.version = req.version();
+            it->second.diagnostic_endpoint = req.diagnostic_endpoint();
         }
         m_heartbeat_count++;
     }
@@ -126,6 +130,13 @@ public:
             }
         }
         return count;
+    }
+
+    // Returns the agent's advertised diagnostic endpoint, or "" if unknown.
+    std::string GetDiagnosticEndpoint(const std::string &agent_id) const {
+        std::shared_lock lock(m_mutex);
+        auto it = m_agents.find(agent_id);
+        return (it != m_agents.end()) ? it->second.diagnostic_endpoint : "";
     }
 
     size_t TotalAgentCount() const {
@@ -154,6 +165,7 @@ public:
             json += "\"last_seen_unix_ms\":" + std::to_string(entry.last_seen_unix_ms) + ",";
             json += "\"interval_ms\":" + std::to_string(entry.interval_ms) + ",";
             json += "\"version\":\"" + escape(entry.version) + "\",";
+            json += "\"diagnostic_endpoint\":\"" + escape(entry.diagnostic_endpoint) + "\",";
             json += "\"first_seen_unix_ms\":" + std::to_string(entry.first_seen_unix_ms) + ",";
             json += "\"alive\":" + std::string(alive ? "true" : "false");
             json += "}";
@@ -533,6 +545,61 @@ int main(int argc, char **argv) {
             return;
         }
         resp.set_content(s_alert_manager->RulesJson(), "application/json");
+    });
+
+    // Diagnostic endpoint: forwards a diagnostic request to the target agent's
+    // DiagnosticService (traceroute + pcap). Requires the agent to have
+    // advertised a diagnostic endpoint in its heartbeat.
+    http_server.Post("/diagnostic", [](const httplib::Request &req,
+                                       httplib::Response &resp) {
+        std::string agent_id = req.get_param_value("agent_id");
+        std::string trace_target = req.get_param_value("trace_target");
+        int pcap_duration_s = 0;
+        if (req.has_param("pcap_duration_s")) {
+            try {
+                pcap_duration_s = std::stoi(req.get_param_value("pcap_duration_s"));
+            } catch (...) { pcap_duration_s = 0; }
+        }
+        std::string pcap_filter = req.get_param_value("pcap_filter");
+
+        if (agent_id.empty()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"agent_id is required\"}", "application/json");
+            return;
+        }
+        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
+        if (diag_endpoint.empty()) {
+            resp.status = 404;
+            resp.set_content("{\"error\":\"agent has no advertised diagnostic "
+                             "endpoint\"}", "application/json");
+            return;
+        }
+
+        auto channel = grpc::CreateChannel(diag_endpoint,
+                                           grpc::InsecureChannelCredentials());
+        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
+        pudimnetmon::DiagnosticRequest dreq;
+        dreq.set_agent_id(agent_id);
+        dreq.set_trace_target(trace_target);
+        dreq.set_pcap_duration_s(pcap_duration_s);
+        dreq.set_pcap_filter(pcap_filter);
+        pudimnetmon::DiagnosticResponse dresp;
+        grpc::Status status = stub->RunDiagnostic(&ctx, dreq, &dresp);
+        if (!status.ok()) {
+            resp.status = 502;
+            resp.set_content("{\"error\":\"" + logger::escape(status.error_message()) +
+                                 "\"}", "application/json");
+            return;
+        }
+        std::string json = "{\"success\":" +
+                           std::string(dresp.success() ? "true" : "false") +
+                           ",\"timestamp_unix_ms\":" +
+                           std::to_string(dresp.timestamp_unix_ms()) +
+                           ",\"result\":\"" + logger::escape(dresp.result()) +
+                           "\"}";
+        resp.set_content(json, "application/json");
     });
 
     // Run HTTP server in a separate thread
