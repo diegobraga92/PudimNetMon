@@ -20,7 +20,7 @@ jobs:
             build-essential cmake pkg-config \
             protobuf-compiler libprotobuf-dev \
             protobuf-compiler-grpc libgrpc++-dev libgrpc-dev \
-            libssl-dev libcurl4-openssl-dev libpq-dev librdkafka-dev libpcap-dev libsystemd-dev
+            libssl-dev libcurl4-openssl-dev libpq-dev librdkafka-dev libpcap-dev libsystemd-dev libsqlite3-dev
 
       - name: Configure
         run: cmake -S agent -B build/agent -DCMAKE_BUILD_TYPE=Debug

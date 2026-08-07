@@ -102,55 +102,46 @@ npm run dev
 └── docker-compose.yml     # Local development environment
 ```
 
-## Current Phase: Phase 6 — Observability, Overload & Chaos
+## Current Phase: Phase 7 — Disaster Recovery, Multi-Region & Cost
 
-**Phases 0–5 ✅ · Phase 6 (Observability/Overload/Chaos/Incidents) ✅**
+**Phases 0–6 ✅ · Phase 7 (DR/Multi-region/Cost) ✅**
 
-- ✅ **W3C Trace Context**: `traceparent` propagated agent → collector (gRPC metadata) → Kafka (headers) → consumers. Every hop logs the trace; a single measurement is traceable end-to-end
-- ✅ **Prometheus + Grafana**: Grafana provisioned in Compose with a curated `network-monitor` dashboard (agents, throughput, Kafka lag, storage latency, skew, backpressure); SLO burn-rate alert rules in `infra/prometheus/alerts.yml`
-- ✅ **Overload handling (ADR 008)**: agent bounded buffer (`--max-buffer-size`, oldest dropped), collector `x-overloaded` gRPC backpressure signal, agent adaptive interval (back off 2× up to 10×)
-- ✅ **Chaos experiments** (`docs/chaos-experiments.md`): collector kill, network partition, Kafka restart, DNS failure, clock-skew injection — all verified with graceful degradation
-- ✅ **Two postmortems** (`docs/postmortems/`): collector overload OOM, clock-skew alert storm
-- ✅ **Runbooks**: `docs/runbooks/incident-response.md` (reconnection, scale-up, rebalancing, skew) + high-latency
-- ✅ **Deep probes** (Phase 4): TLS cert, DNS records, TCP handshake (libpcap), retransmit, HTTP/1.1-vs-2-vs-3
-- ✅ **Daemon/Time/Discovery** (Phase 5): `Type=notify`+watchdog, NTP offset, clock-skew detection, collector-endpoints failover
-- ✅ **Kafka backbone** (Phase 3): KRaft broker, storage + alert consumers, at-least-once + idempotent writes
-- ✅ ADRs 001–008, CI (C++ build/test + TS lint/build)
+- ✅ **Agent disk buffer (SQLite)**: overflow from the in-memory FIFO spills to a local SQLite DB (`--disk-buffer-path`, cap `--disk-buffer-max-mb`); drained oldest-first on reconnect; survives agent restarts. `HAVE_SQLITE3`-guarded (graceful without libsqlite3)
+- ✅ **Multi-region failover**: `collector-secondary` in Compose (gRPC :50052, HTTP :8081); agents use `--collector-endpoints=primary,secondary` (3-strike failover from Phase 5)
+- ✅ **DR drill** (`docs/dr-test.md`): kill primary → agent fails over to secondary → restore → drain persisted batches. RTO ≈ 3× interval, RPO = in-memory + disk buffer
+- ✅ **Cost model** (`docs/cost-analysis.md`): AWS monthly estimate at 100/1000 agents (≈$453 / ≈$878), optimisation levers (spot, self-host Kafka, retention, compression)
+- ✅ **Capacity plan**: ~100 B/s/agent, storage ≈ 8.6 MB/day/agent, Kafka partition sizing, TimescaleDB compression/aggregates
+- ✅ **ADR 009** — active/passive regions, agent disk buffer as RPO boundary
+- ✅ All 9 ADRs, runbooks (high-latency + incident-response), postmortems, chaos log complete
+- ⚠️ **Open item**: mTLS between agent and collector (tracked in the Completion Checklist)
 
 ### Architecture
 
 ```
-Agent ──gRPC──▶ Collector ──produce──▶ Kafka ──consume──▶ pudim-consumer-storage ──▶ TimescaleDB
-       │        (traceparent)          (traceparent hdr) └──▶ pudim-consumer-alert ──▶ AlertManager
-       │           ▲  x-overloaded (backpressure)
+Agent ──gRPC──▶ Collector(primary :50051) ──produce──▶ Kafka ──consume──▶ storage/alert consumers ──▶ TimescaleDB
+       │  3-strike failover (--collector-endpoints)
+       └──▶ Collector-secondary (:50052)   (DR stand-in for region B)
+       │  on outage: in-memory FIFO → overflow → SQLite disk buffer → drain on reconnect
        └── diagnostic gRPC (:50052) ◀── POST /diagnostic ── Collector :8080
-
-Collector :8080/metrics · storage :9091 · alert :9092  →  Grafana :3100
 ```
 
-### Running the full stack
+### DR drill (Phase 7)
 
 ```bash
 docker compose up --build
-# dashboard:     http://localhost:3000
-# collector:     http://localhost:8080 (health/metrics)
-# Grafana:       http://localhost:3100 (provisioned dashboard, anonymous login)
-# storage cons.: http://localhost:9091/metrics (Prometheus)
-# alert cons.:   http://localhost:9092/metrics (Prometheus)
+docker compose kill collector                      # region-A outage
+docker compose logs agent | grep 'failing over'    # → collector-secondary
+docker compose up -d collector                     # restore
+docker compose logs agent | grep 'Drained'         # disk buffer drained
 ```
 
 ### Overload handling (Phase 6)
 
 ```bash
-# Agent: bounded buffer + adaptive backoff (on x-overloaded)
-./build-agent/pudim-agent --max-buffer-size=200 ...
-
-# Collector: signal agents to back off when ingest exceeds 1s
+./build-agent/pudim-agent --max-buffer-size=200 --disk-buffer-path=/var/lib/pudim/pending.db ...
 ./build-collector/pudim-collector --backpressure-threshold-ms=1000 ...
-
-# Simulate overload
-./scripts/overload-collector.sh 10 500      # 10 agents at 500 ms
-./scripts/overload-kafka.sh 30              # pause/resume Kafka for 30 s
+./scripts/overload-collector.sh 10 500
+./scripts/overload-kafka.sh 30
 ```
 
 ## License

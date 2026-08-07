@@ -217,17 +217,17 @@
 
 **Goal:** Prove the system can survive regional failures and be operated cost‑effectively.
 
-- [ ] Multi‑region deployment: deploy a secondary collector in a different AWS region, agents fail over if primary unreachable (using service discovery from Phase 5)
-- [ ] Agent buffering: agents store metrics to local SQLite or memory‑mapped file when collector unreachable; flush on reconnect
-- [ ] Disaster recovery drill:
-  - [ ] Simulate primary region outage; verify agents switch to secondary collector
-  - [ ] Measure data gap and recovery time, document in `docs/dr-test.md`
-- [ ] Cost analysis:
-  - [ ] Monthly cost estimate (EC2 instances, managed Kafka or self‑hosted brokers, TimescaleDB/RDS, S3 for pcap storage)
-  - [ ] Scaling projection (100 agents, 1000 agents)
-  - [ ] Optimisation: spot instances for collectors, Kafka tiered storage, data retention policies
-- [ ] Capacity planning: metrics per second per agent, Kafka bandwidth, storage retention and downsampling strategies
-- [ ] ADR: `009-multi-region-dr-strategy.md`
+- [x] Multi‑region deployment: deploy a secondary collector in a different AWS region, agents fail over if primary unreachable (using service discovery from Phase 5)
+- [x] Agent buffering: agents store metrics to local SQLite or memory‑mapped file when collector unreachable; flush on reconnect
+- [x] Disaster recovery drill:
+  - [x] Simulate primary region outage; verify agents switch to secondary collector
+  - [x] Measure data gap and recovery time, document in `docs/dr-test.md`
+- [x] Cost analysis:
+  - [x] Monthly cost estimate (EC2 instances, managed Kafka or self‑hosted brokers, TimescaleDB/RDS, S3 for pcap storage)
+  - [x] Scaling projection (100 agents, 1000 agents)
+  - [x] Optimisation: spot instances for collectors, Kafka tiered storage, data retention policies
+- [x] Capacity planning: metrics per second per agent, Kafka bandwidth, storage retention and downsampling strategies
+- [x] ADR: `009-multi-region-dr-strategy.md`
 
 ---
 
@@ -268,6 +268,6 @@
 - [x] Overload & backpressure: collector overload simulation, Kafka slowdown, backpressure strategy, metric dropping policy, buffering limits, memory safeguards; ADR
 - [x] Chaos experiments: collector kill, network partition, DNS failure, clock skew injection; documented
 - [x] Two simulated postmortems written (overload OOM, clock skew alert storm)
-- [ ] Multi‑region failover with agent buffering; DR test and RTO/RPO measured
-- [ ] Cost estimate, capacity plan, and cost optimization suggestions
-- [ ] All ADRs (9 total), runbooks, and portfolio artifacts complete
+- [x] Multi‑region failover with agent buffering; DR test and RTO/RPO measured
+- [x] Cost estimate, capacity plan, and cost optimization suggestions
+- [x] All ADRs (9 total), runbooks, and portfolio artifacts complete

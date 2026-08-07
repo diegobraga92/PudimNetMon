@@ -16,6 +16,15 @@ if(PkgConfig_FOUND)
   pkg_check_modules(PCAP libpcap)
   pkg_check_modules(SYSTEMD libsystemd)
 endif()
+# SQLite3 (disk buffer) optional: without it the agent degrades to in-memory
+# buffering only.
+find_package(SQLite3)
+if(SQLite3_FOUND)
+  add_compile_definitions(HAVE_SQLITE3=1)
+  message(STATUS "SQLite3 found: persistent disk buffer enabled")
+else()
+  message(STATUS "SQLite3 NOT found: persistent disk buffer disabled")
+endif()
 if(PCAP_FOUND)
   add_compile_definitions(HAVE_LIBPCAP=1)
   message(STATUS "libpcap found: TCP handshake capture enabled")
@@ -100,6 +109,7 @@ add_executable(pudim-agent
   src/diagnostic_service.cpp
   src/systemd_notify.cpp
   src/trace_context.cpp
+  src/disk_buffer.cpp
 )
 target_link_libraries(pudim-agent
   PRIVATE
@@ -118,6 +128,9 @@ endif()
 if(SYSTEMD_FOUND)
   target_link_libraries(pudim-agent PRIVATE ${SYSTEMD_LIBRARIES})
   target_include_directories(pudim-agent PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+endif()
+if(SQLite3_FOUND)
+  target_link_libraries(pudim-agent PRIVATE SQLite::SQLite3)
 endif()
 target_include_directories(pudim-agent PRIVATE ${CMAKE_BINARY_DIR})
 

@@ -100,12 +100,34 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Phase 7 DR: secondary collector standing in for a second region. In a real
+  # multi-region deployment each region runs its own collector + Kafka + DB;
+  # here both collectors share the local stack so the failover drill is easy to
+  # run (see docs/dr-test.md).
+  collector-secondary:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.collector
+    ports:
+      - "50052:50052"  # gRPC
+      - "8081:8081"    # HTTP health/metrics
+    command:
+      - "--grpc-addr=0.0.0.0:50052"
+      - "--http-addr=0.0.0.0:8081"
+      - "--kafka-brokers=kafka:9092"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
   agent:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.agent
     command: >
-      --collector-endpoint=collector:50051
+      --collector-endpoints=collector:50051,collector-secondary:50052
       --node-id=agent-docker-001
       --interval=10000
       --dns-targets=example.com

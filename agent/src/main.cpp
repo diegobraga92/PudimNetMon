@@ -21,6 +21,7 @@
 #include "diagnostic_service.h"
 #include "systemd_notify.h"
 #include "trace_context.h"
+#include "disk_buffer.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -185,6 +186,8 @@ int main(int argc, char **argv) {
     std::string diagnostic_address;  // e.g. "agent.example.com:50052"; empty = not advertised
     std::string collector_endpoints_input;  // comma-separated failover list
     int max_buffer_size = 200;  // in-memory batch buffer cap (overload handling)
+    std::string disk_buffer_path = "/var/lib/pudim/pending.db";
+    int disk_buffer_max_mb = 100;
 
     auto parse_list = [](const std::string &s) {
         std::vector<std::string> out;
@@ -224,13 +227,15 @@ int main(int argc, char **argv) {
         {"diagnostic-address", required_argument, nullptr, 'a'},
         {"collector-endpoints", required_argument, nullptr, 'b'},
         {"max-buffer-size",     required_argument, nullptr, 'f'},
+        {"disk-buffer-path",    required_argument, nullptr, 'j'},
+        {"disk-buffer-max-mb",  required_argument, nullptr, 'l'},
         {"help",               no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:b:f:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:b:f:j:l:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
@@ -265,6 +270,8 @@ int main(int argc, char **argv) {
             case 'a': diagnostic_address = optarg; break;
             case 'b': collector_endpoints_input = optarg; break;
             case 'f': max_buffer_size = std::stoi(optarg); break;
+            case 'j': disk_buffer_path = optarg; break;
+            case 'l': disk_buffer_max_mb = std::stoi(optarg); break;
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
@@ -288,6 +295,8 @@ int main(int argc, char **argv) {
                           << "  -a, --diagnostic-address  Advertised diagnostic endpoint, e.g. agent.example.com:50052\n"
                           << "  -b, --collector-endpoints Comma-separated collector endpoints for failover\n"
                           << "  -f, --max-buffer-size     Max queued metric batches before dropping (default: 200)\n"
+                          << "  -j, --disk-buffer-path    SQLite path for persistent buffering (default: /var/lib/pudim/pending.db)\n"
+                          << "  -l, --disk-buffer-max-mb  Max disk buffer size in MB (default: 100)\n"
                           << "  -h, --help                Show this help\n";
                 return 0;
             default:
@@ -384,9 +393,25 @@ int main(int argc, char **argv) {
 
     LOG_INFO("Running metrics probes every " + std::to_string(interval_ms) + "ms");
 
+    // Phase 7 DR: persistent disk buffer (SQLite). Metrics overflowed from the
+    // in-memory buffer are stored here and drained on reconnect, surviving
+    // agent restarts and extended collector downtime.
+    pudimagent::DiskBuffer disk_buffer(disk_buffer_path,
+        static_cast<uint64_t>(disk_buffer_max_mb) * 1024 * 1024);
+    std::string db_err;
+    if (disk_buffer.Open(db_err)) {
+        LOG_INFO("Disk buffer ready at " + disk_buffer_path +
+                 " (pending=" + std::to_string(disk_buffer.Size()) + ")");
+    } else {
+        LOG_WARN("Disk buffer unavailable: " + db_err +
+                 " (in-memory buffering only)");
+    }
+
     // Main loop
     uint64_t seq = 0;
     uint64_t buffer_drops = 0;
+    uint64_t disk_spills = 0;
+    uint64_t disk_drained = 0;
     int current_interval_ms = interval_ms;
     bool backpressure = false;
     // Bounded in-memory buffer (Phase 6 overload handling): oldest dropped
@@ -424,13 +449,23 @@ int main(int argc, char **argv) {
             *batch.add_metrics() = std::move(m);
         }
 
-        // Buffer the batch; drop oldest when over the cap.
+        // Buffer the batch; overflow spills to the disk buffer (Phase 7 DR).
         buffer.push_back(std::move(batch));
         while (static_cast<int>(buffer.size()) > max_buffer_size) {
+            MetricsBatch dropped = std::move(buffer.front());
             buffer.pop_front();
-            buffer_drops++;
-            LOG_WARN("Buffer full; dropped oldest metric batch (total drops=" +
-                     std::to_string(buffer_drops) + ")");
+            std::string blob;
+            if (disk_buffer.Available() && dropped.SerializeToString(&blob) &&
+                disk_buffer.Push(blob)) {
+                disk_spills++;
+                LOG_WARN("Buffer full; spilled oldest batch to disk buffer (spilled=" +
+                         std::to_string(disk_spills) + ", pending=" +
+                         std::to_string(disk_buffer.Size()) + ")");
+            } else {
+                buffer_drops++;
+                LOG_WARN("Buffer full; dropped oldest metric batch (drops=" +
+                         std::to_string(buffer_drops) + ")");
+            }
         }
 
         // Send the oldest buffered batch (FIFO drain).
@@ -447,6 +482,31 @@ int main(int argc, char **argv) {
             LOG_INFO("Metrics batch accepted by collector");
             failover.OnSendSuccess();
             backpressure = clients.second->BackpressureSignalled();
+
+            // Phase 7: drain persisted batches from the disk buffer (bounded
+            // work per cycle; oldest-first).
+            for (int i = 0; i < 10 && disk_buffer.Size() > 0; i++) {
+                std::vector<std::string> blobs;
+                disk_buffer.Peek(blobs, 1);
+                if (blobs.empty()) break;
+                MetricsBatch pb;
+                if (pb.ParseFromString(blobs[0])) {
+                    bool d_ok =
+                        use_stream_metrics
+                            ? clients.second->StreamMetrics(pb.agent_id(),
+                                                            pb.metrics(),
+                                                            traceparent)
+                            : clients.second->SendBatch(pb, traceparent);
+                    if (!d_ok) break;  // stop draining; retry next cycle
+                }
+                disk_buffer.Pop(1);
+                disk_drained++;
+            }
+            if (disk_drained > 0) {
+                LOG_INFO("Drained " + std::to_string(disk_drained) +
+                         " persisted batches from disk buffer (pending=" +
+                         std::to_string(disk_buffer.Size()) + ")");
+            }
         } else {
             LOG_WARN("Metrics batch rejected or send failed; keeping it buffered");
             if (failover.OnSendFailure()) {
@@ -477,6 +537,10 @@ int main(int argc, char **argv) {
     }
 
     watchdog_stop = true;
+    if (disk_buffer.Size() > 0) {
+        LOG_WARN(std::to_string(disk_buffer.Size()) +
+                 " batches remain in disk buffer; will be retried on next start");
+    }
     LOG_INFO("Agent shut down gracefully");
     return 0;
 }
