@@ -39,24 +39,24 @@
 
 **Goal:** A single agent, collector, and dashboard that compile, run, and exchange a heartbeat.
 
-- [ ] Monorepo: `agent/`, `collector/`, `dashboard/`, `api/`, `infra/`, `docker-compose.yml`
-- [ ] Agent (C++):
-  - [ ] CMake build, basic main loop, structured logging (spdlog or custom)
-  - [ ] systemd unit file for daemon mode
-  - [ ] Command‑line flags: collector endpoint, node ID, interval
-  - [ ] Send heartbeat gRPC/protobuf message to collector
-- [ ] Collector (C++):
-  - [ ] CMake build, gRPC server, receive heartbeats, log them
-  - [ ] In‑memory agent registry (agent ID, last seen)
-  - [ ] Health HTTP endpoint (`/health`, `/metrics`)
-- [ ] Dashboard (TypeScript + React + Vite):
-  - [ ] Scaffold, call collector `/health`, display connection status
-- [ ] API contracts: Protobuf definitions for heartbeat, metrics (check in `api/proto/`)
-- [ ] Docker Compose: collector + dashboard + dummy agent (or run agent natively)
-- [ ] CI/CD: GitHub Actions for C++ build/test, dashboard lint/build
-- [ ] Observability seed: collector Prometheus `/metrics` endpoint, structured logging with trace IDs
-- [ ] SLO draft: agent heartbeat delivery success rate, document in `docs/slo.md`
-- [ ] ADR: `001-choose-cpp-and-grpc.md`
+- [x] Monorepo: `agent/`, `collector/`, `dashboard/`, `api/`, `infra/`, `docker-compose.yml`
+- [x] Agent (C++):
+  - [x] CMake build, basic main loop, structured logging (spdlog or custom)
+  - [x] systemd unit file for daemon mode
+  - [x] Command‑line flags: collector endpoint, node ID, interval
+  - [x] Send heartbeat gRPC/protobuf message to collector
+- [x] Collector (C++):
+  - [x] CMake build, gRPC server, receive heartbeats, log them
+  - [x] In‑memory agent registry (agent ID, last seen)
+  - [x] Health HTTP endpoint (`/health`, `/metrics`)
+- [x] Dashboard (TypeScript + React + Vite):
+  - [x] Scaffold, call collector `/health`, display connection status
+- [x] API contracts: Protobuf definitions for heartbeat, metrics (check in `api/proto/`)
+- [x] Docker Compose: collector + dashboard + dummy agent (or run agent natively)
+- [x] CI/CD: GitHub Actions for C++ build/test, dashboard lint/build
+- [x] Observability seed: collector Prometheus `/metrics` endpoint, structured logging with trace IDs
+- [x] SLO draft: agent heartbeat delivery success rate, document in `docs/slo.md`
+- [x] ADR: `001-choose-cpp-and-grpc.md`
 
 ---
 
@@ -253,11 +253,11 @@
 
 ## Completion Checklist – Network Tracker
 
-- [ ] C++ agent daemon with systemd, capabilities, and logging
-- [ ] gRPC streaming metrics to collector
-- [ ] Time‑series storage (TimescaleDB) with efficient writes and reads
-- [ ] Real‑time dashboard with agent health and metric graphs
-- [ ] Alerting engine with notifications (webhook or log)
+- [x] C++ agent daemon with systemd, capabilities, and logging
+- [x] gRPC streaming metrics to collector
+- [x] Time‑series storage (TimescaleDB) with efficient writes and reads
+- [x] Real‑time dashboard with agent health and metric graphs
+- [x] Alerting engine with notifications (webhook or log)
 - [ ] Kafka integration as metrics backbone; consumer lag monitored
 - [ ] Deep networking checks: DNS, TCP handshake, TLS cert, HTTP/2 vs HTTP/3, packet loss, jitter
 - [ ] Network diagnostic mode (traceroute, pcap) with Wireshark/tcpdump annotated documentation

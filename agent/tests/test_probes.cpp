@@ -35,7 +35,9 @@ static void TestDnsInvalid() {
     pudimagent::ProbeDns("invalid.invalid.invalid", m);
     assert(m.check_type() == CheckType::CHECK_TYPE_DNS_RESOLUTION);
     assert(!m.success());
-    assert(m.has_detail());
+    // `detail` is a proto3 plain string field (no has_detail()); an unset
+    // string reads back as empty.
+    assert(!m.detail().empty());
     std::cout << "PASS: DNS invalid host failed gracefully: "
               << m.detail() << "\n";
 }
@@ -46,7 +48,7 @@ static void TestTcpLocalhost() {
     // localhost:8080 may or may not be listening; just verify we get a
     // metric with the right check_type and either success or failure detail.
     assert(m.check_type() == CheckType::CHECK_TYPE_TCP_CONNECT);
-    assert(m.success() || m.has_detail());
+    assert(m.success() || !m.detail().empty());
     std::cout << "PASS: TCP localhost probe produced metric "
               << (m.success() ? "(success)" : "(failure: " + m.detail() + ")") << "\n";
 }

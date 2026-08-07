@@ -4,6 +4,7 @@ collector/build/
 build-agent/
 build-collector/
 build-collector-debug/
+build-agent-debug/
 
 # Dependencies fetched by CMake FetchContent (inside ignored build dirs,
 # listed here for clarity)
