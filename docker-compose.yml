@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: pudim
       POSTGRES_PASSWORD: pudim
     ports:
-      - "5432:5432"
+      - "${PUDIM_TIMESCALEDB_PORT:-5432}:5432"
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +19,7 @@ services:
   kafka:
     image: apache/kafka:3.8.0
     ports:
-      - "9092:9092"
+      - "${PUDIM_KAFKA_PORT:-9092}:9092"
     environment:
       - KAFKA_NODE_ID=1
       - KAFKA_PROCESS_ROLES=broker,controller
@@ -47,8 +47,8 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.collector
     ports:
-      - "50051:50051"  # gRPC
-      - "8080:8080"    # HTTP health/metrics
+      - "${PUDIM_COLLECTOR_GRPC_PORT:-50051}:50051"  # gRPC
+      - "${PUDIM_COLLECTOR_HTTP_PORT:-8080}:8080"    # HTTP health/metrics
     environment:
       PUDIM_DB_HOST: timescaledb
       PUDIM_DB_PORT: "5432"
@@ -69,7 +69,7 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.consumers
     ports:
-      - "9091:9091"  # Prometheus
+      - "${PUDIM_CONSUMER_STORAGE_PROMETHEUS_PORT:-9091}:9091"  # Prometheus
     command:
       - "/usr/local/bin/pudim-consumer-storage"
       - "--kafka-brokers=kafka:9092"
@@ -90,7 +90,10 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.consumers
     ports:
-      - "9092:9092"  # Prometheus
+      # Prometheus /metrics for the alert consumer. Default is 9093: the
+      # original 9092 collided with Kafka's host port. Configure via
+      # PUDIM_CONSUMER_ALERT_PROMETHEUS_PORT in .env if needed.
+      - "${PUDIM_CONSUMER_ALERT_PROMETHEUS_PORT:-9093}:9092"  # Prometheus
     command:
       - "/usr/local/bin/pudim-consumer-alert"
       - "--kafka-brokers=kafka:9092"
@@ -109,8 +112,8 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.collector
     ports:
-      - "50052:50052"  # gRPC
-      - "8081:8081"    # HTTP health/metrics
+      - "${PUDIM_COLLECTOR_SECONDARY_GRPC_PORT:-50052}:50052"  # gRPC
+      - "${PUDIM_COLLECTOR_SECONDARY_HTTP_PORT:-8081}:8081"    # HTTP health/metrics
     command:
       - "--grpc-addr=0.0.0.0:50052"
       - "--http-addr=0.0.0.0:8081"
@@ -150,7 +153,7 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "${PUDIM_DASHBOARD_PORT:-3000}:3000"
     depends_on:
       - collector
     restart: unless-stopped
@@ -158,7 +161,7 @@ services:
   grafana:
     image: grafana/grafana:11.3.0
     ports:
-      - "3100:3000"
+      - "${PUDIM_GRAFANA_PORT:-3100}:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"

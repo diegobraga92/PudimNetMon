@@ -17,7 +17,7 @@
                                            │ pudim-consumer-storage ──▶ TimescaleDB │
                                            │ pudim-consumer-alert   ──▶ AlertManager│
                                            └──────────────────────────────────┘
-                                             Prometheus :9091 (storage) / :9092 (alert)
+                                             Prometheus :9091 (storage) / :9093 (alert)
 
   ┌──────────────┐     HTTP     ┌──────────────┐
   │  Dashboard    │◀────────────│  Collector   │  :3000
@@ -50,6 +50,78 @@ docker compose up --build
 #   http://localhost:8080/agents
 #   http://localhost:8080/metrics
 ```
+> **All host-side ports are configurable** via a `.env` file — see
+> [Running on a LAN Server](#running-on-a-lan-server) below. Defaults are
+> `3000` (dashboard), `3100` (Grafana), `8080`/`50051` (collector),
+> `5432` (TimescaleDB), `9092` (Kafka), `9091`/`9093` (Prometheus endpoints).
+
+## Running on a LAN Server
+
+PudimNetMon publishes several ports on the host. If the LAN server already
+runs many Docker containers (web servers, databases, monitoring stacks…),
+the defaults below may collide. Every port is overridable — **nothing needs
+to be recompiled**: only the Docker host-side mapping changes.
+
+### Step 1 — Pick free ports
+
+Create `.env` from the template and edit the ports you need:
+
+```bash
+cp .env.example .env
+$EDITOR .env
+```
+
+Only override the ports that conflict on your server. The template documents
+every variable; the defaults are:
+
+| Service | Env var | Default port |
+|---|---|---|
+| Dashboard (web UI) | `PUDIM_DASHBOARD_PORT` | `3000` |
+| Grafana | `PUDIM_GRAFANA_PORT` | `3100` |
+| Collector HTTP (REST API, health) | `PUDIM_COLLECTOR_HTTP_PORT` | `8080` |
+| Collector gRPC (agents) | `PUDIM_COLLECTOR_GRPC_PORT` | `50051` |
+| Collector-secondary HTTP | `PUDIM_COLLECTOR_SECONDARY_HTTP_PORT` | `8081` |
+| Collector-secondary gRPC | `PUDIM_COLLECTOR_SECONDARY_GRPC_PORT` | `50052` |
+| TimescaleDB (PostgreSQL) | `PUDIM_TIMESCALEDB_PORT` | `5432` |
+| Kafka broker | `PUDIM_KAFKA_PORT` | `9092` |
+| Consumer-storage Prometheus | `PUDIM_CONSUMER_STORAGE_PROMETHEUS_PORT` | `9091` |
+| Consumer-alert Prometheus | `PUDIM_CONSUMER_ALERT_PROMETHEUS_PORT` | `9093` |
+
+Example `.env` when `3000`, `8080` and `5432` are already taken:
+
+```bash
+PUDIM_DASHBOARD_PORT=3300
+PUDIM_COLLECTOR_HTTP_PORT=8800
+PUDIM_TIMESCALEDB_PORT=55432
+```
+
+### Step 2 — Start the stack
+
+```bash
+docker compose up --build
+```
+
+Docker Compose reads `.env` automatically. Access the dashboard from any
+machine on the LAN at `http://<server-ip>:<PUDIM_DASHBOARD_PORT>` (e.g.
+`http://192.168.1.50:3300`). A firewall may need to allow the chosen ports.
+
+### Troubleshooting
+
+- **`port is already allocated`** (or `Bind for 0.0.0.0:<port> failed`):
+  another container or process owns that port. Find the offender with
+  `docker ps --format 'table {{.Names}}\t{{.Ports}}'` or `ss -tlnp | grep <port>`,
+  then set a different value for the corresponding `PUDIM_*_PORT` in `.env`
+  and `docker compose up -d` again.
+- **Grafana shows no data / blank panels**: the Prometheus endpoints of the
+  consumers are still reachable inside the Compose network; you only need to
+  touch `PUDIM_CONSUMER_*_PROMETHEUS_PORT` if you want to scrape them from an
+  **external** Prometheus on the host.
+- **Agents can't reach the collector**: agent → collector traffic stays on the
+  internal Compose network (`collector:50051`), so remapping host ports never
+  breaks the in-stack agent. Only **external** agents pointing at
+  `<server-ip>:<PUDIM_COLLECTOR_GRPC_PORT>` are affected — update their
+  `--collector-endpoints` accordingly.
+
 
 ### Building from Source (Linux)
 
@@ -99,6 +171,7 @@ npm run dev
 │   ├── DEV_PLAN.md         # Full development plan
 │   └── slo.md             # Service Level Objectives
 ├── .github/workflows/     # CI/CD
+├── .env.example          # Host port configuration template
 └── docker-compose.yml     # Local development environment
 ```
 
