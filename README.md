@@ -107,6 +107,7 @@ npm run dev
 **Phases 0–7 ✅ · mTLS ✅ · Phase 8 ✅** (network topology map deferred — optional)
 
 - ✅ **Interactive dashboard**: zoom/pan (recharts `Brush`), alert acknowledge, and an **agent configuration panel** that reads (`GetConfig`) and applies (`Reconfigure`) probe targets at runtime — no agent restart
+- ✅ **UX/UI overhaul (v0.3)**: full component architecture (React Query data layer, Radix UI primitives, Tailwind CSS v4 design tokens), dark/light mode, responsive sidebar navigation, interactive chart legends, alert severity filtering + bulk ack, agent sparklines + search, validated config form, skeleton/empty/error states, toast notifications, **metrics explorer** (sortable raw table + CSV export), and **PWA support** (manifest, app icons, offline app-shell service worker); tested with vitest + Testing Library
 - ✅ **REST API + OpenAPI spec**: all dashboard endpoints under `/api/*`
   (`/api/health`, `/api/agents`, `/api/metrics`, `/api/alerts` + `/ack`,
   `/api/alert-history`, `/api/alert-rules`, `/api/diagnostic`,
