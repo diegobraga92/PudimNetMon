@@ -148,6 +148,60 @@ npm install
 npm run dev
 ```
 
+## Deploying the Agent & Other Components
+
+The sections above run **everything in Docker on one server**. But the agent
+is designed to run on the actual hosts you monitor, and the dashboard /
+consumers can also run outside Compose. Full instructions in
+[`docs/deployment.md`](docs/deployment.md); quick version below.
+
+### Agent on target hosts
+
+The agent is a C++17 daemon configured entirely via CLI flags (no config
+file), installed as a hardened systemd unit:
+
+```bash
+# 1. Build (from the repo root; Ubuntu 24.04 deps)
+sudo apt-get install -y cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
+    libgrpc-dev protobuf-compiler-grpc build-essential pkg-config \
+    libcurl4-openssl-dev libssl-dev libpcap-dev libsystemd-dev libsqlite3-dev
+cmake -S agent -B build && cmake --build build -j$(nproc)
+sudo cmake --install build                      # /usr/local/bin/pudim-agent
+
+# 2. Install the shipped, pre-hardened systemd unit
+sudo cp agent/systemd/pudim-agent.service /etc/systemd/system/
+
+# 3. Point it at your collector and define probe targets
+sudo systemctl edit --force --full pudim-agent  # edit ExecStart, e.g.:
+#   ExecStart=/usr/local/bin/pudim-agent \
+#       --collector-endpoints=collector.lan:50051,collector2.lan:50052 \
+#       --node-id=web-01 --interval=5000 \
+#       --dns-targets=google.com --tcp-targets=example.com:443 \
+#       --tls-targets=example.com:443 --http-targets=https://example.com \
+#       --ping-targets=1.1.1.1 --diagnostic-address=web-01.lan:50052
+
+sudo systemctl daemon-reload && sudo systemctl enable --now pudim-agent
+```
+
+Key flags: `-b/--collector-endpoints` (comma-separated failover list),
+`-n/--node-id`, `-i/--interval`, `-d/-p/-s/-w/-g` (DNS/TCP/TLS/HTTP/ICMP probe
+targets), `-a/--diagnostic-address` (enables dashboard diagnostics), and
+`-C/-E/-K` for [mTLS](#enable-mtls). The unit runs unprivileged with
+`CAP_NET_RAW`/`CAP_NET_ADMIN` for ICMP + pcap probes. Run one per host, all
+pointing at the same collector(s) — verify with `curl <server>:8080/agents`.
+
+### Dashboard & consumers outside Compose
+
+- **Dashboard**: `cd dashboard && npm ci && npm run build`, then serve the
+  static `dist/` from any web server and reverse-proxy `/api/*` to the
+  collector HTTP port (`8080` by default). Example nginx block in
+  [`docs/deployment.md`](docs/deployment.md#2-dashboard-standalone).
+- **Consumers** (`pudim-consumer-storage`, `pudim-consumer-alert`): built from
+  the collector CMake project (`cmake --build build --target pudim-consumer-storage pudim-consumer-alert`);
+  they only need Kafka (+ TimescaleDB for storage). systemd unit examples in
+  [`docs/deployment.md`](docs/deployment.md#3-kafka-consumers-storage--alert).
+
+
 ## Project Structure
 
 ```
@@ -241,6 +295,7 @@ docker compose logs agent | grep 'Drained'         # disk buffer drained
 | Runbooks | [`docs/runbooks/incident-response.md`](docs/runbooks/incident-response.md), [`docs/runbooks/high-latency-alert.md`](docs/runbooks/high-latency-alert.md) |
 | Postmortems | [`docs/postmortems/001-collector-overload-oom.md`](docs/postmortems/001-collector-overload-oom.md), [`docs/postmortems/002-clock-skew-alert-storm.md`](docs/postmortems/002-clock-skew-alert-storm.md) |
 | Chaos & DR | [`docs/chaos-experiments.md`](docs/chaos-experiments.md), [`docs/dr-test.md`](docs/dr-test.md) |
+| Deployment | [`docs/deployment.md`](docs/deployment.md) — agents on target hosts (systemd), dashboard standalone, consumers as services |
 | Performance | [`docs/performance.md`](docs/performance.md) — bundle optimization + Lighthouse runbook |
 | Deep dives | [`docs/networking-deep-dive.md`](docs/networking-deep-dive.md), [`docs/kernel-tuning.md`](docs/kernel-tuning.md), [`docs/cost-analysis.md`](docs/cost-analysis.md) |
 | Demo | [`docs/demo.md`](docs/demo.md) — recorded portfolio walkthrough |

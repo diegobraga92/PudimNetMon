@@ -10,19 +10,24 @@ RUN apt-get update && apt-get install -y -qq \
 
 WORKDIR /build
 COPY collector/ ./collector/
+# The collector CMakeLists references agent sources (tls_credentials.cpp,
+# metrics_client.cpp) during configuration even when only building consumers,
+# so the agent tree must be present in the build context.
+COPY agent/ ./agent/
 COPY api/ ./api/
 
 RUN cmake -S collector -B build && \
     cmake --build build -j$(nproc) --target pudim-consumer-storage pudim-consumer-alert && \
     cp build/pudim-consumer-storage /usr/local/bin/ && \
     cp build/pudim-consumer-alert /usr/local/bin/ && \
+    mkdir -p /etc/pudim && \
     cp collector/config/alert_rules.json /etc/pudim/alert_rules.json
 
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y -qq \
     libprotobuf32t64 libgrpc++1.51t64 \
-    libpq5 librdkafka1 && \
+    libpq5 librdkafka1 librdkafka++1 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/pudim-consumer-storage /usr/local/bin/

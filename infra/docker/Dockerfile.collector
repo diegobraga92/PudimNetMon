@@ -19,7 +19,7 @@ FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y -qq \
     libprotobuf32t64 libgrpc++1.51t64 \
-    libpq5 librdkafka1 && \
+    libpq5 librdkafka1 librdkafka++1 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/pudim-collector /usr/local/bin/pudim-collector
