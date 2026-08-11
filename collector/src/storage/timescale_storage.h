@@ -57,6 +57,10 @@ public:
     StorageStats GetStats() const;
 
 private:
+    // Re-establishes the DB connection if it is missing or dead (e.g. after a
+    // TimescaleDB restart). Called at the top of every method that runs SQL.
+    void EnsureConnected() const;
+
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };

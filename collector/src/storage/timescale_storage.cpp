@@ -84,6 +84,33 @@ const char *CheckTypeToString(pudimnetmon::CheckType type) {
 
 } // anonymous namespace
 
+namespace {
+
+// Builds a libpq conninfo string. The timeouts and keepalives are critical:
+// libpq blocks indefinitely by default on connect, and PQstatus alone cannot
+// detect a connection dropped by the server (e.g. a DB container restart), so
+// PQexec would otherwise block at the TCP layer for minutes.
+std::string BuildConnInfo(const StorageConfig &cfg) {
+    std::ostringstream conninfo;
+    conninfo << "host=" << cfg.host
+             << " port=" << cfg.port
+             << " dbname=" << cfg.dbname
+             << " user=" << cfg.user
+             << " password=" << cfg.password
+             // Fail fast when TimescaleDB is unreachable instead of blocking
+             // indefinitely (libpq blocks by default).
+             << " connect_timeout=5"
+             // Cap every statement at 5s so a slow query can't hold an HTTP
+             // handler forever (enforced server-side once the query arrives).
+             << " options='-c statement_timeout=5000'"
+             // TCP keepalives: detect a dead connection within ~25s
+             // (idle 10s + 3 probes at 5s) instead of kernel-timeout minutes.
+             << " keepalives=1 keepalives_idle=10 keepalives_interval=5 keepalives_count=3";
+    return conninfo.str();
+}
+
+} // anonymous namespace
+
 struct TimescaleStorage::Impl {
     PGconn *conn = nullptr;
     StorageConfig config;
@@ -91,7 +118,10 @@ struct TimescaleStorage::Impl {
     std::atomic<uint64_t> batches_written{0};
     std::atomic<uint64_t> errors{0};
     std::atomic<uint64_t> insert_latency_total_ms{0};
-    std::mutex write_mutex;
+    // recursive so EnsureConnected() can be called from methods that also hold
+    // the lock; serialises every PQexec on the shared PGconn (libpq is not
+    // safe for concurrent use of a single connection).
+    std::recursive_mutex write_mutex;
 
     explicit Impl(StorageConfig cfg) : config(std::move(cfg)) {}
 
@@ -117,20 +147,8 @@ TimescaleStorage::TimescaleStorage(StorageConfig config)
 TimescaleStorage::~TimescaleStorage() = default;
 
 bool TimescaleStorage::Connect() {
-    std::ostringstream conninfo;
-    conninfo << "host=" << m_impl->config.host
-             << " port=" << m_impl->config.port
-             << " dbname=" << m_impl->config.dbname
-             << " user=" << m_impl->config.user
-             << " password=" << m_impl->config.password
-             // Fail fast when TimescaleDB is unreachable (libpq blocks
-             // indefinitely by default) and cap every statement at 5s so a
-             // dead-but-undetected connection (PQstatus may still report
-             // CONNECTION_OK) cannot hang the HTTP handlers forever.
-             << " connect_timeout=5"
-             << " options='-c statement_timeout=5000'";
-
-    m_impl->conn = PQconnectdb(conninfo.str().c_str());
+    std::lock_guard lock(m_impl->write_mutex);
+    m_impl->conn = PQconnectdb(BuildConnInfo(m_impl->config).c_str());
     if (PQstatus(m_impl->conn) != CONNECTION_OK) {
         std::cerr << "PostgreSQL connection failed: "
                   << PQerrorMessage(m_impl->conn) << "\n";
@@ -209,11 +227,34 @@ END $$;
     return true;
 }
 
+// Re-establishes the connection if it is missing or dead. Called at the top of
+// every method that runs SQL so a DB restart (or any connection drop) self-
+// heals on the next request instead of blocking forever on PQexec.
+void TimescaleStorage::EnsureConnected() const {
+    std::lock_guard lock(m_impl->write_mutex);
+    if (m_impl->conn && PQstatus(m_impl->conn) == CONNECTION_OK) return;
+
+    if (m_impl->conn) {
+        std::cerr << "PostgreSQL connection lost; reconnecting...\n";
+        PQfinish(m_impl->conn);
+        m_impl->conn = nullptr;
+    }
+
+    m_impl->conn = PQconnectdb(BuildConnInfo(m_impl->config).c_str());
+    if (PQstatus(m_impl->conn) != CONNECTION_OK) {
+        std::cerr << "PostgreSQL reconnect failed: "
+                  << PQerrorMessage(m_impl->conn) << "\n";
+        PQfinish(m_impl->conn);
+        m_impl->conn = nullptr;
+    }
+}
+
 bool TimescaleStorage::InsertMetrics(
     const std::string &agent_id,
     int64_t batch_timestamp_unix_ms,
     const google::protobuf::RepeatedPtrField<pudimnetmon::Metric> &metrics) {
     std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
 
     if (!m_impl->conn) return false;
     if (PQstatus(m_impl->conn) != CONNECTION_OK) return false;
@@ -311,10 +352,11 @@ std::string TimescaleStorage::QueryMetricsJson(
     const std::string &agent_id,
     const std::string &check_type,
     int64_t window_seconds) const {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+
     if (!m_impl->conn) return "[]";
     if (PQstatus(m_impl->conn) != CONNECTION_OK) return "[]";
-
-    std::lock_guard lock(m_impl->write_mutex);
 
     std::string sql = "SELECT "
                       "  EXTRACT(EPOCH FROM time) * 1000 AS time_ms, "
@@ -370,6 +412,9 @@ std::string TimescaleStorage::QueryMetricsJson(
 }
 
 bool TimescaleStorage::IsHealthy() const {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+
     if (!m_impl->conn) return false;
     if (PQstatus(m_impl->conn) != CONNECTION_OK) return false;
 
