@@ -506,6 +506,13 @@ int main(int argc, char **argv) {
 
     // Start HTTP server (health + metrics)
     httplib::Server http_server;
+    // Serve requests on a small thread pool. httplib is single-threaded by
+    // default: one slow handler (e.g. a DB query waiting on a dead connection)
+    // would otherwise stall every dashboard endpoint, including /health and
+    // /agents which never touch the database.
+    http_server.new_task_queue = [] {
+        return new httplib::ThreadPool(4);
+    };
 
     // Every dashboard-facing endpoint is served at BOTH /path and /api/path so
     // it works through reverse proxies that strip the /api prefix (legacy) and

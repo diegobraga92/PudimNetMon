@@ -122,7 +122,13 @@ bool TimescaleStorage::Connect() {
              << " port=" << m_impl->config.port
              << " dbname=" << m_impl->config.dbname
              << " user=" << m_impl->config.user
-             << " password=" << m_impl->config.password;
+             << " password=" << m_impl->config.password
+             // Fail fast when TimescaleDB is unreachable (libpq blocks
+             // indefinitely by default) and cap every statement at 5s so a
+             // dead-but-undetected connection (PQstatus may still report
+             // CONNECTION_OK) cannot hang the HTTP handlers forever.
+             << " connect_timeout=5"
+             << " options='-c statement_timeout=5000'";
 
     m_impl->conn = PQconnectdb(conninfo.str().c_str());
     if (PQstatus(m_impl->conn) != CONNECTION_OK) {
