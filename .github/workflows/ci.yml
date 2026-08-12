@@ -67,8 +67,8 @@ jobs:
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: '${{ runner.workspace }}/vcpkg'
+          vcpkgGitCommitId: 'e90cc0982b7cfae62447f1f3bed1fbca0bc8f6be'
           vcpkgJsonGlob: 'agent/vcpkg.json'
-          vcpkgTriplet: 'x64-windows'
           runVcpkgInstall: true
 
       - name: Configure (MSVC)
