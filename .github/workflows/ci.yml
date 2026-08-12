@@ -60,16 +60,39 @@ jobs:
   cpp-agent-windows:
     name: C++ Agent (Windows build)
     runs-on: windows-latest
+    env:
+      VCPKG_ROOT: ${{ runner.temp }}/vcpkg
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+      # vcpkg's native GitHub Actions binary cache (restore/upload via GHA).
+      VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (vcpkg)
-        uses: lukka/run-vcpkg@v11
+      - name: Checkout vcpkg (pinned baseline)
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$env:VCPKG_ROOT"
+          git -C "$env:VCPKG_ROOT" checkout e90cc0982b7cfae62447f1f3bed1fbca0bc8f6be
+
+      - name: Fetch vcpkg tool (with retries)
+        shell: pwsh
+        run: |
+          curl.exe -L --fail --retry 5 --retry-delay 5 --retry-connrefused `
+            -o "$env:VCPKG_ROOT\vcpkg.exe" `
+            "https://github.com/microsoft/vcpkg-tool/releases/download/2026-07-27/vcpkg.exe"
+          & "$env:VCPKG_ROOT\vcpkg.exe" version --disable-metrics
+
+      - name: Cache vcpkg artifacts
+        uses: actions/cache@v4
         with:
-          vcpkgDirectory: '${{ runner.workspace }}/vcpkg'
-          vcpkgGitCommitId: 'e90cc0982b7cfae62447f1f3bed1fbca0bc8f6be'
-          vcpkgJsonGlob: 'agent/vcpkg.json'
-          runVcpkgInstall: true
+          path: |
+            ${{ env.VCPKG_ROOT }}/downloads
+            ${{ env.VCPKG_ROOT }}/buildtrees
+            ${{ env.VCPKG_ROOT }}/packages
+            build/agent-win/vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('agent/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
 
       - name: Configure (MSVC)
         shell: pwsh
