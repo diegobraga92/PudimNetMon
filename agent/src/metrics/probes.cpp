@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -6,6 +7,21 @@
 #include <stdexcept>
 #include <thread>
 
+#include <curl/curl.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <iphlpapi.h>
+#include <mstcpip.h>  // SIO_TCP_INFO / TCP_INFO_v0 (Windows 10+)
+#else
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -16,12 +32,9 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#endif
 
-#include <curl/curl.h>
-#include <openssl/ssl.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
-
+#include "platform/platform.h"
 #include "probes.h"
 #include "ntp_probe.h"
 
@@ -59,16 +72,96 @@ pudimnetmon::Metric FailureMetric(pudimnetmon::CheckType type,
     return m;
 }
 
-// Monotone clock in microseconds.
+// Monotone clock in microseconds (portable).
 int64_t MonotonicUs() {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<int64_t>(ts.tv_sec) * 1'000'000 + ts.tv_nsec / 1000;
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// ---- Platform socket helpers (POSIX vs Winsock) ----
+#ifdef _WIN32
+using Sock = SOCKET;
+static const Sock kInvalidSock = INVALID_SOCKET;
+static inline bool IsValidSock(Sock s) { return s != INVALID_SOCKET; }
+static inline int SockClose(Sock s) { return closesocket(s); }
+static inline int SockError() { return WSAGetLastError(); }
+static inline std::string SockErrorString() {
+    int err = WSAGetLastError();
+    if (err == 0) return "no error";
+    wchar_t *msg = nullptr;
+    DWORD n = FormatMessageW(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, static_cast<DWORD>(err), 0,
+        reinterpret_cast<LPWSTR>(&msg), 0, nullptr);
+    std::string out;
+    if (n > 0 && msg) {
+        out = pudimagent::platform::WideToUtf8(std::wstring(msg, n));
+        LocalFree(msg);
+    } else {
+        out = "winsock error " + std::to_string(err);
+    }
+    return out;
+}
+static inline bool SetNonBlocking(Sock s, bool nb) {
+    u_long mode = nb ? 1 : 0;
+    return ioctlsocket(s, FIONBIO, &mode) == 0;
+}
+static inline Sock CreateStreamSocket(int family, int protocol) {
+    return socket(family, SOCK_STREAM, protocol);
+}
+static inline bool IsConnectingError() {
+    int e = WSAGetLastError();
+    return e == WSAEINPROGRESS || e == WSAEWOULDBLOCK;
+}
+static inline int SelectWrite(Sock, fd_set *wset, timeval *tv) {
+    return select(0, nullptr, wset, nullptr, tv);
+}
+#else
+using Sock = int;
+static const Sock kInvalidSock = -1;
+static inline bool IsValidSock(Sock s) { return s >= 0; }
+static inline int SockClose(Sock s) { return close(s); }
+static inline int SockError() { return errno; }
+static inline std::string SockErrorString() {
+    return std::string(strerror(errno));
+}
+static inline bool SetNonBlocking(Sock s, bool nb) {
+    int flags = fcntl(s, F_GETFL, 0);
+    if (flags < 0) return false;
+    return fcntl(s, F_SETFL, nb ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK)) == 0;
+}
+static inline Sock CreateStreamSocket(int family, int protocol) {
+    return socket(family, SOCK_STREAM | SOCK_CLOEXEC, protocol);
+}
+static inline bool IsConnectingError() { return errno == EINPROGRESS; }
+static inline int SelectWrite(Sock s, fd_set *wset, timeval *tv) {
+    return select(static_cast<int>(s) + 1, nullptr, wset, nullptr, tv);
+}
+#endif
+
+// Reads SO_ERROR for a socket, returning the error code (0 = success).
+static inline int GetSocketError(Sock s) {
+    int so_err = 0;
+#ifdef _WIN32
+    int len = sizeof(so_err);
+    if (getsockopt(s, SOL_SOCKET, SO_ERROR,
+                   reinterpret_cast<char *>(&so_err), &len) != 0) {
+        return SockError();
+    }
+#else
+    socklen_t len = sizeof(so_err);
+    if (getsockopt(s, SOL_SOCKET, SO_ERROR, &so_err, &len) != 0) {
+        return errno;
+    }
+#endif
+    return so_err;
 }
 
 // Resolves host:port and establishes a blocking TCP connection with a 3s
 // connect timeout. Returns true + fd on success.
-bool ConnectSocket(const std::string &host, int port, int &fd,
+bool ConnectSocket(const std::string &host, int port, Sock &fd,
                    std::string &err) {
     struct addrinfo hints;
     std::memset(&hints, 0, sizeof(hints));
@@ -82,47 +175,45 @@ bool ConnectSocket(const std::string &host, int port, int &fd,
         return false;
     }
 
-    fd = -1;
+    fd = kInvalidSock;
     for (struct addrinfo *ai = result; ai != nullptr; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC,
-                    ai->ai_protocol);
-        if (fd < 0) continue;
+        fd = CreateStreamSocket(ai->ai_family, ai->ai_protocol);
+        if (!IsValidSock(fd)) continue;
 
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        if (!SetNonBlocking(fd, true)) {
+            SockClose(fd);
+            fd = kInvalidSock;
+            continue;
+        }
         int rc = connect(fd, ai->ai_addr, ai->ai_addrlen);
-        if (rc < 0 && errno != EINPROGRESS) {
-            close(fd);
-            fd = -1;
+        if (rc < 0 && !IsConnectingError()) {
+            SockClose(fd);
+            fd = kInvalidSock;
             continue;
         }
         struct timeval tv{3, 0};
         fd_set wset;
         FD_ZERO(&wset);
         FD_SET(fd, &wset);
-        rc = select(fd + 1, nullptr, &wset, nullptr, &tv);
+        rc = SelectWrite(fd, &wset, &tv);
         if (rc <= 0) {
-            close(fd);
-            fd = -1;
+            SockClose(fd);
+            fd = kInvalidSock;
             continue;
         }
-        int so_err = 0;
-        socklen_t len = sizeof(so_err);
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &len);
-        if (so_err != 0) {
-            close(fd);
-            fd = -1;
+        if (GetSocketError(fd) != 0) {
+            SockClose(fd);
+            fd = kInvalidSock;
             continue;
         }
         // Back to blocking for the caller.
-        flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        SetNonBlocking(fd, false);
         break;
     }
     freeaddrinfo(result);
 
-    if (fd < 0) {
-        err = "connect failed";
+    if (!IsValidSock(fd)) {
+        err = "connect failed: " + SockErrorString();
         return false;
     }
     return true;
@@ -142,8 +233,7 @@ void RunDnsProbe(const std::string &host, pudimnetmon::Metric &metric) {
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *result = nullptr;
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    auto start = std::chrono::steady_clock::now();
 
     int rc = getaddrinfo(host.c_str(), nullptr, &hints, &result);
 
@@ -154,10 +244,9 @@ void RunDnsProbe(const std::string &host, pudimnetmon::Metric &metric) {
     }
     freeaddrinfo(result);
 
-    clock_gettime(CLOCK_MONOTONIC, &end);
+    auto end = std::chrono::steady_clock::now();
     double latency_ms =
-        (end.tv_sec - start.tv_sec) * 1000.0 +
-        (end.tv_nsec - start.tv_nsec) / 1'000'000.0;
+        std::chrono::duration<double, std::milli>(end - start).count();
     metric.set_latency_ms(latency_ms);
     metric.set_success(true);
 }
@@ -191,33 +280,31 @@ void RunTcpProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
         return;
     }
 
-    int fd = -1;
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    Sock fd = kInvalidSock;
+    auto start = std::chrono::steady_clock::now();
 
     for (struct addrinfo *ai = result; ai != nullptr; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
-        if (fd < 0) continue;
+        fd = CreateStreamSocket(ai->ai_family, ai->ai_protocol);
+        if (!IsValidSock(fd)) continue;
 
         if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) {
             break;
         }
-        close(fd);
-        fd = -1;
+        SockClose(fd);
+        fd = kInvalidSock;
     }
     freeaddrinfo(result);
 
-    if (fd < 0) {
+    if (!IsValidSock(fd)) {
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TCP_CONNECT, host_port,
                                "connect failed");
         return;
     }
-    close(fd);
+    SockClose(fd);
 
-    clock_gettime(CLOCK_MONOTONIC, &end);
+    auto end = std::chrono::steady_clock::now();
     double latency_ms =
-        (end.tv_sec - start.tv_sec) * 1000.0 +
-        (end.tv_nsec - start.tv_nsec) / 1'000'000.0;
+        std::chrono::duration<double, std::milli>(end - start).count();
     metric.set_latency_ms(latency_ms);
     metric.set_success(true);
 }
@@ -251,45 +338,44 @@ void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
         return;
     }
 
-    int fd = -1;
+    Sock fd = kInvalidSock;
     for (struct addrinfo *ai = result; ai != nullptr; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
-        if (fd < 0) continue;
+        fd = CreateStreamSocket(ai->ai_family, ai->ai_protocol);
+        if (!IsValidSock(fd)) continue;
         // Non-blocking connect with timeout
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        if (!SetNonBlocking(fd, true)) {
+            SockClose(fd);
+            fd = kInvalidSock;
+            continue;
+        }
         int rc = connect(fd, ai->ai_addr, ai->ai_addrlen);
-        if (rc < 0 && errno != EINPROGRESS) {
-            close(fd);
-            fd = -1;
+        if (rc < 0 && !IsConnectingError()) {
+            SockClose(fd);
+            fd = kInvalidSock;
             continue;
         }
         struct timeval tv{3, 0};
         fd_set wset;
         FD_ZERO(&wset);
         FD_SET(fd, &wset);
-        rc = select(fd + 1, nullptr, &wset, nullptr, &tv);
+        rc = SelectWrite(fd, &wset, &tv);
         if (rc <= 0) {
-            close(fd);
-            fd = -1;
+            SockClose(fd);
+            fd = kInvalidSock;
             continue;
         }
-        int so_err = 0;
-        socklen_t len = sizeof(so_err);
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &len);
-        if (so_err != 0) {
-            close(fd);
-            fd = -1;
+        if (GetSocketError(fd) != 0) {
+            SockClose(fd);
+            fd = kInvalidSock;
             continue;
         }
         // Back to blocking for SSL
-        flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        SetNonBlocking(fd, false);
         break;
     }
     freeaddrinfo(result);
 
-    if (fd < 0) {
+    if (!IsValidSock(fd)) {
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TLS_HANDSHAKE, host_port,
                                "connect failed");
         return;
@@ -298,12 +384,11 @@ void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     static std::once_flag ssl_once;
     std::call_once(ssl_once, []() { SSL_library_init(); });
 
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    auto start = std::chrono::steady_clock::now();
 
     SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
     if (!ctx) {
-        close(fd);
+        SockClose(fd);
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TLS_HANDSHAKE, host_port,
                                "SSL_CTX_new failed");
         return;
@@ -313,13 +398,13 @@ void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     SSL *ssl = SSL_new(ctx);
     if (!ssl) {
         SSL_CTX_free(ctx);
-        close(fd);
+        SockClose(fd);
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TLS_HANDSHAKE, host_port,
                                "SSL_new failed");
         return;
     }
 
-    SSL_set_fd(ssl, fd);
+    SSL_set_fd(ssl, static_cast<int>(fd));
     SSL_set_tlsext_host_name(ssl, host.c_str());
 
     // Client cert verification is disabled for now (Phase 0/1);
@@ -333,14 +418,13 @@ void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
         detail = "TLS handshake failed";
     }
 
-    clock_gettime(CLOCK_MONOTONIC, &end);
+    auto end = std::chrono::steady_clock::now();
     double latency_ms =
-        (end.tv_sec - start.tv_sec) * 1000.0 +
-        (end.tv_nsec - start.tv_nsec) / 1'000'000.0;
+        std::chrono::duration<double, std::milli>(end - start).count();
 
     SSL_free(ssl);
     SSL_CTX_free(ctx);
-    close(fd);
+    SockClose(fd);
 
     if (!ok) {
         metric.set_success(false);
@@ -368,8 +452,9 @@ void RunHttpProbe(const std::string &url, pudimnetmon::Metric &metric) {
 }
 
 // ------------------------------------------------------------
-// ICMP ping probe (requires CAP_NET_RAW)
+// ICMP ping probe (raw sockets on POSIX; ICMP API on Windows)
 // ------------------------------------------------------------
+#ifndef _WIN32
 struct PingResult {
     bool ok = false;
     std::string detail;
@@ -444,6 +529,7 @@ PingResult RunSinglePing(int fd, const sockaddr_in &addr, uint16_t id,
         }
     }
 }
+#endif  // !_WIN32
 
 void RunIcmpProbe(const std::string &host, int count,
                   pudimnetmon::Metric &loss_metric,
@@ -501,6 +587,51 @@ void RunIcmpProbe(const std::string &host, int count,
         return;
     }
 
+    std::vector<double> rtts;
+    int sent_count = 0;
+    int lost_count = 0;
+
+#ifdef _WIN32
+    // Windows: use the ICMP API (iphlpapi). No admin/capability needed.
+    HANDLE icmp = IcmpCreateFile();
+    if (icmp == INVALID_HANDLE_VALUE) {
+        std::string d = "IcmpCreateFile failed";
+        loss_metric.set_success(false);
+        loss_metric.set_detail(d);
+        rtt_metric.set_success(false);
+        rtt_metric.set_detail(d);
+        jitter_metric.set_success(false);
+        jitter_metric.set_detail(d);
+        return;
+    }
+
+    char send_data[32];
+    std::memset(send_data, 'P', sizeof(send_data));
+
+    for (int i = 0; i < count; i++) {
+        // Reply buffer: ICMP_ECHO_REPLY header + 8 bytes of reply overhead +
+        // the echoed payload.
+        unsigned char reply[sizeof(ICMP_ECHO_REPLY) + 8 + sizeof(send_data)];
+        DWORD rc = IcmpSendEcho2(icmp, nullptr, nullptr, nullptr,
+                                 dst.sin_addr.S_un.S_addr, send_data,
+                                 static_cast<WORD>(sizeof(send_data)), nullptr,
+                                 reply, static_cast<DWORD>(sizeof(reply)), 3000);
+        sent_count++;
+        if (rc != 0) {
+            PICMP_ECHO_REPLY echo = reinterpret_cast<PICMP_ECHO_REPLY>(reply);
+            if (echo->Status == IP_SUCCESS) {
+                rtts.push_back(static_cast<double>(echo->RoundTripTime));
+            } else {
+                lost_count++;
+            }
+        } else {
+            lost_count++;
+        }
+        // 200ms between pings
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    IcmpCloseHandle(icmp);
+#else
     int fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (fd < 0) {
         std::string d = "raw socket requires CAP_NET_RAW: " +
@@ -515,10 +646,6 @@ void RunIcmpProbe(const std::string &host, int count,
     }
 
     uint16_t id = static_cast<uint16_t>(getpid() & 0xFFFF);
-    std::vector<double> rtts;
-    int sent_count = 0;
-    int lost_count = 0;
-
     for (int i = 0; i < count; i++) {
         PingResult res = RunSinglePing(fd, dst, id, static_cast<uint16_t>(i));
         sent_count++;
@@ -532,6 +659,7 @@ void RunIcmpProbe(const std::string &host, int count,
     }
 
     close(fd);
+#endif
 
     double loss_pct = (sent_count > 0) ? (100.0 * lost_count / sent_count) : 100.0;
     loss_metric.set_packet_loss_pct(loss_pct);
@@ -671,13 +799,27 @@ void RunTcpRetransmitProbe(const std::string &host_port,
                                host_port, "invalid host:port");
         return;
     }
-    int fd;
+    Sock fd;
     std::string err;
     if (!ConnectSocket(host, port, fd, err)) {
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT,
                                host_port, err);
         return;
     }
+#ifdef _WIN32
+    // Windows 10+: SIO_TCP_INFO returns a TCP_INFO_v0 struct; TotalRetrans is
+    // the cumulative retransmission count for the connection.
+    TCP_INFO_v0 info{};
+    DWORD bytes = 0;
+    if (WSAIoctl(fd, SIO_TCP_INFO, nullptr, 0, &info, sizeof(info), &bytes,
+                 nullptr, nullptr) == 0) {
+        metric.set_status_code(static_cast<int64_t>(info.TotalRetrans));
+        metric.set_success(true);
+    } else {
+        metric = FailureMetric(pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT,
+                               host_port, "WSAIoctl(SIO_TCP_INFO) failed");
+    }
+#else
     struct tcp_info info;
     std::memset(&info, 0, sizeof(info));
     socklen_t len = sizeof(info);
@@ -688,7 +830,8 @@ void RunTcpRetransmitProbe(const std::string &host_port,
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT,
                                host_port, "getsockopt(TCP_INFO) failed");
     }
-    close(fd);
+#endif
+    SockClose(fd);
 }
 
 // ------------------------------------------------------------
@@ -707,7 +850,7 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
                                host_port, "invalid host:port");
         return;
     }
-    int fd;
+    Sock fd;
     std::string err;
     if (!ConnectSocket(host, port, fd, err)) {
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TLS_CERTIFICATE,
@@ -720,7 +863,7 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
 
     SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
     if (!ctx) {
-        close(fd);
+        SockClose(fd);
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TLS_CERTIFICATE,
                                host_port, "SSL_CTX_new failed");
         return;
@@ -732,12 +875,12 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
     SSL *ssl = SSL_new(ctx);
     if (!ssl) {
         SSL_CTX_free(ctx);
-        close(fd);
+        SockClose(fd);
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TLS_CERTIFICATE,
                                host_port, "SSL_new failed");
         return;
     }
-    SSL_set_fd(ssl, fd);
+    SSL_set_fd(ssl, static_cast<int>(fd));
     SSL_set_tlsext_host_name(ssl, host.c_str());
     SSL_set_verify(ssl, SSL_VERIFY_PEER, nullptr);
 
@@ -796,7 +939,7 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
 
     SSL_free(ssl);
     SSL_CTX_free(ctx);
-    close(fd);
+    SockClose(fd);
 }
 
 // ------------------------------------------------------------

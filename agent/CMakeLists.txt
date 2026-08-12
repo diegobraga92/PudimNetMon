@@ -38,6 +38,21 @@ else()
   message(STATUS "libsystemd NOT found: sd_notify disabled")
 endif()
 
+# ---- Windows support (MSVC + vcpkg) ----
+# Platform abstraction layer, Windows service integration and the getopt shim.
+set(PUDIM_PLATFORM_SOURCES
+  src/platform/platform.cpp
+  src/platform/win_service.cpp
+  src/platform/getopt.cpp
+)
+if(WIN32)
+  # SIO_TCP_INFO / TCP_INFO_v0 require the Windows 10 SDK target.
+  add_compile_definitions(_WIN32_WINNT=0x0A00 NOMINMAX)
+  set(PUDIM_PLATFORM_LIBS ws2_32 iphlpapi bcrypt advapi32)
+else()
+  set(PUDIM_PLATFORM_LIBS)
+endif()
+
 # Proto generation
 set(PROTO_DIR "${CMAKE_SOURCE_DIR}/../api/proto")
 set(PROTO_FILES
@@ -111,6 +126,7 @@ add_executable(pudim-agent
   src/trace_context.cpp
   src/disk_buffer.cpp
   src/tls_credentials.cpp
+  ${PUDIM_PLATFORM_SOURCES}
 )
 target_link_libraries(pudim-agent
   PRIVATE
@@ -121,6 +137,7 @@ target_link_libraries(pudim-agent
     OpenSSL::SSL
     OpenSSL::Crypto
     CURL::libcurl
+    ${PUDIM_PLATFORM_LIBS}
 )
 if(PCAP_FOUND)
   target_link_libraries(pudim-agent PRIVATE ${PCAP_LIBRARIES})
@@ -133,7 +150,7 @@ endif()
 if(SQLite3_FOUND)
   target_link_libraries(pudim-agent PRIVATE SQLite::SQLite3)
 endif()
-target_include_directories(pudim-agent PRIVATE ${CMAKE_BINARY_DIR})
+target_include_directories(pudim-agent PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
 
 # Tests
 enable_testing()
@@ -142,6 +159,7 @@ add_executable(test-probes
   src/metrics/probes.cpp
   src/metrics/pcap_probe.cpp
   src/metrics/ntp_probe.cpp
+  src/platform/platform.cpp
 )
 target_link_libraries(test-probes
   PRIVATE
@@ -152,6 +170,7 @@ target_link_libraries(test-probes
     OpenSSL::SSL
     OpenSSL::Crypto
     CURL::libcurl
+    ${PUDIM_PLATFORM_LIBS}
 )
 if(PCAP_FOUND)
   target_link_libraries(test-probes PRIVATE ${PCAP_LIBRARIES})

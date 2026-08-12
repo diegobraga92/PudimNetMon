@@ -57,6 +57,37 @@ jobs:
         working-directory: build/collector
         run: ctest --output-on-failure
 
+  cpp-agent-windows:
+    name: C++ Agent (Windows build)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (vcpkg)
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: '${{ runner.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'agent/vcpkg.json'
+          vcpkgTriplet: 'x64-windows'
+          runVcpkgInstall: true
+
+      - name: Configure (MSVC)
+        shell: pwsh
+        run: |
+          cmake -S agent -B build/agent-win `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build/agent-win --config Release -j
+
+      - name: Test (CTest)
+        shell: pwsh
+        working-directory: build/agent-win
+        run: ctest -C Release --output-on-failure
+
   dashboard:
     name: Dashboard (lint + build)
     runs-on: ubuntu-24.04

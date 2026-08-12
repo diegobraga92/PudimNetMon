@@ -1,0 +1,12 @@
+{
+  "name": "pudimnetmon-agent",
+  "version-string": "0.1.0",
+  "description": "PudimNetMon network monitoring agent (Windows/MSVC build dependencies)",
+  "dependencies": [
+    "grpc",
+    "protobuf",
+    "openssl",
+    "libcurl",
+    "sqlite3"
+  ]
+}

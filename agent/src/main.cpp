@@ -8,7 +8,9 @@
 #include <thread>
 #include <csignal>
 #include <cstring>
-#include <getopt.h>
+#include "platform/getopt.h"
+#include "platform/platform.h"
+#include "platform/win_service.h"
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/server_builder.h>
@@ -92,7 +94,11 @@ static inline void write(const std::string &level, const std::string &message,
 static void handle_signal(int sig) {
     const char *sig_name = (sig == SIGTERM) ? "SIGTERM" :
                            (sig == SIGINT)  ? "SIGINT" :
-                           (sig == SIGHUP)  ? "SIGHUP" : "UNKNOWN";
+#ifndef _WIN32
+                           (sig == SIGHUP)  ? "SIGHUP" :
+#endif
+                           "UNKNOWN";
+#ifndef _WIN32
     if (sig == SIGHUP) {
         logger::write("info",
                       "SIGHUP received: config reload not yet implemented (config "
@@ -100,6 +106,7 @@ static void handle_signal(int sig) {
                       s_node_id, s_trace_id);
         return;
     }
+#endif
     logger::write("info", std::string("Received ") + sig_name + ", shutting down...",
                s_node_id, "");
     s_running = false;
@@ -162,7 +169,7 @@ private:
 // --------------------------------------------
 // Main
 // --------------------------------------------
-int main(int argc, char **argv) {
+int RunAgent(int argc, char **argv) {
     // Defaults
     std::string collector_endpoint = "localhost:50051";
     std::string node_id = "agent-unknown";
@@ -189,11 +196,17 @@ int main(int argc, char **argv) {
     std::string diagnostic_address;  // e.g. "agent.example.com:50052"; empty = not advertised
     std::string collector_endpoints_input;  // comma-separated failover list
     int max_buffer_size = 200;  // in-memory batch buffer cap (overload handling)
-    std::string disk_buffer_path = "/var/lib/pudim/pending.db";
+    std::string disk_buffer_path =
+#ifdef _WIN32
+        pudimagent::platform::DefaultStateDir() + "\\pending.db";
+#else
+        "/var/lib/pudim/pending.db";
+#endif
     int disk_buffer_max_mb = 100;
     std::string tls_ca;    // PEM CA used to verify the collector (mTLS)
     std::string tls_cert;  // PEM client certificate
     std::string tls_key;   // PEM client private key
+    std::string ntp_server = "pool.ntp.org";  // NTP server for the offset probe
 
     auto parse_list = [](const std::string &s) {
         std::vector<std::string> out;
@@ -238,13 +251,14 @@ int main(int argc, char **argv) {
         {"tls-ca",              required_argument, nullptr, 'C'},
         {"tls-cert",            required_argument, nullptr, 'E'},
         {"tls-key",             required_argument, nullptr, 'K'},
+        {"ntp-server",          required_argument, nullptr, 'o'},
         {"help",               no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:qrex:y:z:a:b:f:j:l:C:E:K:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:o:qrex:y:z:a:b:f:j:l:C:E:K:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
@@ -284,6 +298,7 @@ int main(int argc, char **argv) {
             case 'C': tls_ca = optarg; break;
             case 'E': tls_cert = optarg; break;
             case 'K': tls_key = optarg; break;
+            case 'o': ntp_server = optarg; break;
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
@@ -312,6 +327,7 @@ int main(int argc, char **argv) {
                           << "  -C, --tls-ca              PEM CA to verify the collector (mTLS)\n"
                           << "  -E, --tls-cert             PEM client certificate (mTLS)\n"
                           << "  -K, --tls-key              PEM client private key (mTLS)\n"
+                          << "  -o, --ntp-server          NTP server for the offset probe (default: pool.ntp.org)\n"
                           << "  -h, --help                Show this help\n";
                 return 0;
             default:
@@ -324,6 +340,9 @@ int main(int argc, char **argv) {
     s_node_id = node_id;
     s_trace_id = trace_id;
     s_diagnostic_endpoint = diagnostic_address;
+
+    // Configure the NTP offset probe (used by the SNTP client on Windows).
+    pudimagent::SetNtpServer(ntp_server);
 
     // Setup signal handlers
     std::signal(SIGTERM, handle_signal);
@@ -384,7 +403,9 @@ int main(int argc, char **argv) {
     auto clients = reconnect();
 
     // Phase 5 daemon hardening: notify systemd (Type=notify) and ping watchdog.
+#ifndef _WIN32
     std::signal(SIGHUP, handle_signal);
+#endif
     pudimagent::NotifyReady();
     bool watchdog_stop = false;
     pudimagent::StartWatchdogThread(&watchdog_stop);
@@ -574,4 +595,50 @@ int main(int argc, char **argv) {
     }
     LOG_INFO("Agent shut down gracefully");
     return 0;
+}
+
+// --------------------------------------------
+// Entry point: console application or Windows service
+// --------------------------------------------
+int main(int argc, char **argv) {
+#ifdef _WIN32
+    // Service lifecycle helpers never start the agent loop.
+    if (pudimagent::platform::WantsInstallService(argc, argv)) {
+        std::wstring args;
+        bool first = true;
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--install-service") == 0) continue;
+            if (!first) args += L" ";
+            first = false;
+            args += pudimagent::platform::Utf8ToWide(argv[i]);
+        }
+        return pudimagent::platform::InstallAgentService(args) ? 0 : 1;
+    }
+    if (pudimagent::platform::WantsUninstallService(argc, argv)) {
+        return pudimagent::platform::UninstallAgentService() ? 0 : 1;
+    }
+
+    std::string net_err;
+    if (!pudimagent::platform::InitNetwork(net_err)) {
+        std::cerr << net_err << "\n";
+        return 1;
+    }
+
+    // If the Service Control Manager launched us, the dispatcher below runs
+    // the whole agent lifecycle inside ServiceMain and returns only after the
+    // service has stopped. Otherwise fall through to console mode.
+    if (pudimagent::platform::TryRunAsService(
+            argc, argv,
+            [](int ac, char **av) { return RunAgent(ac, av); },
+            []() { s_running = false; })) {
+        pudimagent::platform::CleanupNetwork();
+        return 0;
+    }
+
+    int rc = RunAgent(argc, argv);
+    pudimagent::platform::CleanupNetwork();
+    return rc;
+#else
+    return RunAgent(argc, argv);
+#endif
 }

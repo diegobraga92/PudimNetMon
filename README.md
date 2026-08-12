@@ -1,6 +1,6 @@
 # 🍮 PudimNetMon — Network Monitoring Platform
 
-> Distributed network monitoring platform: C++ agents (Linux daemons), C++ central collector, and a TypeScript/React web dashboard.
+> Distributed network monitoring platform: C++ agents (Linux daemons and Windows services), C++ central collector, and a TypeScript/React web dashboard.
 
 ## Architecture Overview
 
@@ -190,6 +190,26 @@ targets), `-a/--diagnostic-address` (enables dashboard diagnostics), and
 `CAP_NET_RAW`/`CAP_NET_ADMIN` for ICMP + pcap probes. Run one per host, all
 pointing at the same collector(s) — verify with `curl <server>:8080/agents`.
 
+### Agent on Windows
+
+The agent also builds and runs on **Windows 10/11** (MSVC + vcpkg) as a console
+application or a native Windows service (`PudimNetMonAgent`). Windows hosts
+report into the same collector stack over gRPC. Feature parity is near-total —
+ICMP uses the Windows ICMP API (`iphlpapi`), TCP retransmit uses
+`SIO_TCP_INFO`, NTP offset uses a built-in SNTP client, and traceroute maps to
+`tracert`. Packet capture (libpcap) degrades to an explicit "unsupported"
+metric. Full build/install instructions:
+
+```powershell
+cmake -S agent -B build-agent-windows `
+  -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+cmake --build build-agent-windows --config Release -j
+.\scripts\install-agent-windows.ps1 -ServiceArgs "--node-id=win-01", "--interval=10000"
+```
+
+See [`docs/windows.md`](docs/windows.md) for details, the feature matrix, and
+the CI job that validates the Windows build.
+
 ### Dashboard & consumers outside Compose
 
 - **Dashboard**: `cd dashboard && npm ci && npm run build`, then serve the
@@ -296,6 +316,7 @@ docker compose logs agent | grep 'Drained'         # disk buffer drained
 | Postmortems | [`docs/postmortems/001-collector-overload-oom.md`](docs/postmortems/001-collector-overload-oom.md), [`docs/postmortems/002-clock-skew-alert-storm.md`](docs/postmortems/002-clock-skew-alert-storm.md) |
 | Chaos & DR | [`docs/chaos-experiments.md`](docs/chaos-experiments.md), [`docs/dr-test.md`](docs/dr-test.md) |
 | Deployment | [`docs/deployment.md`](docs/deployment.md) — agents on target hosts (systemd), dashboard standalone, consumers as services |
+| Windows agent | [`docs/windows.md`](docs/windows.md) — build with MSVC + vcpkg, run as console/service, feature matrix |
 | Performance | [`docs/performance.md`](docs/performance.md) — bundle optimization + Lighthouse runbook |
 | Deep dives | [`docs/networking-deep-dive.md`](docs/networking-deep-dive.md), [`docs/kernel-tuning.md`](docs/kernel-tuning.md), [`docs/cost-analysis.md`](docs/cost-analysis.md) |
 | Demo | [`docs/demo.md`](docs/demo.md) — recorded portfolio walkthrough |

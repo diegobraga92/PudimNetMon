@@ -5,30 +5,29 @@
 #include <cstring>
 #include <string>
 
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/ip.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include "metrics.pb.h"
 #include "probes.h"
 
 #ifdef HAVE_LIBPCAP
 
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <pcap/pcap.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace pudimagent {
 
 namespace {
 
 std::string MonotonicUsStr() {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return std::to_string(static_cast<int64_t>(ts.tv_sec) * 1'000'000 +
-                          ts.tv_nsec / 1000);
+    return std::to_string(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
 }
 
 } // anonymous namespace

@@ -4,6 +4,7 @@
 #include <sstream>
 
 #include "trace_context.h"
+#include "platform/platform.h"
 
 namespace pudimagent {
 
@@ -11,6 +12,9 @@ namespace {
 
 // Reads `n` random bytes into `out`. Returns false on failure.
 bool RandomBytes(unsigned char *out, size_t n) {
+#ifdef _WIN32
+    return pudimagent::platform::RandomBytes(out, n);
+#else
     FILE *f = std::fopen("/dev/urandom", "rb");
     if (!f) {
         // Fallback: std::random_device (used only if /dev/urandom is blocked).
@@ -23,6 +27,7 @@ bool RandomBytes(unsigned char *out, size_t n) {
     size_t got = std::fread(out, 1, n, f);
     std::fclose(f);
     return got == n;
+#endif
 }
 
 std::string BytesToHex(const unsigned char *bytes, size_t n) {

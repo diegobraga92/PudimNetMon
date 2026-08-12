@@ -4,10 +4,26 @@
 #include <string>
 
 #include "diagnostic_service.h"
+#include "platform/platform.h"
+
+// POSIX popen is _popen on Windows.
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#include <process.h>
+#endif
 
 namespace pudimagent {
 
 namespace {
+
+#ifdef _WIN32
+int CurrentPid() { return _getpid(); }
+std::string TempDir() { return pudimagent::platform::TempDir(); }
+#else
+int CurrentPid() { return getpid(); }
+std::string TempDir() { return "/tmp"; }
+#endif
 
 std::string ReadAll(FILE *fp) {
     std::string out;
@@ -73,15 +89,20 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
         // traceroute needs root for ICMP/UDP probes; -n avoids DNS lookups and
         // -w 1 bounds per-hop timeout.
         std::string target = request->trace_target();
+#ifdef _WIN32
+        std::string cmd = "tracert -d -h 15 -w 1000 " + target;
+#else
         std::string cmd = "traceroute -n -m 15 -w 1 " + target;
+#endif
         result += "=== traceroute " + target + " ===\n";
         result += RunCommand(cmd);
         result += "\n";
     }
 
+#ifndef _WIN32
     if (request->pcap_duration_s() > 0) {
         std::string cap_file =
-            "/tmp/pudim_diag_" + std::to_string(getpid()) +
+            TempDir() + "/pudim_diag_" + std::to_string(CurrentPid()) +
             "_" + std::to_string(NowMs()) + ".pcap";
         std::string filter = request->pcap_filter().empty()
                                  ? ""
@@ -100,6 +121,14 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
         result += "total packets: " +
                   RunCommand("tcpdump -r " + cap_file + " -nn 2>/dev/null | wc -l");
     }
+#else
+    if (request->pcap_duration_s() > 0) {
+        result += "=== pcap capture ===\n";
+        result += "packet capture is not supported on this platform\n";
+        result += "\n";
+        ok = false;
+    }
+#endif
 
     if (request->trace_target().empty() && request->pcap_duration_s() <= 0) {
         ok = false;
