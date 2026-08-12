@@ -5,6 +5,11 @@ build-agent/
 build-collector/
 build-collector-debug/
 build-agent-debug/
+build-agent-windows/
+
+# vcpkg manifest-mode install output (created next to the manifest)
+**/vcpkg_installed/
+agent/vcpkg_installed/
 
 # Dependencies fetched by CMake FetchContent (inside ignored build dirs,
 # listed here for clarity)

@@ -7,7 +7,7 @@
     "grpc",
     "protobuf",
     "openssl",
-    "libcurl",
+    "curl",
     "sqlite3"
   ]
 }
