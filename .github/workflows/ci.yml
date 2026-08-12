@@ -61,7 +61,7 @@ jobs:
     name: C++ Agent (Windows build)
     runs-on: windows-latest
     env:
-      VCPKG_ROOT: ${{ runner.temp }}/vcpkg
+      VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
       # vcpkg's native GitHub Actions binary cache (restore/upload via GHA).
       VCPKG_BINARY_SOURCES: clear;x-gha,readwrite

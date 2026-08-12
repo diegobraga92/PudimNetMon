@@ -7,6 +7,9 @@ build-collector-debug/
 build-agent-debug/
 build-agent-windows/
 
+# vcpkg registry/tooling checked out into the workspace by CI
+.vcpkg/
+
 # vcpkg manifest-mode install output (created next to the manifest)
 **/vcpkg_installed/
 agent/vcpkg_installed/
