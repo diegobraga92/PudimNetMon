@@ -62,7 +62,7 @@ jobs:
     runs-on: windows-latest
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
-      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_DEFAULT_TRIPLET: x64-windows-release
       # vcpkg's native GitHub Actions binary cache (restore/upload via GHA).
       VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
     steps:
@@ -99,9 +99,8 @@ jobs:
         run: |
           cmake -S agent -B build/agent-win `
             -DCMAKE_BUILD_TYPE=Release `
-            -DVCPKG_BUILD_TYPE=release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows
+            -DVCPKG_TARGET_TRIPLET=x64-windows-release
 
       - name: Build
         shell: pwsh
