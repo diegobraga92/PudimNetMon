@@ -5,7 +5,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
-find_package(Protobuf REQUIRED)
+# protobuf >= 5.x (as provided by vcpkg on Windows) must be consumed via its
+# CMake CONFIG package so the abseil/utf8_range link dependencies are propagated.
+# The FindProtobuf module links only libprotobuf, which fails at link time on
+# Windows with unresolved utf8_range/absl symbols. Older system protobuf (e.g.
+# Ubuntu's 3.21) ships no CONFIG package, so fall back to the module there.
+find_package(protobuf CONFIG QUIET)
+if(NOT protobuf_FOUND)
+  find_package(Protobuf REQUIRED)
+endif()
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)

@@ -104,7 +104,10 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: cmake --build build/agent-win --config Release -j
+        # Bounded parallelism: MSBuild's /m (bare -j) spawns unbounded cl.exe
+        # processes which can exhaust memory while linking gRPC and interleaves
+        # output so real linker errors get lost in the log.
+        run: cmake --build build/agent-win --config Release -j 2
 
       - name: Test (CTest)
         shell: pwsh
