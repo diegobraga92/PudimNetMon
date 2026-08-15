@@ -3,6 +3,7 @@
 #include <string>
 
 #include "ntp_probe.h"
+#include "dns_resolver.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -65,22 +66,22 @@ bool RunSntpOffset(std::string &detail, double &offset_ms) {
     struct addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
-    struct addrinfo *res = nullptr;
-    if (getaddrinfo(g_ntp_server.c_str(), "123", &hints, &res) != 0) {
+    LookupResult lr = GlobalResolver().Lookup(g_ntp_server, "123", hints, 3000);
+    if (!lr.ok || !lr.addrs) {
         closesocket(s);
-        detail = "resolution failed for " + g_ntp_server;
+        detail = lr.ok ? "no IPv4 address for " + g_ntp_server
+                       : "resolution failed for " + g_ntp_server;
         return false;
     }
     sockaddr_in addr{};
     bool found = false;
-    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
+    for (struct addrinfo *ai = lr.addrs.get(); ai; ai = ai->ai_next) {
         if (ai->ai_family == AF_INET) {
             addr = *reinterpret_cast<sockaddr_in *>(ai->ai_addr);
             found = true;
             break;
         }
     }
-    freeaddrinfo(res);
     if (!found) {
         closesocket(s);
         detail = "no IPv4 address for " + g_ntp_server;

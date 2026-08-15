@@ -25,6 +25,7 @@
 #include "trace_context.h"
 #include "disk_buffer.h"
 #include "tls_credentials.h"
+#include "probe_runner.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -49,6 +50,14 @@ static std::string s_diagnostic_endpoint;
 // --------------------------------------------
 namespace logger {
 
+// Guarded because the probe worker / diagnostic server may log concurrently.
+static std::mutex s_out_mu;
+
+// Log verbosity: 0=debug, 1=info, 2=warn, 3=error. Default: info.
+static int s_level = 1;
+
+static void SetLevel(int level) { s_level = level; }
+
 static inline std::string escape(const std::string &s) {
     std::string out;
     for (char c : s) {
@@ -67,6 +76,7 @@ static inline void write(const std::string &level, const std::string &message,
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                    std::chrono::system_clock::now().time_since_epoch())
                    .count();
+    std::lock_guard<std::mutex> lock(s_out_mu);
     std::cout << "{"
               << "\"timestamp\":" << now << ","
               << "\"level\":\"" << level << "\","
@@ -83,32 +93,72 @@ static inline void write(const std::string &level, const std::string &message,
 
 } // namespace logger
 
-#define LOG_INFO(msg)    logger::write("info", msg, s_node_id, s_trace_id)
-#define LOG_WARN(msg)    logger::write("warn", msg, s_node_id, s_trace_id)
-#define LOG_ERROR(msg)   logger::write("error", msg, s_node_id, s_trace_id)
-#define LOG_DEBUG(msg)   logger::write("debug", msg, s_node_id, s_trace_id)
+// 0=debug, 1=info, 2=warn, 3=error (parsed from --log-level).
+static int ParseLogLevel(const std::string &s) {
+    if (s == "debug") return 0;
+    if (s == "info") return 1;
+    if (s == "warn") return 2;
+    if (s == "error") return 3;
+    return -1;
+}
+
+#define LOG_DEBUG(msg)                                                        \
+    do {                                                                     \
+        if (logger::s_level <= 0)                                            \
+            logger::write("debug", msg, s_node_id, s_trace_id);              \
+    } while (0)
+#define LOG_INFO(msg)                                                         \
+    do {                                                                     \
+        if (logger::s_level <= 1)                                            \
+            logger::write("info", msg, s_node_id, s_trace_id);               \
+    } while (0)
+#define LOG_WARN(msg)                                                         \
+    do {                                                                     \
+        if (logger::s_level <= 2)                                            \
+            logger::write("warn", msg, s_node_id, s_trace_id);               \
+    } while (0)
+#define LOG_ERROR(msg)                                                        \
+    do {                                                                     \
+        if (logger::s_level <= 3)                                            \
+            logger::write("error", msg, s_node_id, s_trace_id);              \
+    } while (0)
 
 // --------------------------------------------
 // Signal handler
 // --------------------------------------------
-static void handle_signal(int sig) {
-    const char *sig_name = (sig == SIGTERM) ? "SIGTERM" :
-                           (sig == SIGINT)  ? "SIGINT" :
 #ifndef _WIN32
-                           (sig == SIGHUP)  ? "SIGHUP" :
+// Async-signal-safe raw write (no mutex, no iostream) so the handler never
+// deadlocks against a log line being emitted by another thread.
+static void SafeWriteStr(const char *s) {
+    size_t n = 0;
+    while (s[n]) ++n;
+    while (n > 0) {
+        ssize_t w = ::write(STDOUT_FILENO, s, n);
+        if (w <= 0) break;
+        s += w;
+        n -= static_cast<size_t>(w);
+    }
+}
 #endif
-                           "UNKNOWN";
+
+static void handle_signal(int sig) {
 #ifndef _WIN32
     if (sig == SIGHUP) {
-        logger::write("info",
-                      "SIGHUP received: config reload not yet implemented (config "
-                      "is passed via CLI flags); ignoring",
-                      s_node_id, s_trace_id);
+        SafeWriteStr(
+            "{\"level\":\"info\",\"component\":\"agent\",\"message\":\"SIGHUP "
+            "received: config reload not yet implemented (config is passed via "
+            "CLI flags); ignoring\"}\n");
         return;
     }
+    SafeWriteStr("{\"level\":\"info\",\"component\":\"agent\",\"message\":"
+                 "\"Received signal, shutting down...\"}\n");
+#else
+    const char *sig_name = (sig == SIGTERM) ? "SIGTERM" :
+                           (sig == SIGINT)  ? "SIGINT" : "UNKNOWN";
+    logger::write("info", std::string("Received ") + sig_name +
+                              ", shutting down...",
+                  s_node_id, "");
 #endif
-    logger::write("info", std::string("Received ") + sig_name + ", shutting down...",
-               s_node_id, "");
     s_running = false;
 }
 
@@ -185,11 +235,13 @@ int RunAgent(int argc, char **argv) {
     std::vector<std::string> http_targets;
     std::vector<std::string> ping_targets;
     int ping_count = 4;
+    int ping_gap_ms = 200;  // delay between individual ICMP pings
 
     // Phase 4 deep-diagnostics configuration
     bool tls_cert_check = true;
     bool tcp_retransmit_check = true;
     bool tcp_handshake_capture = true;
+    int tcp_handshake_interval_ms = 0;  // 0 = capture every cycle
     std::vector<std::string> http_protocols;
     std::map<std::string, std::vector<std::string>> dns_expected;
     std::string diagnostic_port = "50052";
@@ -207,6 +259,7 @@ int RunAgent(int argc, char **argv) {
     std::string tls_cert;  // PEM client certificate
     std::string tls_key;   // PEM client private key
     std::string ntp_server = "pool.ntp.org";  // NTP server for the offset probe
+    std::string log_level_str = "info";  // debug|info|warn|error
 
     auto parse_list = [](const std::string &s) {
         std::vector<std::string> out;
@@ -236,10 +289,13 @@ int RunAgent(int argc, char **argv) {
         {"http-targets",       required_argument, nullptr, 'w'},
         {"ping-targets",       required_argument, nullptr, 'g'},
         {"ping-count",         required_argument, nullptr, 'k'},
+        {"ping-gap-ms",        required_argument, nullptr, 'u'},
         {"stream-metrics",     no_argument,       nullptr, 'm'},
         {"no-tls-cert",        no_argument,       nullptr, 'q'},
         {"no-tcp-retransmit",  no_argument,       nullptr, 'r'},
         {"no-tcp-handshake",   no_argument,       nullptr, 'e'},
+        {"tcp-handshake-interval", required_argument, nullptr, 1001},
+        {"log-level",          required_argument, nullptr, 1000},
         {"http-protocols",     required_argument, nullptr, 'x'},
         {"dns-expected",       required_argument, nullptr, 'y'},
         {"diagnostic-port",    required_argument, nullptr, 'z'},
@@ -258,7 +314,7 @@ int RunAgent(int argc, char **argv) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:m:o:qrex:y:z:a:b:f:j:l:C:E:K:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:u:m:o:qrex:y:z:a:b:f:j:l:C:E:K:h", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
@@ -271,10 +327,13 @@ int RunAgent(int argc, char **argv) {
             case 'w': http_targets = parse_list(optarg); break;
             case 'g': ping_targets = parse_list(optarg); break;
             case 'k': ping_count = std::stoi(optarg); break;
+            case 'u': ping_gap_ms = std::stoi(optarg); break;
             case 'm': use_stream_metrics = true; break;
             case 'q': tls_cert_check = false; break;
             case 'r': tcp_retransmit_check = false; break;
             case 'e': tcp_handshake_capture = false; break;
+            case 1001: tcp_handshake_interval_ms = std::stoi(optarg); break;
+            case 1000: log_level_str = optarg; break;
             case 'x': http_protocols = parse_list(optarg); break;
             case 'y': {
                 // Format: host=TYPE:value,host2=TYPE:value
@@ -312,10 +371,13 @@ int RunAgent(int argc, char **argv) {
                           << "  -w, --http-targets        Comma-separated HTTP(S) URLs\n"
                           << "  -g, --ping-targets        Comma-separated ICMP ping targets\n"
                           << "  -k, --ping-count          Number of pings per target (default: 4)\n"
+                          << "  -u, --ping-gap-ms         Delay between individual pings in ms (default: 200)\n"
                           << "  -m, --stream-metrics      Use client-streaming RPC for metrics (default: unary)\n"
                           << "      --no-tls-cert         Disable TLS certificate validation probe\n"
                           << "      --no-tcp-retransmit   Disable TCP retransmission probe\n"
                           << "      --no-tcp-handshake    Disable TCP handshake capture (libpcap)\n"
+                          << "      --tcp-handshake-interval  Run pcap handshake capture at most this often (ms; default: every cycle)\n"
+                          << "      --log-level           Log verbosity: debug, info, warn, error (default: info)\n"
                           << "  -x, --http-protocols      HTTP versions to measure: http1.1,http2,http3\n"
                           << "  -y, --dns-expected        Expected DNS records: host=A:1.2.3.4,host2=CNAME:x\n"
                           << "  -z, --diagnostic-port     gRPC diagnostic server port (default: 50052)\n"
@@ -343,6 +405,15 @@ int RunAgent(int argc, char **argv) {
 
     // Configure the NTP offset probe (used by the SNTP client on Windows).
     pudimagent::SetNtpServer(ntp_server);
+
+    // Apply the log verbosity (invalid values fall back to "info").
+    int parsed_level = ParseLogLevel(log_level_str);
+    if (parsed_level < 0) {
+        std::cerr << "Invalid --log-level '" << log_level_str
+                  << "'; expected debug|info|warn|error\n";
+        return 1;
+    }
+    logger::SetLevel(parsed_level);
 
     // Setup signal handlers
     std::signal(SIGTERM, handle_signal);
@@ -432,6 +503,7 @@ int RunAgent(int argc, char **argv) {
     probe_cfg.http_targets = http_targets;
     probe_cfg.ping_targets = ping_targets;
     probe_cfg.ping_count = ping_count;
+    probe_cfg.ping_gap_ms = ping_gap_ms;
     // Phase 4 deep diagnostics
     probe_cfg.tls_cert_check = tls_cert_check;
     probe_cfg.tcp_retransmit_check = tcp_retransmit_check;
@@ -460,115 +532,142 @@ int RunAgent(int argc, char **argv) {
     }
 
     // Main loop
-    uint64_t seq = 0;
     uint64_t buffer_drops = 0;
     uint64_t disk_spills = 0;
-    uint64_t disk_drained = 0;
+    uint64_t disk_drained_total = 0;
     int current_interval_ms = interval_ms;
     bool backpressure = false;
-    // Bounded in-memory buffer (Phase 6 overload handling): oldest dropped
-    // first when full; sends drain the buffer FIFO so failed deliveries are
-    // retried rather than silently lost.
+
+    // Bounded in-memory retry buffer (Phase 6 overload handling): oldest
+    // dropped first when full; sends drain the buffer FIFO so failed
+    // deliveries are retried rather than silently lost.
     std::deque<MetricsBatch> buffer;
 
+    // Dedicated probe worker thread. Probes run off the main loop so a slow or
+    // hung probe (blackholed target, slow resolver) no longer delays
+    // heartbeats or stalls the sender.
+    pudimagent::ProbeRunner probe_runner;
+    probe_runner.SetConfigStore(probe_store);
+    probe_runner.SetIntervalMs(interval_ms);
+    if (tcp_handshake_interval_ms > 0) {
+        probe_runner.SetHandshakeIntervalMs(tcp_handshake_interval_ms);
+    }
+    probe_runner.Start(node_id);
+
+    auto last_heartbeat =
+        std::chrono::steady_clock::now() - std::chrono::milliseconds(interval_ms);
+    auto last_send_attempt =
+        std::chrono::steady_clock::now() - std::chrono::milliseconds(interval_ms);
+    auto last_self_report = std::chrono::steady_clock::now();
+
     while (s_running) {
-        // Phase 6: one W3C traceparent per cycle, shared by the heartbeat and
-        // the metric batch so the collector/consumers can correlate them.
-        std::string traceparent = pudimagent::GenerateTraceParent();
+        auto now = std::chrono::steady_clock::now();
 
-        bool hb_ok = clients.first->SendHeartbeat(interval_ms, version, traceparent);
-        if (hb_ok) {
-            failover.OnSendSuccess();
-        } else if (failover.OnSendFailure()) {
-            LOG_WARN("Heartbeat failed; failing over to " +
-                     failover.CurrentEndpoint());
-            clients = reconnect();
-        }
-
-        // Collect and send metrics
-        std::vector<pudimnetmon::Metric> metrics;
-        pudimagent::RunAllProbes(probe_store->Get(), metrics);
-
-        MetricsBatch batch;
-        batch.set_agent_id(node_id);
-        batch.set_timestamp_unix_ms(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch())
-                .count());
-
-        for (auto &m : metrics) {
-            m.set_seq(seq++);
-            *batch.add_metrics() = std::move(m);
-        }
-
-        // Buffer the batch; overflow spills to the disk buffer (Phase 7 DR).
-        buffer.push_back(std::move(batch));
-        while (static_cast<int>(buffer.size()) > max_buffer_size) {
-            MetricsBatch dropped = std::move(buffer.front());
-            buffer.pop_front();
-            std::string blob;
-            if (disk_buffer.Available() && dropped.SerializeToString(&blob) &&
-                disk_buffer.Push(blob)) {
-                disk_spills++;
-                LOG_WARN("Buffer full; spilled oldest batch to disk buffer (spilled=" +
-                         std::to_string(disk_spills) + ", pending=" +
-                         std::to_string(disk_buffer.Size()) + ")");
-            } else {
-                buffer_drops++;
-                LOG_WARN("Buffer full; dropped oldest metric batch (drops=" +
-                         std::to_string(buffer_drops) + ")");
-            }
-        }
-
-        // Send the oldest buffered batch (FIFO drain).
-        MetricsBatch &to_send = buffer.front();
-        LOG_INFO("Collected " + std::to_string(to_send.metrics_size()) +
-                 " metrics, sending to collector");
-        bool ok = use_stream_metrics
-                      ? clients.second->StreamMetrics(node_id,
-                                                      to_send.metrics(),
-                                                      traceparent)
-                      : clients.second->SendBatch(to_send, traceparent);
-        if (ok) {
-            buffer.pop_front();
-            LOG_INFO("Metrics batch accepted by collector");
-            failover.OnSendSuccess();
-            backpressure = clients.second->BackpressureSignalled();
-
-            // Phase 7: drain persisted batches from the disk buffer (bounded
-            // work per cycle; oldest-first).
-            for (int i = 0; i < 10 && disk_buffer.Size() > 0; i++) {
-                std::vector<std::string> blobs;
-                disk_buffer.Peek(blobs, 1);
-                if (blobs.empty()) break;
-                MetricsBatch pb;
-                if (pb.ParseFromString(blobs[0])) {
-                    bool d_ok =
-                        use_stream_metrics
-                            ? clients.second->StreamMetrics(pb.agent_id(),
-                                                            pb.metrics(),
-                                                            traceparent)
-                            : clients.second->SendBatch(pb, traceparent);
-                    if (!d_ok) break;  // stop draining; retry next cycle
-                }
-                disk_buffer.Pop(1);
-                disk_drained++;
-            }
-            if (disk_drained > 0) {
-                LOG_INFO("Drained " + std::to_string(disk_drained) +
-                         " persisted batches from disk buffer (pending=" +
-                         std::to_string(disk_buffer.Size()) + ")");
-            }
-        } else {
-            LOG_WARN("Metrics batch rejected or send failed; keeping it buffered");
-            if (failover.OnSendFailure()) {
-                LOG_WARN("Failing over to " + failover.CurrentEndpoint());
+        // Heartbeat on its own cadence, decoupled from probe latency.
+        if (now - last_heartbeat >=
+            std::chrono::milliseconds(current_interval_ms)) {
+            last_heartbeat = now;
+            std::string traceparent = pudimagent::GenerateTraceParent();
+            bool hb_ok =
+                clients.first->SendHeartbeat(interval_ms, version, traceparent);
+            if (hb_ok) {
+                failover.OnSendSuccess();
+            } else if (failover.OnSendFailure()) {
+                LOG_WARN("Heartbeat failed; failing over to " +
+                         failover.CurrentEndpoint());
                 clients = reconnect();
             }
         }
 
+        // Drain freshly produced batches into the retry buffer.
+        std::vector<MetricsBatch> fresh;
+        probe_runner.Drain(fresh, 50);
+        for (auto &b : fresh) {
+            buffer.push_back(std::move(b));
+            while (static_cast<int>(buffer.size()) > max_buffer_size) {
+                MetricsBatch dropped = std::move(buffer.front());
+                buffer.pop_front();
+                std::string blob;
+                if (disk_buffer.Available() && dropped.SerializeToString(&blob) &&
+                    disk_buffer.Push(blob)) {
+                    disk_spills++;
+                    LOG_WARN("Buffer full; spilled oldest batch to disk buffer (spilled=" +
+                             std::to_string(disk_spills) + ", pending=" +
+                             std::to_string(disk_buffer.Size()) + ")");
+                } else {
+                    buffer_drops++;
+                    LOG_WARN("Buffer full; dropped oldest metric batch (drops=" +
+                             std::to_string(buffer_drops) + ")");
+                }
+            }
+        }
+
+        // Send policy: send when new batches arrived, or retry a failed send
+        // at most once per interval.
+        bool should_send = false;
+        if (!buffer.empty()) {
+            if (!fresh.empty()) {
+                should_send = true;
+            } else if (now - last_send_attempt >=
+                       std::chrono::milliseconds(current_interval_ms)) {
+                should_send = true;
+            }
+        }
+
+        if (should_send) {
+            last_send_attempt = now;
+            std::string traceparent = pudimagent::GenerateTraceParent();
+            MetricsBatch &to_send = buffer.front();
+            LOG_INFO("Collected " + std::to_string(to_send.metrics_size()) +
+                     " metrics, sending to collector");
+            bool ok = use_stream_metrics
+                          ? clients.second->StreamMetrics(node_id,
+                                                          to_send.metrics(),
+                                                          traceparent)
+                          : clients.second->SendBatch(to_send, traceparent);
+            if (ok) {
+                buffer.pop_front();
+                LOG_INFO("Metrics batch accepted by collector");
+                failover.OnSendSuccess();
+                backpressure = clients.second->BackpressureSignalled();
+
+                // Phase 7: drain persisted batches from the disk buffer
+                // (bounded work per pass; oldest-first).
+                for (int i = 0; i < 10 && disk_buffer.Size() > 0; i++) {
+                    std::vector<std::string> blobs;
+                    disk_buffer.Peek(blobs, 1);
+                    if (blobs.empty()) break;
+                    MetricsBatch pb;
+                    if (pb.ParseFromString(blobs[0])) {
+                        bool d_ok =
+                            use_stream_metrics
+                                ? clients.second->StreamMetrics(pb.agent_id(),
+                                                                pb.metrics(),
+                                                                traceparent)
+                                : clients.second->SendBatch(pb, traceparent);
+                        if (!d_ok) break;  // stop draining; retry next pass
+                    }
+                    disk_buffer.Pop(1);
+                    disk_drained_total++;
+                }
+                if (disk_drained_total > 0) {
+                    LOG_INFO("Drained " +
+                             std::to_string(disk_drained_total) +
+                             " persisted batches from disk buffer (pending=" +
+                             std::to_string(disk_buffer.Size()) + ")");
+                }
+            } else {
+                LOG_WARN("Metrics batch rejected or send failed; keeping it buffered");
+                if (failover.OnSendFailure()) {
+                    LOG_WARN("Failing over to " + failover.CurrentEndpoint());
+                    clients = reconnect();
+                }
+            }
+        }
+
         // Adaptive interval: back off (double, cap 10x) while the collector
-        // signals overload; restore once it clears.
+        // signals overload; restore once it clears. The probe worker picks the
+        // change up on its next cycle.
         if (backpressure) {
             current_interval_ms = std::min(current_interval_ms * 2,
                                            interval_ms * 10);
@@ -579,14 +678,27 @@ int RunAgent(int argc, char **argv) {
             LOG_INFO("Backpressure cleared; interval restored to " +
                      std::to_string(interval_ms) + "ms");
         }
+        probe_runner.SetIntervalMs(current_interval_ms);
 
-        // Sleep in small increments so we can respond to signals promptly
-        int slept = 0;
-        while (slept < current_interval_ms && s_running) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            slept += 100;
+        // Self-observability: report the probe worker's cycle stats once per
+        // minute so agent overhead is observable in the logs.
+        if (now - last_self_report >= std::chrono::seconds(60)) {
+            last_self_report = now;
+            auto st = probe_runner.GetStats();
+            LOG_INFO("self: cycle=" + std::to_string(st.cycle_duration_ms) +
+                     "ms probes=" + std::to_string(st.probe_duration_ms) +
+                     "ms metrics=" + std::to_string(st.metric_count) +
+                     " queued=" + std::to_string(probe_runner.PendingCount()) +
+                     " handshake_runs=" +
+                     std::to_string(st.handshake_probe_count));
         }
+
+        // Short responsive sleep; the probe cadence lives in the worker thread.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+
+    // Stop the probe worker (drains/joins the pool) before reporting shutdown.
+    probe_runner.Stop();
 
     watchdog_stop = true;
     if (disk_buffer.Size() > 0) {

@@ -1,4 +1,48 @@
-# Dashboard Performance & Bundle Optimization
+# Performance
+
+## Agent resource profile
+
+`pudim-agent` is an I/O-bound daemon. Measured on a typical Linux host (default
+5 s interval, one target of each type, collector reachable):
+
+| Resource | Measured |
+|---|---|
+| RSS | ~30 MB (bounded in-memory buffer + SQLite spill cap) |
+| CPU | < 1% of one core in steady state |
+| Threads | ~25–28 (gRPC-dominated; probe worker + small pool add ~5) |
+| Disk I/O | ~0 in normal operation (SQLite WAL only on collector outage) |
+
+Per-cycle work is kept low by reusing connections across cycles:
+
+- **curl handle reuse** — persistent per-thread `CURL*` keeps libcurl's
+  connection pool + DNS cache alive between HTTP probes.
+- **Shared `SSL_CTX` + TLS session cache** — one context per process and
+  abbreviated handshakes for repeated TLS probes (the certificate probe still
+  performs a full handshake so it always sees a fresh certificate).
+- **Cached, time-bounded DNS** — `DnsResolver` deduplicates the several
+  lookups each cycle performs per host, caches successes for 60 s, and never
+  blocks a probe longer than 3 s even if the resolver hangs. The DNS
+  *resolution* probe always performs a fresh (uncached) lookup so its latency
+  metric stays meaningful; the DNS *record* probe (A/AAAA/CNAME) is served
+  from the 60 s cache, so a record change is detected within ~1 minute (tune
+  `DnsResolver::kDefaultTtlMs` in `agent/src/dns_resolver.h` if needed).
+- **Probe worker thread** — probes run off the main loop at a fixed cadence;
+  a slow/hung probe (blackholed target, slow resolver) no longer delays
+  heartbeats. Independent probes (DNS/TCP/TLS/HTTP) run in parallel on a small
+  pool; ICMP and libpcap capture stay serialized.
+- **Bounded connect timeouts** — every TCP connect and DNS lookup has a hard
+  deadline, so a firewalled target cannot stall a cycle for the OS default
+  (~2 min).
+
+Every minute the agent logs a self-observability line:
+
+```
+self: cycle=110ms probes=12ms metrics=11 queued=0 handshake_runs=0
+```
+
+`--log-level` (debug|info|warn|error) controls per-cycle log verbosity.
+
+## Dashboard Performance & Bundle Optimization
 
 ## Bundle optimization (done)
 

@@ -10,24 +10,11 @@ namespace pudimagent {
 
 namespace {
 
-// Reads `n` random bytes into `out`. Returns false on failure.
+// Reads `n` random bytes into `out`. Returns false on failure. Delegates to
+// the platform layer, which prefers getrandom() on Linux (single syscall, no
+// per-call file open) and falls back to /dev/urandom on other POSIX systems.
 bool RandomBytes(unsigned char *out, size_t n) {
-#ifdef _WIN32
     return pudimagent::platform::RandomBytes(out, n);
-#else
-    FILE *f = std::fopen("/dev/urandom", "rb");
-    if (!f) {
-        // Fallback: std::random_device (used only if /dev/urandom is blocked).
-        std::random_device rd;
-        for (size_t i = 0; i < n; i++) {
-            out[i] = static_cast<unsigned char>(rd());
-        }
-        return true;
-    }
-    size_t got = std::fread(out, 1, n, f);
-    std::fclose(f);
-    return got == n;
-#endif
 }
 
 std::string BytesToHex(const unsigned char *bytes, size_t n) {

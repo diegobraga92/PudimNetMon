@@ -130,6 +130,9 @@ add_executable(pudim-agent
   src/metrics/ntp_probe.cpp
   src/metrics/failover_client.cpp
   src/diagnostic_service.cpp
+  src/dns_resolver.cpp
+  src/tls_context.cpp
+  src/probe_runner.cpp
   src/systemd_notify.cpp
   src/trace_context.cpp
   src/disk_buffer.cpp
@@ -160,6 +163,11 @@ if(SQLite3_FOUND)
 endif()
 target_include_directories(pudim-agent PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
 
+# Warnings for the agent's own sources (proto/grpc code lives in pudim_proto).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(pudim-agent PRIVATE -Wall -Wextra)
+endif()
+
 # Tests
 enable_testing()
 add_executable(test-probes
@@ -167,6 +175,9 @@ add_executable(test-probes
   src/metrics/probes.cpp
   src/metrics/pcap_probe.cpp
   src/metrics/ntp_probe.cpp
+  src/dns_resolver.cpp
+  src/tls_context.cpp
+  src/disk_buffer.cpp
   src/platform/platform.cpp
 )
 target_link_libraries(test-probes
@@ -184,8 +195,13 @@ if(PCAP_FOUND)
   target_link_libraries(test-probes PRIVATE ${PCAP_LIBRARIES})
   target_include_directories(test-probes PRIVATE ${PCAP_INCLUDE_DIRS})
 endif()
+if(SQLite3_FOUND)
+  target_link_libraries(test-probes PRIVATE SQLite::SQLite3)
+endif()
 target_include_directories(test-probes PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(test-probes PRIVATE -Wall -Wextra)
+endif()
 add_test(NAME probe-tests COMMAND test-probes)
-
 # Install
 install(TARGETS pudim-agent DESTINATION /usr/local/bin)

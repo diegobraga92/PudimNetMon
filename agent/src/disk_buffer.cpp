@@ -9,8 +9,20 @@ namespace pudimagent {
 
 struct DiskBuffer::Impl {
     sqlite3 *db = nullptr;
+    sqlite3_stmt *insert_stmt = nullptr;  // INSERT INTO pending(payload) VALUES(?)
+    sqlite3_stmt *peek_stmt = nullptr;    // SELECT payload ... LIMIT ?
+    sqlite3_stmt *delete_stmt = nullptr;  // DELETE ... WHERE seq IN (SELECT ... LIMIT ?)
+    sqlite3_stmt *count_stmt = nullptr;   // SELECT count(*) FROM pending
     uint64_t rows = 0;
     uint64_t bytes = 0;
+
+    ~Impl() {
+        if (insert_stmt) sqlite3_finalize(insert_stmt);
+        if (peek_stmt) sqlite3_finalize(peek_stmt);
+        if (delete_stmt) sqlite3_finalize(delete_stmt);
+        if (count_stmt) sqlite3_finalize(count_stmt);
+        if (db) sqlite3_close(db);
+    }
 };
 
 namespace {
@@ -26,6 +38,12 @@ bool Exec(sqlite3 *db, const std::string &sql) {
     return true;
 }
 
+// Lazily prepares (and then reuses) a cached statement.
+bool Prepare(sqlite3 *db, sqlite3_stmt **stmt, const char *sql) {
+    if (*stmt) return true;
+    return sqlite3_prepare_v2(db, sql, -1, stmt, nullptr) == SQLITE_OK;
+}
+
 } // anonymous namespace
 
 DiskBuffer::DiskBuffer(std::string db_path, uint64_t max_bytes)
@@ -33,9 +51,7 @@ DiskBuffer::DiskBuffer(std::string db_path, uint64_t max_bytes)
       m_db_path(std::move(db_path)),
       m_max_bytes(max_bytes) {}
 
-DiskBuffer::~DiskBuffer() {
-    if (m_impl->db) sqlite3_close(m_impl->db);
-}
+DiskBuffer::~DiskBuffer() = default;
 
 bool DiskBuffer::Open(std::string &error) {
     if (sqlite3_open(m_db_path.c_str(), &m_impl->db) != SQLITE_OK) {
@@ -45,12 +61,31 @@ bool DiskBuffer::Open(std::string &error) {
         return false;
     }
     sqlite3_busy_timeout(m_impl->db, 5000);
+    // WAL + synchronous=NORMAL: fast commits, crash-safe against process
+    // death; a lost tail on power loss is acceptable for a metric buffer.
     if (!Exec(m_impl->db, "PRAGMA journal_mode=WAL;") ||
+        !Exec(m_impl->db, "PRAGMA synchronous=NORMAL;") ||
         !Exec(m_impl->db, "CREATE TABLE IF NOT EXISTS pending("
                           "  seq INTEGER PRIMARY KEY AUTOINCREMENT,"
                           "  payload BLOB NOT NULL);")) {
         error = "failed to initialise schema";
         return false;
+    }
+
+    // Seed the in-memory counters from any rows persisted by a previous run so
+    // the size-cap accounting (Push/Trim) is correct after a restart.
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(m_impl->db,
+                           "SELECT count(*), COALESCE(sum(length(payload)),0) "
+                           "FROM pending",
+                           -1, &stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            m_impl->rows =
+                static_cast<uint64_t>(sqlite3_column_int64(stmt, 0));
+            m_impl->bytes =
+                static_cast<uint64_t>(sqlite3_column_int64(stmt, 1));
+        }
+        sqlite3_finalize(stmt);
     }
     return true;
 }
@@ -69,16 +104,15 @@ bool DiskBuffer::Push(const std::string &payload_blob) {
         return false;
     }
 
-    sqlite3_stmt *stmt = nullptr;
-    if (sqlite3_prepare_v2(m_impl->db,
-                           "INSERT INTO pending(payload) VALUES(?)",
-                           -1, &stmt, nullptr) != SQLITE_OK) {
+    if (!Prepare(m_impl->db, &m_impl->insert_stmt,
+                 "INSERT INTO pending(payload) VALUES(?)")) {
         return false;
     }
-    sqlite3_bind_blob(stmt, 1, payload_blob.data(),
+    sqlite3_reset(m_impl->insert_stmt);
+    sqlite3_clear_bindings(m_impl->insert_stmt);
+    sqlite3_bind_blob(m_impl->insert_stmt, 1, payload_blob.data(),
                       static_cast<int>(payload_blob.size()), SQLITE_TRANSIENT);
-    bool ok = sqlite3_step(stmt) == SQLITE_DONE;
-    sqlite3_finalize(stmt);
+    bool ok = sqlite3_step(m_impl->insert_stmt) == SQLITE_DONE;
     if (ok) {
         m_impl->rows++;
         m_impl->bytes += payload_blob.size();
@@ -88,41 +122,47 @@ bool DiskBuffer::Push(const std::string &payload_blob) {
 
 void DiskBuffer::Peek(std::vector<std::string> &out, size_t limit) {
     if (!Available() || limit == 0) return;
-    sqlite3_stmt *stmt = nullptr;
-    if (sqlite3_prepare_v2(m_impl->db,
-                           "SELECT payload FROM pending ORDER BY seq ASC LIMIT ?",
-                           -1, &stmt, nullptr) != SQLITE_OK) {
+    if (!Prepare(m_impl->db, &m_impl->peek_stmt,
+                 "SELECT payload FROM pending ORDER BY seq ASC LIMIT ?")) {
         return;
     }
-    sqlite3_bind_int(stmt, 1, static_cast<int>(limit));
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        const void *blob = sqlite3_column_blob(stmt, 0);
-        int n = sqlite3_column_bytes(stmt, 0);
+    sqlite3_reset(m_impl->peek_stmt);
+    sqlite3_clear_bindings(m_impl->peek_stmt);
+    sqlite3_bind_int(m_impl->peek_stmt, 1, static_cast<int>(limit));
+    while (sqlite3_step(m_impl->peek_stmt) == SQLITE_ROW) {
+        const void *blob = sqlite3_column_blob(m_impl->peek_stmt, 0);
+        int n = sqlite3_column_bytes(m_impl->peek_stmt, 0);
         out.emplace_back(static_cast<const char *>(blob),
                          static_cast<size_t>(n));
     }
-    sqlite3_finalize(stmt);
 }
 
 void DiskBuffer::Pop(size_t count) {
     if (!Available() || count == 0) return;
-    sqlite3_stmt *stmt = nullptr;
-    if (sqlite3_prepare_v2(m_impl->db,
-                           "SELECT payload FROM pending ORDER BY seq ASC LIMIT ?",
-                           -1, &stmt, nullptr) != SQLITE_OK) {
+
+    // Measure the exact bytes being removed (the payloads of the oldest rows).
+    if (!Prepare(m_impl->db, &m_impl->peek_stmt,
+                 "SELECT payload FROM pending ORDER BY seq ASC LIMIT ?")) {
         return;
     }
-    sqlite3_bind_int(stmt, 1, static_cast<int>(count));
+    sqlite3_reset(m_impl->peek_stmt);
+    sqlite3_clear_bindings(m_impl->peek_stmt);
+    sqlite3_bind_int(m_impl->peek_stmt, 1, static_cast<int>(count));
     uint64_t removed = 0;
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        removed += static_cast<uint64_t>(sqlite3_column_bytes(stmt, 0));
+    while (sqlite3_step(m_impl->peek_stmt) == SQLITE_ROW) {
+        removed +=
+            static_cast<uint64_t>(sqlite3_column_bytes(m_impl->peek_stmt, 0));
     }
-    sqlite3_finalize(stmt);
 
-    if (Exec(m_impl->db,
-             "DELETE FROM pending WHERE seq IN "
-             "(SELECT seq FROM pending ORDER BY seq ASC LIMIT " +
-                 std::to_string(count) + ");")) {
+    if (!Prepare(m_impl->db, &m_impl->delete_stmt,
+                 "DELETE FROM pending WHERE seq IN "
+                 "(SELECT seq FROM pending ORDER BY seq ASC LIMIT ?)")) {
+        return;
+    }
+    sqlite3_reset(m_impl->delete_stmt);
+    sqlite3_clear_bindings(m_impl->delete_stmt);
+    sqlite3_bind_int(m_impl->delete_stmt, 1, static_cast<int>(count));
+    if (sqlite3_step(m_impl->delete_stmt) == SQLITE_DONE) {
         m_impl->rows = m_impl->rows > count ? m_impl->rows - count : 0;
         m_impl->bytes = m_impl->bytes > removed ? m_impl->bytes - removed : 0;
     }
@@ -130,40 +170,56 @@ void DiskBuffer::Pop(size_t count) {
 
 uint64_t DiskBuffer::Size() const {
     if (!Available()) return 0;
-    sqlite3_stmt *stmt = nullptr;
-    if (sqlite3_prepare_v2(m_impl->db, "SELECT count(*) FROM pending",
-                           -1, &stmt, nullptr) != SQLITE_OK) {
+    if (!Prepare(m_impl->db, &m_impl->count_stmt,
+                 "SELECT count(*) FROM pending")) {
         return 0;
     }
+    sqlite3_reset(m_impl->count_stmt);
+    sqlite3_clear_bindings(m_impl->count_stmt);
     uint64_t n = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        n = static_cast<uint64_t>(sqlite3_column_int64(stmt, 0));
+    if (sqlite3_step(m_impl->count_stmt) == SQLITE_ROW) {
+        n = static_cast<uint64_t>(sqlite3_column_int64(m_impl->count_stmt, 0));
     }
-    sqlite3_finalize(stmt);
     return n;
 }
 
 uint64_t DiskBuffer::Trim() {
-    if (!Available()) return 0;
-    uint64_t dropped = 0;
-    while (m_impl->bytes > m_max_bytes) {
-        sqlite3_stmt *stmt = nullptr;
-        if (sqlite3_prepare_v2(m_impl->db,
-                               "DELETE FROM pending WHERE seq = "
-                               "(SELECT seq FROM pending ORDER BY seq ASC LIMIT 1)",
-                               -1, &stmt, nullptr) != SQLITE_OK) {
-            break;
-        }
-        if (sqlite3_step(stmt) != SQLITE_DONE) {
-            sqlite3_finalize(stmt);
-            break;
-        }
-        sqlite3_finalize(stmt);
-        dropped++;
-        m_impl->bytes = m_impl->bytes > 0 ? m_impl->bytes - 512 : 0;
-        m_impl->rows = m_impl->rows > 0 ? m_impl->rows - 1 : 0;
+    if (!Available() || m_impl->bytes <= m_max_bytes) return 0;
+
+    // Walk the FIFO row sizes until the remaining total fits under the cap;
+    // this computes the exact number of oldest rows to drop in one pass.
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(m_impl->db,
+                           "SELECT length(payload) FROM pending ORDER BY seq ASC",
+                           -1, &stmt, nullptr) != SQLITE_OK) {
+        return 0;
     }
-    return dropped;
+    uint64_t to_remove = 0;
+    uint64_t kept = m_impl->bytes;
+    while (sqlite3_step(stmt) == SQLITE_ROW && kept > m_max_bytes) {
+        int64_t sz = sqlite3_column_int64(stmt, 0);
+        kept -= sz > 0 ? static_cast<uint64_t>(sz) : 0;
+        to_remove++;
+    }
+    sqlite3_finalize(stmt);
+
+    if (to_remove == 0) return 0;
+    if (to_remove > m_impl->rows) to_remove = m_impl->rows;
+
+    // Single batched delete instead of one statement per row.
+    if (!Prepare(m_impl->db, &m_impl->delete_stmt,
+                 "DELETE FROM pending WHERE seq IN "
+                 "(SELECT seq FROM pending ORDER BY seq ASC LIMIT ?)")) {
+        return 0;
+    }
+    sqlite3_reset(m_impl->delete_stmt);
+    sqlite3_clear_bindings(m_impl->delete_stmt);
+    sqlite3_bind_int(m_impl->delete_stmt, 1, static_cast<int>(to_remove));
+    if (sqlite3_step(m_impl->delete_stmt) != SQLITE_DONE) return 0;
+
+    m_impl->rows = m_impl->rows > to_remove ? m_impl->rows - to_remove : 0;
+    m_impl->bytes = kept;  // exact: bytes remaining after the drop
+    return to_remove;
 }
 
 } // namespace pudimagent

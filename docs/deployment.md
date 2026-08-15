@@ -76,6 +76,7 @@ Full list from `pudim-agent --help`:
 | `-x, --http-protocols` | — | HTTP versions to measure: `http1.1,http2,http3` |
 | `-g, --ping-targets` | — | Comma-separated ICMP ping targets (needs `CAP_NET_RAW`) |
 | `-k, --ping-count` | `4` | Pings per target per interval |
+| `-u, --ping-gap-ms` | `200` | Delay between individual pings in ms |
 | `-y, --dns-expected` | — | Expected DNS records, e.g. `host=A:1.2.3.4` |
 | `-a, --diagnostic-address` | — | Advertised diagnostic gRPC endpoint, e.g. `web-01.lan:50052` — enables dashboard diagnostics for this agent |
 | `-z, --diagnostic-port` | `50052` | Local gRPC diagnostic server port |
@@ -88,6 +89,11 @@ Full list from `pudim-agent --help`:
 | `-K, --tls-key` | — | PEM client private key (mTLS) |
 | `-t, --trace-id` | — | Static trace id for request correlation |
 | `-v, --version` | `0.1.0` | Agent version string reported in heartbeats |
+| `--no-tls-cert` | off | Disable the TLS certificate validation probe |
+| `--no-tcp-retransmit` | off | Disable the TCP retransmission probe |
+| `--no-tcp-handshake` | off | Disable the libpcap TCP handshake capture probe |
+| `--tcp-handshake-interval` | `0` (every cycle) | Run the pcap handshake capture at most this often (ms) |
+| `--log-level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `--no-tls-cert` | on | Disable the TLS certificate validation probe |
 | `--no-tcp-retransmit` | on | Disable the TCP retransmission probe |
 | `--no-tcp-handshake` | on | Disable the libpcap TCP handshake capture |

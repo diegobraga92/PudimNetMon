@@ -7,6 +7,7 @@
 
 #include "metrics.pb.h"
 #include "probes.h"
+#include "dns_resolver.h"
 
 #ifdef HAVE_LIBPCAP
 
@@ -19,6 +20,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <mutex>
+
 namespace pudimagent {
 
 namespace {
@@ -28,6 +31,40 @@ std::string MonotonicUsStr() {
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
+}
+
+// The capture device rarely changes; enumerating all interfaces via
+// pcap_findalldevs() on every probe is comparatively expensive. Cache the
+// chosen device and refresh it periodically so interface changes are still
+// picked up.
+std::string GetCaptureDevice() {
+    static std::mutex dev_mu;
+    static std::string device;
+    static std::chrono::steady_clock::time_point refreshed{};
+    constexpr auto kRefreshInterval = std::chrono::minutes(5);
+
+    std::lock_guard<std::mutex> lock(dev_mu);
+    auto now = std::chrono::steady_clock::now();
+    if (!device.empty() && (now - refreshed) < kRefreshInterval) {
+        return device;
+    }
+
+    device.clear();
+    char errbuf[PCAP_ERRBUF_SIZE] = {};
+    pcap_if_t *alldevs = nullptr;
+    if (pcap_findalldevs(&alldevs, errbuf) < 0 || !alldevs) {
+        refreshed = now;
+        return "";
+    }
+    for (pcap_if_t *d = alldevs; d; d = d->next) {
+        std::string name = d->name ? d->name : "";
+        if (name == "lo" || name.rfind("lo", 0) == 0) continue;
+        device = name;
+        break;
+    }
+    pcap_freealldevs(alldevs);
+    refreshed = now;
+    return device;
 }
 
 } // anonymous namespace
@@ -53,35 +90,26 @@ void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric
         port = std::stoi(host_port.substr(colon + 1));
     } catch (...) { fail("invalid port"); return; }
 
-    // Resolve target as IPv4 (keeps the pcap parsing simple).
+    // Resolve target as IPv4 (keeps the pcap parsing simple). Uses the shared
+    // time-bounded resolver so a slow DNS answer cannot stall the probe loop.
     struct addrinfo hints {};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    struct addrinfo *res = nullptr;
-    if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0) {
-        fail("resolution failed"); return;
-    }
-    auto *sin = reinterpret_cast<struct sockaddr_in *>(res->ai_addr);
-    uint32_t target_ip = sin->sin_addr.s_addr;
-    freeaddrinfo(res);
-
-    // Pick a non-loopback capture device.
-    char errbuf[PCAP_ERRBUF_SIZE] = {};
-    pcap_if_t *alldevs = nullptr;
-    if (pcap_findalldevs(&alldevs, errbuf) < 0 || !alldevs) {
-        fail(std::string("no capture devices: ") + errbuf);
+    LookupResult lr =
+        GlobalResolver().Lookup(host, std::to_string(port), hints, 3000);
+    if (!lr.ok || !lr.addrs) {
+        fail(lr.ok ? "no IPv4 address found"
+                   : (lr.error.empty() ? "resolution failed" : lr.error));
         return;
     }
-    std::string dev;
-    for (pcap_if_t *d = alldevs; d; d = d->next) {
-        std::string name = d->name ? d->name : "";
-        if (name == "lo" || name.rfind("lo", 0) == 0) continue;
-        dev = name;
-        break;
-    }
-    pcap_freealldevs(alldevs);
+    auto *sin = reinterpret_cast<struct sockaddr_in *>(lr.addrs->ai_addr);
+    uint32_t target_ip = sin->sin_addr.s_addr;
+
+    // Pick a non-loopback capture device (cached; refreshed periodically).
+    std::string dev = GetCaptureDevice();
     if (dev.empty()) { fail("no non-loopback capture device"); return; }
 
+    char errbuf[PCAP_ERRBUF_SIZE] = {};
     pcap_t *handle = pcap_open_live(dev.c_str(), 65535, 1, 50, errbuf);
     if (!handle) { fail(std::string("pcap_open_live: ") + errbuf); return; }
 
@@ -130,7 +158,7 @@ void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric
         const u_char *ip = data + 14;                 // skip ethernet header
         if ((ip[0] >> 4) != 4) continue;              // IPv4 only
         int ip_hdr_len = (ip[0] & 0x0f) * 4;
-        if (hdr->caplen < 14 + ip_hdr_len + 20) continue;
+        if (static_cast<int>(hdr->caplen) < 14 + ip_hdr_len + 20) continue;
         if (ip[9] != IPPROTO_TCP) continue;
 
         const struct tcphdr *tcp =

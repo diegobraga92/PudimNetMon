@@ -77,6 +77,7 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
     grpc::ServerContext *ctx,
     const pudimnetmon::DiagnosticRequest *request,
     pudimnetmon::DiagnosticResponse *response) {
+    (void)ctx;
     if (!request || !response) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "request and response must not be null");

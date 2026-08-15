@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,9 @@ struct ProbeConfig {
     // Number of pings per target for ICMP (used for packet loss % and
     // jitter estimation). Ignored if <= 0.
     int ping_count = 4;
+    // Milliseconds between individual pings inside one ICMP probe. Larger
+    // values spread the packet rate but stretch the probe's wall-clock time.
+    int ping_gap_ms = 200;
 
     // ---- Phase 4 deep diagnostics (all default-on; disabled via CLI) ----
     bool tls_cert_check = true;        // TLS_CERTIFICATE metrics for tls_targets
@@ -41,6 +45,23 @@ struct ProbeConfig {
 void RunAllProbes(const ProbeConfig &config,
                   std::vector<pudimnetmon::Metric> &out_metrics);
 
+// Runtime probe configuration store (Phase 8). The probe worker copies the
+// current config each cycle; the collector's Reconfigure RPC swaps in a new
+// one so checks can be added/edited without restarting the agent.
+struct ProbeConfigStore {
+    mutable std::mutex mu;
+    ProbeConfig cfg;
+
+    void Set(const ProbeConfig &c) {
+        std::lock_guard<std::mutex> lock(mu);
+        cfg = c;
+    }
+    ProbeConfig Get() const {
+        std::lock_guard<std::mutex> lock(mu);
+        return cfg;
+    }
+};
+
 // Individual probes (mostly for unit testing).
 void ProbeDns(const std::string &host, pudimnetmon::Metric &metric);
 void ProbeDnsRecord(const std::string &host,
@@ -54,7 +75,7 @@ void ProbeTlsCert(const std::string &host_port, pudimnetmon::Metric &metric);
 void ProbeHttp(const std::string &url, pudimnetmon::Metric &metric);
 void ProbeHttpProtocol(const std::string &url, const std::string &protocol,
                        pudimnetmon::Metric &metric);
-void ProbeIcmp(const std::string &host, int count,
+void ProbeIcmp(const std::string &host, int count, int gap_ms,
                pudimnetmon::Metric &loss_metric,
                pudimnetmon::Metric &rtt_metric,
                pudimnetmon::Metric &jitter_metric);

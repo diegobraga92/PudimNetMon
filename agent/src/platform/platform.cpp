@@ -17,6 +17,10 @@
 #include <unistd.h>
 #endif
 
+#if defined(__linux__) && !defined(_WIN32)
+#include <sys/random.h>
+#endif
+
 namespace pudimagent::platform {
 
 int64_t MonotonicUs() {
@@ -38,6 +42,12 @@ bool RandomBytes(unsigned char *out, size_t n) {
     return BCryptGenRandom(nullptr, out, static_cast<ULONG>(n),
                            BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
 #else
+#if defined(__linux__) && !defined(_WIN32)
+    // getrandom() is a single syscall with no file-descriptor or buffering
+    // cost; fall back to /dev/urandom on other POSIX platforms.
+    ssize_t n_read = getrandom(out, n, 0);
+    if (n_read > 0 && static_cast<size_t>(n_read) == n) return true;
+#endif
     FILE *f = std::fopen("/dev/urandom", "rb");
     if (!f) return false;
     size_t got = std::fread(out, 1, n, f);

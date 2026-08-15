@@ -1,11 +1,24 @@
 #include <cassert>
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netdb.h>
+#endif
+
 #include "metrics.pb.h"
 #include "metrics/probes.h"
 #include "metrics/ntp_probe.h"
+#include "dns_resolver.h"
+#include "disk_buffer.h"
 
 using pudimnetmon::CheckType;
 using pudimnetmon::Metric;
@@ -140,6 +153,87 @@ static void TestNtpOffset() {
               << "\n";
 }
 
+// ---- DnsResolver: time-bounded, cached lookups ----
+
+static void TestDnsResolverLocalhost() {
+    struct addrinfo hints {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    auto r1 = pudimagent::GlobalResolver().Lookup("localhost", "", hints, 3000);
+    assert(r1.ok);
+    assert(r1.addrs);
+    // Second lookup should be served from the cache and still succeed.
+    auto r2 = pudimagent::GlobalResolver().Lookup("localhost", "", hints, 3000);
+    assert(r2.ok);
+    assert(r2.addrs);
+    std::cout << "PASS: DNS resolver resolves localhost (repeated lookups)\n";
+}
+
+static void TestDnsResolverInvalid() {
+    struct addrinfo hints {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    auto r = pudimagent::GlobalResolver().Lookup("invalid.invalid.invalid", "",
+                                                 hints, 3000);
+    assert(!r.ok);
+    assert(!r.error.empty());
+    std::cout << "PASS: DNS resolver fails gracefully for invalid host: "
+              << r.error << "\n";
+}
+
+static void TestDnsResolverIpLiteral() {
+    struct addrinfo hints {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    auto r = pudimagent::GlobalResolver().Lookup("127.0.0.1", "80", hints, 3000);
+    assert(r.ok);
+    assert(r.addrs);
+    std::cout << "PASS: DNS resolver accepts IP literals\n";
+}
+
+// ---- DiskBuffer: counters survive a restart (Phase 7 DR) ----
+
+static void TestDiskBufferRestartCounters() {
+    const std::string path = "test_disk_buffer.db";
+    std::remove(path.c_str());
+    std::remove((path + "-wal").c_str());
+    std::remove((path + "-shm").c_str());
+
+    // First session: write 3 x 300-byte batches (900 bytes total).
+    {
+        pudimagent::DiskBuffer db(path, 10000);
+        std::string err;
+        assert(db.Open(err));
+        std::string blob(300, 'x');
+        assert(db.Push(blob));
+        assert(db.Push(blob));
+        assert(db.Push(blob));
+        assert(db.Size() == 3);
+    }  // destructor closes the DB (rows persist)
+
+    // Reopen with a cap (500) below the persisted 900 bytes: the counters
+    // must be seeded from the DB so Push() trims the overflow instead of
+    // allowing the buffer to exceed the cap.
+    {
+        pudimagent::DiskBuffer db(path, 500);
+        std::string err;
+        assert(db.Open(err));
+        std::string blob(200, 'y');
+        assert(db.Push(blob));
+        // Trim dropped at least the 2 oldest rows (900 -> 300) and the new
+        // batch fits; had the counters started at 0 the buffer would now hold
+        // 4 rows instead of the trimmed 2.
+        assert(db.Size() <= 3);
+        assert(db.Size() >= 1);
+        std::cout << "PASS: disk buffer restores counters on reopen (size="
+                  << db.Size() << ")\n";
+    }
+
+    std::remove(path.c_str());
+    std::remove((path + "-wal").c_str());
+    std::remove((path + "-shm").c_str());
+}
+
 int main() {
     TestEmptyConfig();
     TestDnsLocalhost();
@@ -151,6 +245,10 @@ int main() {
     TestTlsCertMetric();
     TestHttpProtocolHttp11();
     TestNtpOffset();
+    TestDnsResolverLocalhost();
+    TestDnsResolverInvalid();
+    TestDnsResolverIpLiteral();
+    TestDiskBufferRestartCounters();
     TestAllProbesLocalhost();
     std::cout << "ALL AGENT PROBE TESTS PASSED\n";
     return 0;

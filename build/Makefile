@@ -384,6 +384,7 @@ src/disk_buffer.o: src/disk_buffer.cpp.o
 # target to build an object file
 src/disk_buffer.cpp.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/disk_buffer.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/disk_buffer.cpp.o
 .PHONY : src/disk_buffer.cpp.o
 
 src/disk_buffer.i: src/disk_buffer.cpp.i
@@ -392,6 +393,7 @@ src/disk_buffer.i: src/disk_buffer.cpp.i
 # target to preprocess a source file
 src/disk_buffer.cpp.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/disk_buffer.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/disk_buffer.cpp.i
 .PHONY : src/disk_buffer.cpp.i
 
 src/disk_buffer.s: src/disk_buffer.cpp.s
@@ -400,7 +402,35 @@ src/disk_buffer.s: src/disk_buffer.cpp.s
 # target to generate assembly for a file
 src/disk_buffer.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/disk_buffer.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/disk_buffer.cpp.s
 .PHONY : src/disk_buffer.cpp.s
+
+src/dns_resolver.o: src/dns_resolver.cpp.o
+.PHONY : src/dns_resolver.o
+
+# target to build an object file
+src/dns_resolver.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/dns_resolver.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/dns_resolver.cpp.o
+.PHONY : src/dns_resolver.cpp.o
+
+src/dns_resolver.i: src/dns_resolver.cpp.i
+.PHONY : src/dns_resolver.i
+
+# target to preprocess a source file
+src/dns_resolver.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/dns_resolver.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/dns_resolver.cpp.i
+.PHONY : src/dns_resolver.cpp.i
+
+src/dns_resolver.s: src/dns_resolver.cpp.s
+.PHONY : src/dns_resolver.s
+
+# target to generate assembly for a file
+src/dns_resolver.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/dns_resolver.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/dns_resolver.cpp.s
+.PHONY : src/dns_resolver.cpp.s
 
 src/main.o: src/main.cpp.o
 .PHONY : src/main.o
@@ -555,6 +585,105 @@ src/metrics/probes.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/metrics/probes.cpp.s
 .PHONY : src/metrics/probes.cpp.s
 
+src/platform/getopt.o: src/platform/getopt.cpp.o
+.PHONY : src/platform/getopt.o
+
+# target to build an object file
+src/platform/getopt.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/getopt.cpp.o
+.PHONY : src/platform/getopt.cpp.o
+
+src/platform/getopt.i: src/platform/getopt.cpp.i
+.PHONY : src/platform/getopt.i
+
+# target to preprocess a source file
+src/platform/getopt.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/getopt.cpp.i
+.PHONY : src/platform/getopt.cpp.i
+
+src/platform/getopt.s: src/platform/getopt.cpp.s
+.PHONY : src/platform/getopt.s
+
+# target to generate assembly for a file
+src/platform/getopt.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/getopt.cpp.s
+.PHONY : src/platform/getopt.cpp.s
+
+src/platform/platform.o: src/platform/platform.cpp.o
+.PHONY : src/platform/platform.o
+
+# target to build an object file
+src/platform/platform.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/platform.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/platform/platform.cpp.o
+.PHONY : src/platform/platform.cpp.o
+
+src/platform/platform.i: src/platform/platform.cpp.i
+.PHONY : src/platform/platform.i
+
+# target to preprocess a source file
+src/platform/platform.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/platform.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/platform/platform.cpp.i
+.PHONY : src/platform/platform.cpp.i
+
+src/platform/platform.s: src/platform/platform.cpp.s
+.PHONY : src/platform/platform.s
+
+# target to generate assembly for a file
+src/platform/platform.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/platform.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/platform/platform.cpp.s
+.PHONY : src/platform/platform.cpp.s
+
+src/platform/win_service.o: src/platform/win_service.cpp.o
+.PHONY : src/platform/win_service.o
+
+# target to build an object file
+src/platform/win_service.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/win_service.cpp.o
+.PHONY : src/platform/win_service.cpp.o
+
+src/platform/win_service.i: src/platform/win_service.cpp.i
+.PHONY : src/platform/win_service.i
+
+# target to preprocess a source file
+src/platform/win_service.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/win_service.cpp.i
+.PHONY : src/platform/win_service.cpp.i
+
+src/platform/win_service.s: src/platform/win_service.cpp.s
+.PHONY : src/platform/win_service.s
+
+# target to generate assembly for a file
+src/platform/win_service.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/platform/win_service.cpp.s
+.PHONY : src/platform/win_service.cpp.s
+
+src/probe_runner.o: src/probe_runner.cpp.o
+.PHONY : src/probe_runner.o
+
+# target to build an object file
+src/probe_runner.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/probe_runner.cpp.o
+.PHONY : src/probe_runner.cpp.o
+
+src/probe_runner.i: src/probe_runner.cpp.i
+.PHONY : src/probe_runner.i
+
+# target to preprocess a source file
+src/probe_runner.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/probe_runner.cpp.i
+.PHONY : src/probe_runner.cpp.i
+
+src/probe_runner.s: src/probe_runner.cpp.s
+.PHONY : src/probe_runner.s
+
+# target to generate assembly for a file
+src/probe_runner.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/probe_runner.cpp.s
+.PHONY : src/probe_runner.cpp.s
+
 src/systemd_notify.o: src/systemd_notify.cpp.o
 .PHONY : src/systemd_notify.o
 
@@ -578,6 +707,33 @@ src/systemd_notify.s: src/systemd_notify.cpp.s
 src/systemd_notify.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/systemd_notify.cpp.s
 .PHONY : src/systemd_notify.cpp.s
+
+src/tls_context.o: src/tls_context.cpp.o
+.PHONY : src/tls_context.o
+
+# target to build an object file
+src/tls_context.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/tls_context.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/tls_context.cpp.o
+.PHONY : src/tls_context.cpp.o
+
+src/tls_context.i: src/tls_context.cpp.i
+.PHONY : src/tls_context.i
+
+# target to preprocess a source file
+src/tls_context.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/tls_context.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/tls_context.cpp.i
+.PHONY : src/tls_context.cpp.i
+
+src/tls_context.s: src/tls_context.cpp.s
+.PHONY : src/tls_context.s
+
+# target to generate assembly for a file
+src/tls_context.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pudim-agent.dir/build.make CMakeFiles/pudim-agent.dir/src/tls_context.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test-probes.dir/build.make CMakeFiles/test-probes.dir/src/tls_context.cpp.s
+.PHONY : src/tls_context.cpp.s
 
 src/tls_credentials.o: src/tls_credentials.cpp.o
 .PHONY : src/tls_credentials.o
@@ -691,6 +847,9 @@ help:
 	@echo "... src/disk_buffer.o"
 	@echo "... src/disk_buffer.i"
 	@echo "... src/disk_buffer.s"
+	@echo "... src/dns_resolver.o"
+	@echo "... src/dns_resolver.i"
+	@echo "... src/dns_resolver.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
@@ -709,9 +868,24 @@ help:
 	@echo "... src/metrics/probes.o"
 	@echo "... src/metrics/probes.i"
 	@echo "... src/metrics/probes.s"
+	@echo "... src/platform/getopt.o"
+	@echo "... src/platform/getopt.i"
+	@echo "... src/platform/getopt.s"
+	@echo "... src/platform/platform.o"
+	@echo "... src/platform/platform.i"
+	@echo "... src/platform/platform.s"
+	@echo "... src/platform/win_service.o"
+	@echo "... src/platform/win_service.i"
+	@echo "... src/platform/win_service.s"
+	@echo "... src/probe_runner.o"
+	@echo "... src/probe_runner.i"
+	@echo "... src/probe_runner.s"
 	@echo "... src/systemd_notify.o"
 	@echo "... src/systemd_notify.i"
 	@echo "... src/systemd_notify.s"
+	@echo "... src/tls_context.o"
+	@echo "... src/tls_context.i"
+	@echo "... src/tls_context.s"
 	@echo "... src/tls_credentials.o"
 	@echo "... src/tls_credentials.i"
 	@echo "... src/tls_credentials.s"
