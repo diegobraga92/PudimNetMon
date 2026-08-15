@@ -67,4 +67,5 @@ export const VIEW_LABELS: Record<string, string> = {
   alerts: 'Alerts',
   history: 'Alert History',
   config: 'Agent Config',
+  deploy: 'Deploy Agent',
 }

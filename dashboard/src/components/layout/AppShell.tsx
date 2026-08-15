@@ -12,6 +12,7 @@ import { AgentsPage } from '../pages/AgentsPage'
 import { AlertsPage } from '../pages/AlertsPage'
 import { HistoryPage } from '../pages/HistoryPage'
 import { ConfigPage } from '../pages/ConfigPage'
+import { DeployPage } from '../pages/DeployPage'
 
 export function AppShell() {
   const { view, sidebarOpen, setSidebarOpen } = useDashboard()
@@ -52,6 +53,7 @@ export function AppShell() {
               {view === 'alerts' && <AlertsPage />}
               {view === 'history' && <HistoryPage />}
               {view === 'config' && <ConfigPage />}
+              {view === 'deploy' && <DeployPage />}
             </div>
           </ErrorBoundary>
         </main>

@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
-import { Radio } from 'lucide-react'
+import { Download, Radio } from 'lucide-react'
 import type { AgentInfo } from '../../types'
 import { useAgents } from '../../hooks/useAgents'
 import { useMetrics } from '../../hooks/useMetrics'
+import { useDashboard } from '../../context/DashboardContext'
 import { cn } from '../../lib/cn'
+import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { EmptyState } from '../ui/EmptyState'
 import { ListSkeleton } from '../ui/LoadingSkeleton'
@@ -14,6 +16,7 @@ type StatusFilter = 'all' | 'alive' | 'offline'
 export function AgentsPanel({ onRunDiagnostic }: { onRunDiagnostic?: (agent: AgentInfo) => void }) {
   const { data, isLoading } = useAgents()
   const metrics = useMetrics({ agentId: 'all', checkType: 'all', windowSeconds: 300 })
+  const { setView } = useDashboard()
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
 
@@ -58,6 +61,12 @@ export function AgentsPanel({ onRunDiagnostic }: { onRunDiagnostic?: (agent: Age
         icon={<Radio className="size-8" aria-hidden="true" />}
         title="No agents connected"
         description="Start a pudim-agent daemon and it will appear here within a heartbeat interval."
+        action={
+          <Button variant="primary" size="sm" onClick={() => setView('deploy')}>
+            <Download className="size-4" aria-hidden="true" />
+            Deploy an agent
+          </Button>
+        }
       />
     )
   }

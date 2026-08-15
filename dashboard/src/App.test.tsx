@@ -144,6 +144,35 @@ describe('PudimNetMon dashboard', () => {
     })
   })
 
+  it('renders the Deploy Agent page with downloadable platforms', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<App />)
+
+    await user.click(screen.getByRole('button', { name: /Deploy Agent/ }))
+
+    expect(await screen.findByRole('heading', { name: 'Deploy Agent' })).toBeInTheDocument()
+    // Platform cards from the manifest (Linux + Windows) and the Docker card.
+    // The filename appears both in the card metadata and the command block.
+    expect((await screen.findAllByText(/pudim-agent-linux-amd64/)).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/pudim-agent-windows-amd64\.exe/).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('link', { name: /Download/ }).length).toBeGreaterThan(0)
+    expect(screen.getByText('Docker')).toBeInTheDocument()
+  })
+
+  it('navigates from the empty agents state to the Deploy page', async () => {
+    mockApi({ agents: [] })
+    const user = userEvent.setup()
+    renderWithProviders(<App />)
+
+    // The Overview stat card is also named "Agents", so target the sidebar nav.
+    const nav = screen.getByRole('navigation', { name: 'Main navigation' })
+    await user.click(within(nav).getByRole('button', { name: /Agents/ }))
+    expect(await screen.findByText('No agents connected')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Deploy an agent/ }))
+    expect(await screen.findByRole('heading', { name: 'Deploy Agent' })).toBeInTheDocument()
+  })
+
   it('shows the active view label in the header', async () => {
     const user = userEvent.setup()
     renderWithProviders(<App />)

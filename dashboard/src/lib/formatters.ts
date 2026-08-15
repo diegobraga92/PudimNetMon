@@ -28,3 +28,18 @@ export function formatNumber(value: number, digits = 0): string {
     maximumFractionDigits: digits,
   })
 }
+
+/** "900 B", "1.4 kB", "2.1 MB". */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—'
+  if (bytes < 1024) return `${formatNumber(bytes)} B`
+  const units = ['kB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 'B'
+  for (const u of units) {
+    if (value < 1024) break
+    value /= 1024
+    unit = u
+  }
+  return `${formatNumber(value, value >= 100 ? 0 : 1)} ${unit}`
+}

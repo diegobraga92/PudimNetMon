@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import type { CheckTypeFilter } from '../types'
 
-export type View = 'overview' | 'metrics' | 'agents' | 'alerts' | 'history' | 'config'
+export type View = 'overview' | 'metrics' | 'agents' | 'alerts' | 'history' | 'config' | 'deploy'
 
 interface DashboardContextValue {
   view: View

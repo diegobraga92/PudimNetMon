@@ -1,6 +1,7 @@
 import {
   Activity,
   Bell,
+  Download,
   History,
   LayoutDashboard,
   Radio,
@@ -19,6 +20,7 @@ const NAV_ITEMS: { view: View; label: string; icon: typeof LayoutDashboard }[] =
   { view: 'alerts', label: 'Alerts', icon: Bell },
   { view: 'history', label: 'Alert History', icon: History },
   { view: 'config', label: 'Agent Config', icon: Settings2 },
+  { view: 'deploy', label: 'Deploy Agent', icon: Download },
 ]
 
 interface SidebarProps {

@@ -337,6 +337,53 @@ paths:
         '502':
           description: Agent unreachable
 
+  /api/agent/versions:
+    get:
+      summary: Agent download manifest (self-hosted binaries)
+      description: |
+        Lists the pudim-agent binaries staged on this collector. Platforms
+        without a staged binary are simply absent from the list.
+      responses:
+        '200':
+          description: Manifest of downloadable agent binaries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string }
+                  platforms:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: linux-amd64 }
+                        os: { type: string, example: linux }
+                        arch: { type: string, example: x86_64 }
+                        filename: { type: string, example: pudim-agent-linux-amd64 }
+                        size_bytes: { type: integer }
+                        sha256: { type: string }
+                        download_url:
+                          type: string
+                          example: /api/agent/download?platform=linux-amd64
+
+  /api/agent/download:
+    get:
+      summary: Download a staged agent binary
+      description: Serves the binary for a platform as application/octet-stream.
+      parameters:
+        - name: platform
+          in: query
+          required: true
+          schema: { type: string, example: linux-amd64 }
+      responses:
+        '200':
+          description: Agent binary (application/octet-stream with Content-Disposition)
+        '404':
+          description: No binary staged for the requested platform
+        '500':
+          description: Staged binary could not be read
+
 components:
   schemas:
     Health:

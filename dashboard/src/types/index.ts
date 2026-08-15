@@ -43,6 +43,22 @@ export interface AgentConfigResponse {
   error: string
 }
 
+// Staged agent binaries the collector serves for the self-hosted download flow.
+export interface AgentPlatform {
+  id: string          // e.g. "linux-amd64"
+  os: string          // "linux" | "windows" | ...
+  arch: string        // human-readable, e.g. "x86_64" | "aarch64"
+  filename: string    // e.g. "pudim-agent-linux-amd64"
+  size_bytes: number
+  sha256: string
+  download_url: string
+}
+
+export interface AgentVersionsResponse {
+  version: string
+  platforms: AgentPlatform[]
+}
+
 export interface ActiveAlert {
   rule_id: string
   rule_name: string

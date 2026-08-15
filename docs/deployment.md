@@ -25,6 +25,41 @@ host-side ports. This guide covers what Compose does **not**:
 configuration file — **everything is configured via CLI flags**, so each host
 gets its own targets and identity.
 
+### 1.0 Download from the dashboard (recommended)
+
+When the collector has staged agent binaries (the docker-compose collector
+image ships a Linux x86_64 build), the dashboard offers a **Deploy Agent**
+page that downloads the binary straight from the collector and shows a
+copy-paste install command for Linux, Windows and Docker.
+
+1. Open the dashboard and select **Deploy Agent** in the sidebar.
+2. Pick your host's platform and press **Download** (the download URL is
+   `GET /api/agent/download?platform=…` on the collector HTTP port).
+3. Copy the install command from the card and run it on the target host —
+   it downloads the same binary, installs the matching runtime libraries
+   (Debian/Ubuntu 24.04) and starts `pudim-agent` pointed at this collector.
+
+The staged Linux binary is built inside the Ubuntu 24.04 collector image, so
+it links against that image's gRPC/OpenSSL runtime libraries. The install
+command installs them via `apt`; on other distros (or other Ubuntu releases)
+build from source instead (`scripts/package-agents.sh` produces a binary for
+the host it runs on, so running it on the collector host yields a binary that
+matches your fleet).
+
+For bare-metal collectors, stage binaries with:
+
+```bash
+./scripts/package-agents.sh /usr/share/pudim/agents
+pudim-collector --agent-dist-dir=/usr/share/pudim/agents ...
+```
+
+The collector scans the dist directory **once at startup**, so stage binaries
+before starting it (or restart it after staging new ones).
+
+The collector serves a JSON manifest at `GET /api/agent/versions` (platforms,
+sizes, sha256) and the binaries at `GET /api/agent/download`. Platforms
+without a staged binary are simply absent from the manifest.
+
 ### 1.1 Build
 
 Install the build prerequisites (Ubuntu 24.04 shown):

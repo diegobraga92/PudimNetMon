@@ -13,6 +13,8 @@ find_package(PostgreSQL REQUIRED)
 # locate it via pkg-config (librdkafka-dev on Ubuntu/CI).
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka++)
+# OpenSSL for tls_credentials.cpp and the agent-binary sha256 manifest.
+find_package(OpenSSL REQUIRED)
 
 # Fetch cpp-httplib for the HTTP health/metrics endpoints
 include(FetchContent)
@@ -94,6 +96,7 @@ target_link_libraries(pudim_proto
 # Collector executable
 add_executable(pudim-collector
   src/main.cpp
+  src/agent_dist.cpp
   src/storage/timescale_storage.cpp
   src/metrics_service.cpp
   src/alerting/alert_rule.cpp
@@ -112,8 +115,14 @@ target_link_libraries(pudim-collector
     nlohmann_json::nlohmann_json
     PkgConfig::RDKAFKA
     PostgreSQL::PostgreSQL
+    OpenSSL::Crypto
 )
 target_include_directories(pudim-collector PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/../agent/src)
+
+# Warnings for the collector's own sources (proto/grpc code lives in pudim_proto).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(pudim-collector PRIVATE -Wall -Wextra)
+endif()
 
 # Tests
 enable_testing()

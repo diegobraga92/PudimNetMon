@@ -4,28 +4,39 @@ RUN apt-get update && apt-get install -y -qq \
     cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
     libgrpc-dev protobuf-compiler-grpc build-essential \
     pkg-config git ca-certificates \
-    libpq-dev librdkafka-dev
+    libpq-dev librdkafka-dev \
+    libcurl4-openssl-dev libpcap-dev libsystemd-dev libsqlite3-dev
 
 WORKDIR /build
 COPY collector/ ./collector/
 COPY agent/ ./agent/
 COPY api/ ./api/
 
+# Build the collector AND a full-featured agent. The agent binary is staged
+# into /agents so the runtime image can serve it to the dashboard
+# (self-hosted agent download, --agent-dist-dir).
 RUN cmake -S collector -B build && \
     cmake --build build -j$(nproc) && \
-    cp build/pudim-collector /usr/local/bin/pudim-collector
+    cp build/pudim-collector /usr/local/bin/pudim-collector && \
+    cmake -S agent -B build-agent && \
+    cmake --build build-agent -j$(nproc) && \
+    mkdir -p /agents && \
+    cp build-agent/pudim-agent /agents/pudim-agent-linux-amd64 && \
+    printf '0.1.0\n' > /agents/version.txt
 
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y -qq \
     libprotobuf32t64 libgrpc++1.51t64 \
-    libpq5 librdkafka1 librdkafka++1 && \
+    libpq5 librdkafka1 librdkafka++1 \
+    libcurl4t64 libpcap0.8t64 libsystemd0 libsqlite3-0 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/pudim-collector /usr/local/bin/pudim-collector
 COPY --from=builder /build/collector/config/alert_rules.json /etc/pudim/alert_rules.json
+COPY --from=builder /agents/ /usr/share/pudim/agents/
 
 EXPOSE 50051 8080
 
 ENTRYPOINT ["/usr/local/bin/pudim-collector"]
-CMD ["--grpc-addr=0.0.0.0:50051", "--http-addr=0.0.0.0:8080", "--alert-rules-path=/etc/pudim/alert_rules.json"]
+CMD ["--grpc-addr=0.0.0.0:50051", "--http-addr=0.0.0.0:8080", "--alert-rules-path=/etc/pudim/alert_rules.json", "--agent-dist-dir=/usr/share/pudim/agents"]

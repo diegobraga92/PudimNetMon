@@ -1,10 +1,41 @@
 import { vi } from 'vitest'
-import type { AgentInfo, AlertHistoryEntry, HealthResponse, MetricPoint, ActiveAlert } from '../types'
+import type {
+  AgentInfo,
+  AgentVersionsResponse,
+  AlertHistoryEntry,
+  HealthResponse,
+  MetricPoint,
+  ActiveAlert,
+} from '../types'
 
 export const mockHealth: HealthResponse = {
   status: 'ok',
   component: 'collector',
   storage: true,
+}
+
+export const mockAgentVersions: AgentVersionsResponse = {
+  version: '0.1.0',
+  platforms: [
+    {
+      id: 'linux-amd64',
+      os: 'linux',
+      arch: 'x86_64',
+      filename: 'pudim-agent-linux-amd64',
+      size_bytes: 1500000,
+      sha256: 'a'.repeat(64),
+      download_url: '/api/agent/download?platform=linux-amd64',
+    },
+    {
+      id: 'windows-amd64',
+      os: 'windows',
+      arch: 'x86_64',
+      filename: 'pudim-agent-windows-amd64.exe',
+      size_bytes: 2200000,
+      sha256: 'b'.repeat(64),
+      download_url: '/api/agent/download?platform=windows-amd64',
+    },
+  ],
 }
 
 export const mockAgents: AgentInfo[] = [
@@ -141,6 +172,7 @@ export interface MockApiOptions {
   metrics?: MetricPoint[]
   alerts?: ActiveAlert[]
   alertHistory?: AlertHistoryEntry[]
+  agentVersions?: AgentVersionsResponse
 }
 
 /** Stub global.fetch with canned responses routed by URL. Returns the fetch stub. */
@@ -151,6 +183,7 @@ export function mockApi(options: MockApiOptions = {}) {
     metrics = mockMetrics,
     alerts = mockAlerts,
     alertHistory = mockAlertHistory,
+    agentVersions = mockAgentVersions,
   } = options
 
   let currentAlerts = alerts
@@ -171,6 +204,7 @@ export function mockApi(options: MockApiOptions = {}) {
     }
     if (url.startsWith('/api/alerts')) return jsonResponse(currentAlerts)
     if (url.startsWith('/api/alert-history')) return jsonResponse(alertHistory)
+    if (url.startsWith('/api/agent/versions')) return jsonResponse(agentVersions)
     if (url.startsWith('/api/diagnostic')) {
       return jsonResponse({ success: true, timestamp_unix_ms: Date.now(), result: 'traceroute ok\npcap ok' })
     }

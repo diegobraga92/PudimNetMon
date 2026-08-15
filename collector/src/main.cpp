@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <shared_mutex>
 #include <chrono>
 #include <thread>
@@ -20,6 +21,7 @@
 #include "storage/timescale_storage.h"
 #include "alerting/alert_manager.h"
 #include "tls_credentials.h"
+#include "agent_dist.h"
 #include <nlohmann/json.hpp>
 
 using grpc::Server;
@@ -202,6 +204,7 @@ public:
     Status SendHeartbeat(ServerContext *ctx,
                          const HeartbeatRequest *req,
                          HeartbeatResponse *resp) override {
+        (void)ctx;
         // Record the heartbeat
         s_registry.RecordHeartbeat(*req);
 
@@ -338,6 +341,7 @@ int main(int argc, char **argv) {
     std::string tls_ca;    // PEM CA used to verify agent client certs (mTLS)
     std::string tls_cert;  // PEM server certificate
     std::string tls_key;   // PEM server private key
+    std::string agent_dist_dir = "/usr/share/pudim/agents";  // staged binaries for the dashboard download flow
 
     auto get_env = [](const char *name, const std::string &def) {
         const char *v = std::getenv(name);
@@ -397,6 +401,8 @@ int main(int argc, char **argv) {
             tls_cert = v;
         } else if ((v = opt(arg, "--tls-key", i)) != "") {
             tls_key = v;
+        } else if ((v = opt(arg, "--agent-dist-dir", i)) != "") {
+            agent_dist_dir = v;
         } else if (arg == "--help") {
             std::cout << "Usage: pudim-collector [options]\n"
                       << "  --grpc-addr         gRPC listen address (default: 0.0.0.0:50051)\n"
@@ -415,6 +421,8 @@ int main(int argc, char **argv) {
                       << "  --tls-ca              PEM CA to verify agent client certs (mTLS)\n"
                       << "  --tls-cert            PEM server certificate (mTLS)\n"
                       << "  --tls-key             PEM server private key (mTLS)\n"
+                      << "  --agent-dist-dir      Directory with staged pudim-agent binaries served to the\n"
+                      << "                        dashboard (default: /usr/share/pudim/agents)\n"
                       << "  --help              Show this help\n";
             return 0;
         }
@@ -513,6 +521,20 @@ int main(int argc, char **argv) {
     http_server.new_task_queue = [] {
         return new httplib::ThreadPool(4);
     };
+
+    // Self-hosted agent download (Phase 9): staged binaries served to the
+    // dashboard. When the dist dir has no binaries the manifest is empty and
+    // the download endpoints return 404.
+    pudimcollector::AgentDist agent_dist;
+    if (!agent_dist.Scan(agent_dist_dir)) {
+        logger::emit("info", "No staged agent binaries in '" + agent_dist_dir +
+                     "'; agent download disabled");
+    } else {
+        logger::emit("info", "Serving " +
+                     std::to_string(agent_dist.Platforms().size()) +
+                     " agent platform(s) from '" + agent_dist_dir +
+                     "' (version " + agent_dist.Version() + ")");
+    }
 
     // Every dashboard-facing endpoint is served at BOTH /path and /api/path so
     // it works through reverse proxies that strip the /api prefix (legacy) and
@@ -811,6 +833,40 @@ int main(int argc, char **argv) {
                            "\",\"error\":\"" + logger::escape(gresp.error()) + "\"}";
         resp.set_content(json, "application/json");
     });
+
+    // Self-hosted agent download (Phase 9): manifest + binary download.
+    auto agent_versions_handler = [&agent_dist](const httplib::Request &,
+                                                httplib::Response &resp) {
+        resp.set_content(agent_dist.ManifestJson(), "application/json");
+    };
+    http_server.Get("/api/agent/versions", agent_versions_handler);
+    http_server.Get("/agent/versions", agent_versions_handler);
+
+    auto agent_download_handler = [&agent_dist](const httplib::Request &req,
+                                                httplib::Response &resp) {
+        std::string platform = req.get_param_value("platform");
+        const pudimcollector::AgentPlatform *p = agent_dist.Find(platform);
+        if (!p) {
+            resp.status = 404;
+            resp.set_content(
+                "{\"error\":\"no agent binary staged for platform '" +
+                    logger::escape(platform) + "'\"}",
+                "application/json");
+            return;
+        }
+        std::vector<char> bytes;
+        if (!agent_dist.LoadBinary(platform, bytes)) {
+            resp.status = 500;
+            resp.set_content("{\"error\":\"failed to read agent binary\"}",
+                             "application/json");
+            return;
+        }
+        resp.set_header("Content-Disposition",
+                        "attachment; filename=\"" + p->filename + "\"");
+        resp.set_content(bytes.data(), bytes.size(), "application/octet-stream");
+    };
+    http_server.Get("/api/agent/download", agent_download_handler);
+    http_server.Get("/agent/download", agent_download_handler);
 
     // Run HTTP server in a separate thread
     std::thread http_thread([&http_server, http_addr]() {
