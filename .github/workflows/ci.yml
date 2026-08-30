@@ -9,8 +9,10 @@ on:
 jobs:
   cpp-agent:
     name: C++ Agent (build)
+    # Check latest: https://github.com/actions/runner-images/releases
     runs-on: ubuntu-24.04
     steps:
+      # Check latest: https://github.com/actions/checkout/releases
       - uses: actions/checkout@v4
 
       - name: Install dependencies
@@ -34,8 +36,10 @@ jobs:
 
   cpp-collector:
     name: C++ Collector (build)
+    # Check latest: https://github.com/actions/runner-images/releases
     runs-on: ubuntu-24.04
     steps:
+      # Check latest: https://github.com/actions/checkout/releases
       - uses: actions/checkout@v4
 
       - name: Install dependencies
@@ -59,6 +63,7 @@ jobs:
 
   cpp-agent-windows:
     name: C++ Agent (Windows build)
+    # Check latest: https://github.com/actions/runner-images/releases
     runs-on: windows-latest
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
@@ -66,14 +71,17 @@ jobs:
       # vcpkg's native GitHub Actions binary cache (restore/upload via GHA).
       VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
     steps:
+      # Check latest: https://github.com/actions/checkout/releases
       - uses: actions/checkout@v4
 
+      # Check latest: https://github.com/microsoft/vcpkg
       - name: Checkout vcpkg (pinned baseline)
         shell: pwsh
         run: |
           git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$env:VCPKG_ROOT"
           git -C "$env:VCPKG_ROOT" checkout e90cc0982b7cfae62447f1f3bed1fbca0bc8f6be
 
+      # Check latest: https://github.com/microsoft/vcpkg-tool/releases
       - name: Fetch vcpkg tool (with retries)
         shell: pwsh
         run: |
@@ -82,6 +90,7 @@ jobs:
             "https://github.com/microsoft/vcpkg-tool/releases/download/2026-07-27/vcpkg.exe"
           & "$env:VCPKG_ROOT\vcpkg.exe" version --disable-metrics
 
+      # Check latest: https://github.com/actions/cache/releases
       - name: Cache vcpkg artifacts
         uses: actions/cache@v4
         with:
@@ -116,13 +125,17 @@ jobs:
 
   dashboard:
     name: Dashboard (lint + build)
+    # Check latest: https://github.com/actions/runner-images/releases
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: dashboard
     steps:
+      # Check latest: https://github.com/actions/checkout/releases
       - uses: actions/checkout@v4
 
+      # Check latest: https://github.com/actions/setup-node/releases
+      # Check latest: https://nodejs.org/en/about/previous-releases
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
