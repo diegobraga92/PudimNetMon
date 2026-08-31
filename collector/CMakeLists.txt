@@ -168,6 +168,7 @@ target_include_directories(test-e2e-grpc
   PRIVATE
     ${CMAKE_BINARY_DIR}
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/../agent/src
     ${CMAKE_SOURCE_DIR}/../agent/src/metrics
 )
 add_test(NAME e2e-grpc-tests COMMAND test-e2e-grpc)

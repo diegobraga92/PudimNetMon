@@ -1,9 +1,9 @@
 #include <chrono>
-#include <iostream>
 #include <string>
 
 #include <grpcpp/grpcpp.h>
 
+#include "logger.h"
 #include "metrics_client.h"
 
 using grpc::ClientContext;
@@ -42,8 +42,8 @@ bool MetricsClient::SendBatch(const MetricsBatch &batch,
     }
 
     if (!status.ok()) {
-        std::cerr << "SendMetrics failed: " << status.error_message()
-                  << " (code=" << status.error_code() << ")\n";
+        LOG_ERROR("SendMetrics failed: " + status.error_message() +
+                  " (code=" + std::to_string(status.error_code()) + ")");
         return false;
     }
     return resp.ack();
@@ -64,7 +64,7 @@ bool MetricsClient::StreamMetrics(
     auto writer = m_stub->StreamMetrics(&ctx, &resp);
     for (const auto &m : metrics) {
         if (!writer->Write(m)) {
-            std::cerr << "StreamMetrics: write failed (stream cancelled?)\n";
+            LOG_ERROR("StreamMetrics: write failed (stream cancelled?)");
             break;
         }
     }
@@ -80,8 +80,8 @@ bool MetricsClient::StreamMetrics(
         }
     }
     if (!status.ok()) {
-        std::cerr << "StreamMetrics failed: " << status.error_message()
-                  << " (code=" << status.error_code() << ")\n";
+        LOG_ERROR("StreamMetrics failed: " + status.error_message() +
+                  " (code=" + std::to_string(status.error_code()) + ")");
         return false;
     }
     return resp.ack();

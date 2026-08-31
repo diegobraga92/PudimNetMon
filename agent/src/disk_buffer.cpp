@@ -1,6 +1,5 @@
-#include <iostream>
-
 #include "disk_buffer.h"
+#include "logger.h"
 
 #ifdef HAVE_SQLITE3
 #include <sqlite3.h>
@@ -30,8 +29,8 @@ namespace {
 bool Exec(sqlite3 *db, const std::string &sql) {
     char *err = nullptr;
     if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err) != SQLITE_OK) {
-        std::cerr << "DiskBuffer SQL error: " << (err ? err : "unknown")
-                  << "\n";
+        LOG_ERROR(std::string("DiskBuffer SQL error: ") +
+                  (err ? err : "unknown"));
         sqlite3_free(err);
         return false;
     }
@@ -100,7 +99,7 @@ bool DiskBuffer::Push(const std::string &payload_blob) {
     // Enforce the size cap before inserting.
     Trim();
     if (m_impl->bytes + payload_blob.size() > m_max_bytes) {
-        std::cerr << "DiskBuffer full; refusing to buffer more\n";
+        LOG_ERROR("DiskBuffer full; refusing to buffer more");
         return false;
     }
 

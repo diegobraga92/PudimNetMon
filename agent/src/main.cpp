@@ -26,6 +26,7 @@
 #include "disk_buffer.h"
 #include "tls_credentials.h"
 #include "probe_runner.h"
+#include "logger.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -39,67 +40,7 @@ using pudimagent::ProbeConfig;
 
 static std::atomic<bool> s_running{true};
 static std::string s_node_id;
-static std::string s_trace_id;
 static std::string s_diagnostic_endpoint;
-
-namespace logger {
-
-// Guarded because the probe worker / diagnostic server may log concurrently.
-static std::mutex s_out_mu;
-
-// Severity threshold: messages at or above this level are emitted.
-// Keep the enumerators in increasing severity order — enabled() relies on it.
-enum class LogLevel {
-    Debug = 0,
-    Info = 1,
-    Warn = 2,
-    Error = 3,
-};
-
-static LogLevel s_level = LogLevel::Info;
-
-static void SetLevel(LogLevel level) { s_level = level; }
-
-// True if a message of the given severity passes the configured threshold
-// (e.g. Warn emits Warn/Error and hides Debug/Info).
-static inline bool enabled(LogLevel level) {
-    return static_cast<int>(s_level) <= static_cast<int>(level);
-}
-
-static inline std::string escape(const std::string &s) {
-    std::string out;
-    for (char c : s) {
-        if (c == '"') out += "\\\"";
-        else if (c == '\\') out += "\\\\";
-        else if (c == '\n') out += "\\n";
-        else if (c == '\t') out += "\\t";
-        else out += c;
-    }
-    return out;
-}
-
-static inline void write(const std::string &level, const std::string &message,
-                         const std::string &agent_id,
-                         const std::string &trace_id) {
-    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::system_clock::now().time_since_epoch())
-                   .count();
-    std::lock_guard<std::mutex> lock(s_out_mu);
-    std::cout << "{"
-              << "\"timestamp\":" << now << ","
-              << "\"level\":\"" << level << "\","
-              << "\"component\":\"agent\","
-              << "\"message\":\"" << escape(message) << "\"";
-    if (!agent_id.empty()) {
-        std::cout << ",\"agent_id\":\"" << escape(agent_id) << "\"";
-    }
-    if (!trace_id.empty()) {
-        std::cout << ",\"trace_id\":\"" << escape(trace_id) << "\"";
-    }
-    std::cout << "}" << std::endl;
-}
-
-} // namespace logger
 
 // Map a --log-level string to a LogLevel; returns false if unrecognized.
 static bool ParseLogLevel(const std::string &s, logger::LogLevel &out) {
@@ -110,26 +51,6 @@ static bool ParseLogLevel(const std::string &s, logger::LogLevel &out) {
     return false;
 }
 
-#define LOG_DEBUG(msg)                                                        \
-    do {                                                                     \
-        if (logger::enabled(logger::LogLevel::Debug))                        \
-            logger::write("debug", msg, s_node_id, s_trace_id);              \
-    } while (0)
-#define LOG_INFO(msg)                                                         \
-    do {                                                                     \
-        if (logger::enabled(logger::LogLevel::Info))                         \
-            logger::write("info", msg, s_node_id, s_trace_id);               \
-    } while (0)
-#define LOG_WARN(msg)                                                         \
-    do {                                                                     \
-        if (logger::enabled(logger::LogLevel::Warn))                         \
-            logger::write("warn", msg, s_node_id, s_trace_id);               \
-    } while (0)
-#define LOG_ERROR(msg)                                                        \
-    do {                                                                     \
-        if (logger::enabled(logger::LogLevel::Error))                        \
-            logger::write("error", msg, s_node_id, s_trace_id);              \
-    } while (0)
 
 // --------------------------------------------
 // Signal handler
@@ -163,9 +84,8 @@ static void handle_signal(int sig) {
 #else
     const char *sig_name = (sig == SIGTERM) ? "SIGTERM" :
                            (sig == SIGINT)  ? "SIGINT" : "UNKNOWN";
-    logger::write("info", std::string("Received ") + sig_name +
-                              ", shutting down...",
-                  s_node_id, "");
+    logger::write(logger::LogLevel::Info,
+                  std::string("Received ") + sig_name + ", shutting down...");
 #endif
     s_running = false;
 }
@@ -408,8 +328,11 @@ int RunAgent(int argc, char **argv) {
 
     // Set globals
     s_node_id = node_id;
-    s_trace_id = trace_id;
     s_diagnostic_endpoint = diagnostic_address;
+
+    // Log context for the shared logger (embedded in every log line).
+    logger::SetNodeId(node_id);
+    logger::SetTraceId(trace_id);
 
     // Configure the NTP offset probe (used by the SNTP client on Windows).
     pudimagent::SetNtpServer(ntp_server);
