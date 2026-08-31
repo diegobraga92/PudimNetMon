@@ -834,6 +834,150 @@ int main(int argc, char **argv) {
         resp.set_content(json, "application/json");
     });
 
+    // Pre-set agent commands (Phase 9): ListCommands + RunCommand forwarded to
+    // the agent's DiagnosticService. Commands are a FIXED, whitelisted catalog
+    // — the agent never executes arbitrary shell/terminal input.
+    auto agent_commands_handler = [&tls_ca, &tls_cert, &tls_key](
+                                      const httplib::Request &req,
+                                      httplib::Response &resp) {
+        std::string agent_id = req.get_param_value("agent_id");
+        if (agent_id.empty()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"agent_id is required\"}",
+                             "application/json");
+            return;
+        }
+        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
+        if (diag_endpoint.empty()) {
+            resp.status = 404;
+            resp.set_content(
+                "{\"error\":\"agent has no advertised diagnostic endpoint\"}",
+                "application/json");
+            return;
+        }
+        auto channel = grpc::CreateChannel(
+            diag_endpoint,
+            pudimagent::MakeChannelCredentials(tls_ca, tls_cert, tls_key));
+        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(10));
+        pudimnetmon::ListCommandsRequest lreq;
+        lreq.set_agent_id(agent_id);
+        pudimnetmon::ListCommandsResponse lresp;
+        grpc::Status status = stub->ListCommands(&ctx, lreq, &lresp);
+        if (!status.ok()) {
+            resp.status = 502;
+            resp.set_content(
+                "{\"error\":\"" + logger::escape(status.error_message()) +
+                "\"}",
+                "application/json");
+            return;
+        }
+        std::string json = "{\"success\":" +
+                           std::string(lresp.success() ? "true" : "false") +
+                           ",\"commands\":[";
+        for (int i = 0; i < lresp.commands_size(); ++i) {
+            const auto &c = lresp.commands(i);
+            if (i > 0) json += ",";
+            json += "{\"command_id\":\"" + logger::escape(c.command_id()) +
+                    "\",\"description\":\"" + logger::escape(c.description()) +
+                    "\",\"param_names\":[";
+            for (int j = 0; j < c.param_names_size(); ++j) {
+                if (j > 0) json += ",";
+                json += "\"" + logger::escape(c.param_names(j)) + "\"";
+            }
+            json += "]}";
+        }
+        json += "]}";
+        resp.set_content(json, "application/json");
+    };
+    http_server.Get("/api/agents/commands", agent_commands_handler);
+
+    auto run_command_handler = [&tls_ca, &tls_cert, &tls_key](
+                                   const httplib::Request &req,
+                                   httplib::Response &resp) {
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}",
+                             "application/json");
+            return;
+        }
+        std::string agent_id = body.value("agent_id", "");
+        std::string command_id = body.value("command_id", "");
+        if (agent_id.empty() || command_id.empty()) {
+            resp.status = 400;
+            resp.set_content(
+                "{\"error\":\"agent_id and command_id are required\"}",
+                "application/json");
+            return;
+        }
+        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
+        if (diag_endpoint.empty()) {
+            resp.status = 404;
+            resp.set_content(
+                "{\"error\":\"agent has no advertised diagnostic endpoint\"}",
+                "application/json");
+            return;
+        }
+        auto channel = grpc::CreateChannel(
+            diag_endpoint,
+            pudimagent::MakeChannelCredentials(tls_ca, tls_cert, tls_key));
+        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(30));
+        pudimnetmon::RunCommandRequest creq;
+        creq.set_agent_id(agent_id);
+        creq.set_command_id(command_id);
+        if (body.contains("params") && body["params"].is_object()) {
+            for (auto it = body["params"].begin(); it != body["params"].end();
+                 ++it) {
+                if (it.value().is_string()) {
+                    (*creq.mutable_params())[it.key()] =
+                        it.value().get<std::string>();
+                }
+            }
+        }
+        pudimnetmon::CommandResponse cresp;
+        grpc::Status status = stub->RunCommand(&ctx, creq, &cresp);
+        if (!status.ok()) {
+            resp.status = 502;
+            resp.set_content(
+                "{\"error\":\"" + logger::escape(status.error_message()) +
+                "\"}",
+                "application/json");
+            return;
+        }
+        std::string json = "{\"success\":" +
+                           std::string(cresp.success() ? "true" : "false") +
+                           ",\"command_id\":\"" +
+                           logger::escape(cresp.command_id()) +
+                           "\",\"error\":\"" + logger::escape(cresp.error()) +
+                           "\",\"timestamp_unix_ms\":" +
+                           std::to_string(cresp.timestamp_unix_ms()) +
+                           ",\"summary\":\"" + logger::escape(cresp.summary()) +
+                           "\",\"fields\":{";
+        bool first_field = true;
+        for (const auto &kv : cresp.fields()) {
+            if (!first_field) json += ",";
+            first_field = false;
+            json += "\"" + logger::escape(kv.first) + "\":\"" +
+                    logger::escape(kv.second) + "\"";
+        }
+        json += "},\"issues\":[";
+        for (int i = 0; i < cresp.issues_size(); ++i) {
+            if (i > 0) json += ",";
+            json += "\"" + logger::escape(cresp.issues(i)) + "\"";
+        }
+        json += "],\"detail\":\"" + logger::escape(cresp.detail()) + "\"}";
+        resp.set_content(json, "application/json");
+    };
+    http_server.Post("/api/agents/command", run_command_handler);
+
     // Self-hosted agent download (Phase 9): manifest + binary download.
     auto agent_versions_handler = [&agent_dist](const httplib::Request &,
                                                 httplib::Response &resp) {

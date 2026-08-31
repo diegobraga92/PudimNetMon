@@ -337,6 +337,66 @@ paths:
         '502':
           description: Agent unreachable
 
+  /api/agents/commands:
+    get:
+      summary: List an agent's pre-set (whitelisted) command catalog
+      description: |
+        Forwarded to the agent's DiagnosticService.ListCommands. Commands are
+        fixed, compiled handlers — the agent never executes arbitrary
+        shell/terminal input.
+      parameters:
+        - name: agent_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Command catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentCommandsResponse'
+        '400':
+          description: Missing agent_id
+        '404':
+          description: Agent has no advertised diagnostic endpoint
+        '502':
+          description: Agent unreachable
+
+  /api/agents/command:
+    post:
+      summary: Run a pre-set command on an agent
+      description: |
+        Forwarded to the agent's DiagnosticService.RunCommand. The command_id
+        must be one of the ids returned by /api/agents/commands; params are
+        command-specific schema-fixed keys, never a shell command line.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, command_id]
+              properties:
+                agent_id: { type: string }
+                command_id: { type: string, example: hdd_check }
+                params:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        '200':
+          description: Structured command result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResult'
+        '400':
+          description: Invalid body / missing agent_id or command_id
+        '404':
+          description: Agent has no advertised diagnostic endpoint
+        '502':
+          description: Agent unreachable
+
   /api/agent/versions:
     get:
       summary: Agent download manifest (self-hosted binaries)
@@ -477,6 +537,38 @@ components:
         success: { type: boolean }
         timestamp_unix_ms: { type: integer }
         result: { type: string }
+
+    AgentCommandsResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        error: { type: string }
+        commands:
+          type: array
+          items:
+            type: object
+            properties:
+              command_id: { type: string }
+              description: { type: string }
+              param_names:
+                type: array
+                items: { type: string }
+
+    CommandResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        command_id: { type: string }
+        error: { type: string }
+        timestamp_unix_ms: { type: integer }
+        summary: { type: string }
+        fields:
+          type: object
+          additionalProperties: { type: string }
+        issues:
+          type: array
+          items: { type: string }
+        detail: { type: string }
 
     AgentConfigResponse:
       type: object

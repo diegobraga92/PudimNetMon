@@ -34,6 +34,16 @@ public:
         const pudimnetmon::GetConfigRequest *request,
         pudimnetmon::AgentConfigResponse *response) override;
 
+    grpc::Status ListCommands(
+        grpc::ServerContext *ctx,
+        const pudimnetmon::ListCommandsRequest *request,
+        pudimnetmon::ListCommandsResponse *response) override;
+
+    grpc::Status RunCommand(
+        grpc::ServerContext *ctx,
+        const pudimnetmon::RunCommandRequest *request,
+        pudimnetmon::CommandResponse *response) override;
+
 private:
     std::shared_ptr<ProbeConfigStore> m_store;
 };

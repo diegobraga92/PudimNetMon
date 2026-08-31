@@ -8,10 +8,19 @@ option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
 // agent (traceroute, packet capture) and receives a human-readable report.
 // Phase 8 also adds runtime probe reconfiguration (Reconfigure) so the
 // dashboard can add/edit checks without restarting the agent.
+//
+// Pre-set commands (ListCommands/RunCommand): the dashboard can ask an agent
+// to run a maintenance task (e.g. a disk health check) selected by id from a
+// FIXED, whitelisted catalog. The agent never executes arbitrary shell /
+// terminal input — each command_id maps to a compiled, vetted handler.
 service DiagnosticService {
   rpc RunDiagnostic(DiagnosticRequest) returns (DiagnosticResponse);
   rpc Reconfigure(AgentConfigRequest) returns (AgentConfigResponse);
   rpc GetConfig(GetConfigRequest) returns (AgentConfigResponse);
+
+  // Pre-set command execution (Phase 9).
+  rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse);
+  rpc RunCommand(RunCommandRequest) returns (CommandResponse);
 }
 
 message DiagnosticRequest {
@@ -55,4 +64,44 @@ message AgentConfigResponse {
   bool success = 1;
   string error = 2;             // when success=false
   string applied = 3;           // human-readable summary of the applied config
+}
+
+// Request to run one of the agent's pre-set, whitelisted commands. The command
+// is selected by command_id from the catalog exposed by ListCommands; `params`
+// holds only command-specific, schema-fixed keys — never a shell command line.
+message RunCommandRequest {
+  string agent_id = 1;
+  string command_id = 2;                 // catalog id, e.g. "hdd_check"
+  map<string, string> params = 3;        // command-specific parameters
+}
+
+// Structured result of a pre-set command run. `fields` is machine-readable
+// key/value output for the dashboard to render; `issues` lists any problems
+// found (empty = healthy); `detail` is the full human-readable output.
+message CommandResponse {
+  bool success = 1;
+  string command_id = 2;
+  string error = 3;                      // when success=false
+  int64 timestamp_unix_ms = 4;
+  string summary = 5;                    // one-line human-readable result
+  map<string, string> fields = 6;        // structured results
+  repeated string issues = 7;            // problems found (empty = OK)
+  string detail = 8;                     // full human-readable output
+}
+
+message ListCommandsRequest {
+  string agent_id = 1;
+}
+
+// One entry of the agent's command catalog.
+message CommandInfo {
+  string command_id = 1;
+  string description = 2;
+  repeated string param_names = 3;       // optional parameter keys
+}
+
+message ListCommandsResponse {
+  bool success = 1;
+  string error = 2;                      // when success=false
+  repeated CommandInfo commands = 3;
 }

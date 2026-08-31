@@ -37,6 +37,30 @@ export interface DiagnosticResult {
   error?: string
 }
 
+// Pre-set, whitelisted commands an agent exposes (never arbitrary shell input).
+export interface AgentCommand {
+  command_id: string
+  description: string
+  param_names: string[]
+}
+
+export interface AgentCommandsResponse {
+  success: boolean
+  error?: string
+  commands: AgentCommand[]
+}
+
+export interface CommandResult {
+  success: boolean
+  command_id: string
+  error?: string
+  timestamp_unix_ms: number
+  summary?: string
+  fields?: Record<string, string>
+  issues?: string[]
+  detail?: string
+}
+
 export interface AgentConfigResponse {
   success: boolean
   applied: string

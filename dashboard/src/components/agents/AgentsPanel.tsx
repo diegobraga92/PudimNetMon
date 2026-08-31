@@ -13,7 +13,13 @@ import { AgentCard } from './AgentCard'
 
 type StatusFilter = 'all' | 'alive' | 'offline'
 
-export function AgentsPanel({ onRunDiagnostic }: { onRunDiagnostic?: (agent: AgentInfo) => void }) {
+export function AgentsPanel({
+  onRunDiagnostic,
+  onRunCommand,
+}: {
+  onRunDiagnostic?: (agent: AgentInfo) => void
+  onRunCommand?: (agent: AgentInfo) => void
+}) {
   const { data, isLoading } = useAgents()
   const metrics = useMetrics({ agentId: 'all', checkType: 'all', windowSeconds: 300 })
   const { setView } = useDashboard()
@@ -119,6 +125,7 @@ export function AgentsPanel({ onRunDiagnostic }: { onRunDiagnostic?: (agent: Age
               agent={agent}
               sparkline={sparklines.get(agent.agent_id)}
               onRunDiagnostic={onRunDiagnostic}
+              onRunCommand={onRunCommand}
             />
           ))}
         </div>

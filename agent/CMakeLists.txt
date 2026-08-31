@@ -130,6 +130,7 @@ add_executable(pudim-agent
   src/metrics/ntp_probe.cpp
   src/metrics/failover_client.cpp
   src/diagnostic_service.cpp
+  src/commands.cpp
   src/dns_resolver.cpp
   src/tls_context.cpp
   src/probe_runner.cpp
@@ -213,6 +214,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(test-config PRIVATE -Wall -Wextra)
 endif()
 add_test(NAME config-tests COMMAND test-config)
+
+# Pre-set command catalog unit tests
+add_executable(test-commands
+  tests/test_commands.cpp
+  src/commands.cpp
+)
+target_link_libraries(test-commands PRIVATE pudim_proto Threads::Threads)
+target_include_directories(test-commands PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(test-commands PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME command-tests COMMAND test-commands)
 
 # Install
 install(TARGETS pudim-agent DESTINATION /usr/local/bin)

@@ -1,4 +1,4 @@
-import { Beaker, Crosshair } from 'lucide-react'
+import { Beaker, Crosshair, TerminalSquare } from 'lucide-react'
 import type { AgentInfo } from '../../types'
 import { useDashboard } from '../../context/DashboardContext'
 import { formatRelativeTime } from '../../lib/formatters'
@@ -13,10 +13,11 @@ interface AgentCardProps {
   agent: AgentInfo
   sparkline?: { time_ms: number; value: number }[]
   onRunDiagnostic?: (agent: AgentInfo) => void
+  onRunCommand?: (agent: AgentInfo) => void
   diagnosticRunning?: boolean
 }
 
-export function AgentCard({ agent, sparkline, onRunDiagnostic, diagnosticRunning }: AgentCardProps) {
+export function AgentCard({ agent, sparkline, onRunDiagnostic, onRunCommand, diagnosticRunning }: AgentCardProps) {
   const { setSelectedAgent } = useDashboard()
 
   return (
@@ -74,6 +75,12 @@ export function AgentCard({ agent, sparkline, onRunDiagnostic, diagnosticRunning
           >
             <Beaker className="size-3.5" aria-hidden="true" />
             Diagnose
+          </Button>
+        )}
+        {agent.diagnostic_endpoint && onRunCommand && (
+          <Button variant="outline" size="sm" onClick={() => onRunCommand(agent)}>
+            <TerminalSquare className="size-3.5" aria-hidden="true" />
+            Commands
           </Button>
         )}
       </div>

@@ -4,6 +4,8 @@
 #include <string>
 
 #include "diagnostic_service.h"
+#include "commands.h"
+#include "logger.h"
 #include "platform/platform.h"
 
 // POSIX popen is _popen on Windows.
@@ -33,7 +35,7 @@ std::string ReadAll(FILE *fp) {
 }
 
 // Runs a shell command and returns its combined stdout+stderr.
-std::string RunCommand(const std::string &cmd) {
+std::string RunShellCmd(const std::string &cmd) {
     FILE *fp = popen((cmd + " 2>&1").c_str(), "r");
     if (!fp) return "popen failed\n";
     std::string out = ReadAll(fp);
@@ -96,7 +98,7 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
         std::string cmd = "traceroute -n -m 15 -w 1 " + target;
 #endif
         result += "=== traceroute " + target + " ===\n";
-        result += RunCommand(cmd);
+        result += RunShellCmd(cmd);
         result += "\n";
     }
 
@@ -112,15 +114,15 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
                           " tcpdump -i any -nn -c 500 " + filter + "-w " + cap_file;
         result += "=== pcap capture (" + std::to_string(request->pcap_duration_s()) +
                   "s, filter='" + request->pcap_filter() + "') ===\n";
-        result += RunCommand(cmd);
+        result += RunShellCmd(cmd);
         result += "\n";
 
         // Summarize the captured packets.
         result += "=== pcap summary (first 15 packets) ===\n";
-        result += RunCommand("tcpdump -r " + cap_file + " -nn -c 15 2>&1");
+        result += RunShellCmd("tcpdump -r " + cap_file + " -nn -c 15 2>&1");
         result += "\n";
         result += "total packets: " +
-                  RunCommand("tcpdump -r " + cap_file + " -nn 2>/dev/null | wc -l");
+                  RunShellCmd("tcpdump -r " + cap_file + " -nn 2>/dev/null | wc -l");
     }
 #else
     if (request->pcap_duration_s() > 0) {
@@ -199,6 +201,39 @@ grpc::Status DiagnosticServiceImpl::GetConfig(
     }
     response->set_success(true);
     response->set_applied(SummaryOf(m_store->Get()));
+    return grpc::Status::OK;
+}
+
+grpc::Status DiagnosticServiceImpl::ListCommands(
+    grpc::ServerContext *ctx,
+    const pudimnetmon::ListCommandsRequest *request,
+    pudimnetmon::ListCommandsResponse *response) {
+    (void)ctx;
+    (void)request;
+    if (!response) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "response must not be null");
+    }
+    pudimagent::ListCommands(response);
+    return grpc::Status::OK;
+}
+
+grpc::Status DiagnosticServiceImpl::RunCommand(
+    grpc::ServerContext *ctx,
+    const pudimnetmon::RunCommandRequest *request,
+    pudimnetmon::CommandResponse *response) {
+    (void)ctx;
+    if (!request || !response) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "request and response must not be null");
+    }
+    LOG_INFO("Pre-set command request: " + request->command_id() +
+             " (agent_id=" + request->agent_id() + ")");
+    CommandParams params;
+    for (const auto &kv : request->params()) {
+        params[kv.first] = kv.second;
+    }
+    pudimagent::RunCommand(request->command_id(), params, response);
     return grpc::Status::OK;
 }
 
