@@ -10,10 +10,10 @@ jobs:
   cpp-agent:
     name: C++ Agent (build)
     # Check latest: https://github.com/actions/runner-images/releases
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       # Check latest: https://github.com/actions/checkout/releases
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -36,11 +36,9 @@ jobs:
 
   cpp-collector:
     name: C++ Collector (build)
-    # Check latest: https://github.com/actions/runner-images/releases
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
-      # Check latest: https://github.com/actions/checkout/releases
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -63,7 +61,6 @@ jobs:
 
   cpp-agent-windows:
     name: C++ Agent (Windows build)
-    # Check latest: https://github.com/actions/runner-images/releases
     runs-on: windows-latest
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
@@ -71,10 +68,8 @@ jobs:
       # vcpkg's native GitHub Actions binary cache (restore/upload via GHA).
       VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
     steps:
-      # Check latest: https://github.com/actions/checkout/releases
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      # Check latest: https://github.com/microsoft/vcpkg
       - name: Checkout vcpkg (pinned baseline)
         shell: pwsh
         run: |
@@ -92,7 +87,7 @@ jobs:
 
       # Check latest: https://github.com/actions/cache/releases
       - name: Cache vcpkg artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ${{ env.VCPKG_ROOT }}/downloads
@@ -125,21 +120,19 @@ jobs:
 
   dashboard:
     name: Dashboard (lint + build)
-    # Check latest: https://github.com/actions/runner-images/releases
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: dashboard
     steps:
-      # Check latest: https://github.com/actions/checkout/releases
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Check latest: https://github.com/actions/setup-node/releases
       # Check latest: https://nodejs.org/en/about/previous-releases
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
