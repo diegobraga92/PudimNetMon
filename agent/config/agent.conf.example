@@ -1,0 +1,70 @@
+# PudimNetMon agent configuration
+#
+# Layered configuration: built-in defaults < this file < CLI flags.
+# CLI flags always win over values in this file.
+#
+# Format: one `key=value` per line. '#' or ';' starts a comment; blank lines
+# are ignored. Keys are the long names of the agent's CLI flags, so every
+# --flag has an exact key=value equivalent and comma-separated lists match the
+# CLI syntax. Copy this to /etc/pudim/agent.conf (Linux) or
+# <state-dir>\agent.conf (Windows), or pass --config-file=<path>.
+
+# Collector(s) ---------------------------------------------------------------
+# Single endpoint or comma-separated failover list (same as --collector-endpoints).
+collector-endpoints=collector.lan:50051
+
+# Unique node identifier (systemd usually passes hostname via --node-id=%H).
+node-id=agent-01
+
+# Heartbeat + probe cadence in milliseconds (default: 5000).
+interval=5000
+
+# Optional trace ID stamped on every log line (default: empty).
+#trace-id=
+
+# Log verbosity: debug|info|warn|error (default: info).
+log-level=info
+
+# Probe targets (comma-separated lists) --------------------------------------
+dns-targets=example.com,google.com
+tcp-targets=example.com:443
+tls-targets=example.com:443
+http-targets=https://example.com
+ping-targets=1.1.1.1
+ping-count=4
+ping-gap-ms=200
+
+# HTTP versions to measure: http1.1,http2,http3
+http-protocols=http1.1,http2
+
+# Expected DNS records: host=TYPE:value,host2=CNAME:x
+#dns-expected=example.com=A:1.2.3.4
+
+# Deep diagnostics (default: all enabled; set to true to disable) -------------
+#no-tls-cert=false
+#no-tcp-retransmit=false
+#no-tcp-handshake=false
+#tcp-handshake-interval=0
+
+# Diagnostic gRPC server (collector-triggered traceroute/pcap) ----------------
+diagnostic-port=50052
+# Advertised endpoint, e.g. agent-01.lan:50052 (empty = not advertised).
+diagnostic-address=agent-01.lan:50052
+
+# Delivery / buffering ---------------------------------------------------------
+# max-buffer-size: in-memory batch cap before spilling to disk (default: 200).
+max-buffer-size=200
+# disk-buffer-path: SQLite file for persistent buffering.
+#disk-buffer-path=/var/lib/pudim/pending.db
+#disk-buffer-max-mb=100
+
+# mTLS to the collector (PEM files) --------------------------------------------
+#tls-ca=/etc/pudim/tls/collector-ca.pem
+#tls-cert=/etc/pudim/tls/agent.pem
+#tls-key=/etc/pudim/tls/agent.key
+
+# NTP server for the offset probe (default: pool.ntp.org).
+ntp-server=pool.ntp.org
+
+# Client-streaming metrics RPC instead of unary (default: false).
+#stream-metrics=false

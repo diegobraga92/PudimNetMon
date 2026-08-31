@@ -157,8 +157,13 @@ consumers can also run outside Compose. Full instructions in
 
 ### Agent on target hosts
 
-The agent is a C++17 daemon configured entirely via CLI flags (no config
-file), installed as a hardened systemd unit:
+The agent is a C++17 daemon with **layered configuration**:
+built-in defaults < config file < CLI flags. Settings live in a flat
+`key=value` config file whose keys are the long CLI flag names (see
+[`agent/config/agent.conf.example`](agent/config/agent.conf.example)), read
+from `/etc/pudim/agent.conf` on Linux (or `<state-dir>\agent.conf` on Windows)
+when present. CLI flags still win, for host-specific values and one-off
+troubleshooting. The shipped systemd unit installs as a hardened service:
 
 ```bash
 # 1. Build (from the repo root; Ubuntu 24.04 deps)
@@ -171,24 +176,25 @@ sudo cmake --install build                      # /usr/local/bin/pudim-agent
 # 2. Install the shipped, pre-hardened systemd unit
 sudo cp agent/systemd/pudim-agent.service /etc/systemd/system/
 
-# 3. Point it at your collector and define probe targets
-sudo systemctl edit --force --full pudim-agent  # edit ExecStart, e.g.:
-#   ExecStart=/usr/local/bin/pudim-agent \
-#       --collector-endpoints=collector.lan:50051,collector2.lan:50052 \
-#       --node-id=web-01 --interval=5000 \
-#       --dns-targets=google.com --tcp-targets=example.com:443 \
-#       --tls-targets=example.com:443 --http-targets=https://example.com \
-#       --ping-targets=1.1.1.1 --diagnostic-address=web-01.lan:50052
+# 3. Point it at your collector and define probe targets in the config file
+sudo mkdir -p /etc/pudim
+sudo cp agent/config/agent.conf.example /etc/pudim/agent.conf
+sudoedit /etc/pudim/agent.conf   # collector-endpoints, node-id, probes, mTLS...
 
 sudo systemctl daemon-reload && sudo systemctl enable --now pudim-agent
 ```
 
-Key flags: `-b/--collector-endpoints` (comma-separated failover list),
-`-n/--node-id`, `-i/--interval`, `-d/-p/-s/-w/-g` (DNS/TCP/TLS/HTTP/ICMP probe
-targets), `-a/--diagnostic-address` (enables dashboard diagnostics), and
-`-C/-E/-K` for [mTLS](#enable-mtls). The unit runs unprivileged with
-`CAP_NET_RAW`/`CAP_NET_ADMIN` for ICMP + pcap probes. Run one per host, all
-pointing at the same collector(s) — verify with `curl <server>:8080/agents`.
+Unknown keys in the config file are rejected at startup (typos fail fast, so a
+misspelled setting can't silently fall back to defaults). Use
+`--config-file=<path>` to load from another location; the agent logs which
+file it loaded (if any) at startup. Key settings: `collector-endpoints`
+(comma-separated failover list), `node-id`, `interval`, `dns-targets` /
+`tcp-targets` / `tls-targets` / `http-targets` / `ping-targets`,
+`diagnostic-address` (enables dashboard diagnostics), and
+`tls-ca` / `tls-cert` / `tls-key` for [mTLS](#enable-mtls). The unit runs
+unprivileged with `CAP_NET_RAW`/`CAP_NET_ADMIN` for ICMP + pcap probes. Run
+one per host, all pointing at the same collector(s) — verify with
+`curl <server>:8080/agents`.
 
 ### Agent on Windows
 

@@ -203,5 +203,16 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(test-probes PRIVATE -Wall -Wextra)
 endif()
 add_test(NAME probe-tests COMMAND test-probes)
+
+# Config-file parser unit tests (layered configuration)
+add_executable(test-config
+  tests/test_config.cpp
+)
+target_include_directories(test-config PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(test-config PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME config-tests COMMAND test-config)
+
 # Install
 install(TARGETS pudim-agent DESTINATION /usr/local/bin)

@@ -27,6 +27,7 @@
 #include "tls_credentials.h"
 #include "probe_runner.h"
 #include "logger.h"
+#include "config_file.h"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -148,13 +149,80 @@ private:
 // Main
 // --------------------------------------------
 int RunAgent(int argc, char **argv) {
-    // Defaults
-    std::string collector_endpoint = "localhost:50051";
-    std::string node_id = "agent-unknown";
-    std::string trace_id = "";
-    int interval_ms = 5000;
-    std::string version = "0.1.0";
-    bool use_stream_metrics = false;
+    // ------------------------------------------------------------------
+    // Layered configuration: built-in defaults < config file < CLI flags.
+    // The config file is flat key=value with '#' comments; keys are the
+    // long CLI option names (see agent/config/agent.conf.example).
+    // ------------------------------------------------------------------
+    std::string config_path;
+    bool config_explicit = false;
+    const std::string kConfigFileFlag = "--config-file=";
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--config-file" && i + 1 < argc) {
+            config_path = argv[++i];
+            config_explicit = true;
+        } else if (arg.rfind(kConfigFileFlag, 0) == 0) {
+            config_path = arg.substr(kConfigFileFlag.size());
+            config_explicit = true;
+        }
+    }
+    if (config_path.empty()) {
+#ifdef _WIN32
+        config_path = pudimagent::platform::DefaultStateDir() + "\\agent.conf";
+#else
+        config_path = "/etc/pudim/agent.conf";
+#endif
+    }
+
+    std::map<std::string, std::string> file_cfg;
+    std::string cfg_error;
+    bool cfg_loaded = false;
+    // An explicitly requested file must exist and parse; the default path is
+    // optional and silently skipped when absent.
+    if (config_explicit || config::Exists(config_path)) {
+        if (!config::LoadConfigFile(config_path, file_cfg, cfg_error)) {
+            std::cerr << "Error loading config file '" << config_path
+                      << "': " << cfg_error << "\n";
+            return 1;
+        }
+        cfg_loaded = true;
+    }
+
+    // Typed accessors with built-in defaults as the bottom layer.
+    auto get_s = [&file_cfg](const char *key, std::string fallback) -> std::string {
+        auto it = file_cfg.find(key);
+        return it != file_cfg.end() ? it->second : std::move(fallback);
+    };
+    auto get_i = [&file_cfg](const char *key, int fallback) -> int {
+        auto it = file_cfg.find(key);
+        if (it == file_cfg.end()) return fallback;
+        try {
+            return std::stoi(it->second);
+        } catch (...) {
+            std::cerr << "Config: invalid integer for '" << key << "': '"
+                      << it->second << "' (using " << fallback << ")\n";
+            return fallback;
+        }
+    };
+    auto get_b = [&file_cfg](const char *key, bool fallback) -> bool {
+        auto it = file_cfg.find(key);
+        if (it == file_cfg.end()) return fallback;
+        const std::string &v = it->second;
+        if (v == "true" || v == "1" || v == "yes" || v == "on") return true;
+        if (v == "false" || v == "0" || v == "no" || v == "off") return false;
+        std::cerr << "Config: invalid boolean for '" << key << "': '" << v
+                  << "' (using " << (fallback ? "true" : "false") << ")\n";
+        return fallback;
+    };
+
+    // Defaults (config file wins over these; CLI flags win over the file)
+    std::string collector_endpoint = get_s("collector-endpoint", "localhost:50051");
+    std::string node_id = get_s("node-id", "agent-unknown");
+    std::string trace_id = get_s("trace-id", "");
+    int interval_ms = get_i("interval", 5000);
+    std::string version = get_s("version", "0.1.0");
+    bool use_stream_metrics = get_b("stream-metrics", false);
 
     // Probe targets (comma-separated lists)
     std::vector<std::string> dns_targets;
@@ -162,32 +230,34 @@ int RunAgent(int argc, char **argv) {
     std::vector<std::string> tls_targets;
     std::vector<std::string> http_targets;
     std::vector<std::string> ping_targets;
-    int ping_count = 4;
-    int ping_gap_ms = 200;  // delay between individual ICMP pings
+    int ping_count = get_i("ping-count", 4);
+    int ping_gap_ms = get_i("ping-gap-ms", 200);  // delay between individual ICMP pings
 
     // Phase 4 deep-diagnostics configuration
-    bool tls_cert_check = true;
-    bool tcp_retransmit_check = true;
-    bool tcp_handshake_capture = true;
-    int tcp_handshake_interval_ms = 0;  // 0 = capture every cycle
+    bool tls_cert_check = !get_b("no-tls-cert", false);
+    bool tcp_retransmit_check = !get_b("no-tcp-retransmit", false);
+    bool tcp_handshake_capture = !get_b("no-tcp-handshake", false);
+    int tcp_handshake_interval_ms = get_i("tcp-handshake-interval", 0);  // 0 = every cycle
     std::vector<std::string> http_protocols;
     std::map<std::string, std::vector<std::string>> dns_expected;
-    std::string diagnostic_port = "50052";
-    std::string diagnostic_address;  // e.g. "agent.example.com:50052"; empty = not advertised
-    std::string collector_endpoints_input;  // comma-separated failover list
-    int max_buffer_size = 200;  // in-memory batch buffer cap (overload handling)
+    std::string diagnostic_port = get_s("diagnostic-port", "50052");
+    std::string diagnostic_address = get_s("diagnostic-address", "");
+    std::string collector_endpoints_input = get_s("collector-endpoints", "");
+    int max_buffer_size = get_i("max-buffer-size", 200);  // in-memory batch buffer cap
     std::string disk_buffer_path =
+        get_s("disk-buffer-path",
 #ifdef _WIN32
-        pudimagent::platform::DefaultStateDir() + "\\pending.db";
+              pudimagent::platform::DefaultStateDir() + "\\pending.db"
 #else
-        "/var/lib/pudim/pending.db";
+              "/var/lib/pudim/pending.db"
 #endif
-    int disk_buffer_max_mb = 100;
-    std::string tls_ca;    // PEM CA used to verify the collector (mTLS)
-    std::string tls_cert;  // PEM client certificate
-    std::string tls_key;   // PEM client private key
-    std::string ntp_server = "pool.ntp.org";  // NTP server for the offset probe
-    std::string log_level_str = "info";  // debug|info|warn|error
+        );
+    int disk_buffer_max_mb = get_i("disk-buffer-max-mb", 100);
+    std::string tls_ca = get_s("tls-ca", "");      // PEM CA used to verify the collector (mTLS)
+    std::string tls_cert = get_s("tls-cert", "");  // PEM client certificate
+    std::string tls_key = get_s("tls-key", "");    // PEM client private key
+    std::string ntp_server = get_s("ntp-server", "pool.ntp.org");
+    std::string log_level_str = get_s("log-level", "info");  // debug|info|warn|error
 
     auto parse_list = [](const std::string &s) {
         std::vector<std::string> out;
@@ -203,6 +273,28 @@ int RunAgent(int argc, char **argv) {
         if (!cur.empty()) out.push_back(cur);
         return out;
     };
+
+    // Apply list-valued options from the config file (CLI flags override below).
+    dns_targets = parse_list(get_s("dns-targets", ""));
+    tcp_targets = parse_list(get_s("tcp-targets", ""));
+    tls_targets = parse_list(get_s("tls-targets", ""));
+    http_targets = parse_list(get_s("http-targets", ""));
+    ping_targets = parse_list(get_s("ping-targets", ""));
+    http_protocols = parse_list(get_s("http-protocols", ""));
+
+    auto apply_dns_expected = [&](const std::string &s) {
+        // Format: host=TYPE:value,host2=TYPE:value
+        for (auto &entry : parse_list(s)) {
+            auto eq = entry.find('=');
+            if (eq == std::string::npos) continue;
+            std::string host = entry.substr(0, eq);
+            std::string rec = entry.substr(eq + 1);
+            if (!host.empty() && !rec.empty()) {
+                dns_expected[host].push_back(rec);
+            }
+        }
+    };
+    apply_dns_expected(get_s("dns-expected", ""));
 
     // Parse CLI flags using getopt
     static struct option long_options[] = {
@@ -236,13 +328,46 @@ int RunAgent(int argc, char **argv) {
         {"tls-cert",            required_argument, nullptr, 'E'},
         {"tls-key",             required_argument, nullptr, 'K'},
         {"ntp-server",          required_argument, nullptr, 'o'},
+        {"config-file",        required_argument, nullptr, 1002},
         {"help",               no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
+    // Reject unknown keys from the config file so a typo fails fast instead of
+    // silently falling back to defaults (tracking/debugging aid).
+    for (const auto &kv : file_cfg) {
+        bool known = false;
+        for (const auto &o : long_options) {
+            if (o.name && kv.first == o.name) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            std::cerr << "Unknown option in config file: '" << kv.first
+                      << "' (see --help for valid options)\n";
+            return 1;
+        }
+    }
+
+    // Map each option's code back to its long name so the CLI values actually
+    // applied can be audited against the config file (see the startup log).
+    std::map<int, const char *> name_by_val;
+    for (const auto &o : long_options) {
+        if (o.name && std::string(o.name) != "config-file") {
+            name_by_val[o.val] = o.name;
+        }
+    }
+    std::map<std::string, std::string> cli_options;
+
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:u:m:o:qrex:y:z:a:b:f:j:l:C:E:K:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:u:mo:qrex:y:z:a:b:f:j:l:C:E:K:h", long_options, &option_index)) != -1) {
+        // Record what the CLI actually provided (presence flags have no value).
+        auto nit = name_by_val.find(opt);
+        if (nit != name_by_val.end()) {
+            cli_options[nit->second] = optarg ? optarg : "";
+        }
         switch (opt) {
             case 'c': collector_endpoint = optarg; break;
             case 'n': node_id = optarg; break;
@@ -263,19 +388,8 @@ int RunAgent(int argc, char **argv) {
             case 1001: tcp_handshake_interval_ms = std::stoi(optarg); break;
             case 1000: log_level_str = optarg; break;
             case 'x': http_protocols = parse_list(optarg); break;
-            case 'y': {
-                // Format: host=TYPE:value,host2=TYPE:value
-                for (auto &entry : parse_list(optarg)) {
-                    auto eq = entry.find('=');
-                    if (eq == std::string::npos) continue;
-                    std::string host = entry.substr(0, eq);
-                    std::string rec = entry.substr(eq + 1);
-                    if (!host.empty() && !rec.empty()) {
-                        dns_expected[host].push_back(rec);
-                    }
-                }
-                break;
-            }
+            case 'y': apply_dns_expected(optarg); break;
+            case 1002: break;  // --config-file was handled by the pre-scan above
             case 'z': diagnostic_port = optarg; break;
             case 'a': diagnostic_address = optarg; break;
             case 'b': collector_endpoints_input = optarg; break;
@@ -288,6 +402,11 @@ int RunAgent(int argc, char **argv) {
             case 'o': ntp_server = optarg; break;
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
+#ifdef _WIN32
+                          << "      --config-file        Key=value config file (default: <state-dir>\\agent.conf)\n"
+#else
+                          << "      --config-file        Key=value config file (default: /etc/pudim/agent.conf)\n"
+#endif
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
                           << "  -n, --node-id             Unique node identifier (default: agent-unknown)\n"
                           << "  -i, --interval            Heartbeat interval in ms (default: 5000)\n"
@@ -351,6 +470,29 @@ int RunAgent(int argc, char **argv) {
     std::signal(SIGINT, handle_signal);
 
     LOG_INFO("Agent starting up");
+    LOG_INFO(cfg_loaded ? ("Loaded config file: " + config_path)
+                        : ("No config file at " + config_path +
+                           "; using built-in defaults and CLI flags"));
+    // Layered-config audit: log every config-file value that survived, and call
+    // out any CLI flag that overrides the file, so the effective configuration
+    // (and where each value came from) is traceable in the logs.
+    for (const auto &kv : file_cfg) {
+        auto cli = cli_options.find(kv.first);
+        if (cli != cli_options.end() && cli->second != kv.second) {
+            LOG_INFO("CLI --" + kv.first +
+                     (cli->second.empty() ? "" : ("=" + cli->second)) +
+                     " overrides config file value '" + kv.second + "'");
+        } else if (cli == cli_options.end()) {
+            LOG_DEBUG("config file: " + kv.first + "=" + kv.second);
+        }
+    }
+    for (const auto &kv : cli_options) {
+        if (!file_cfg.count(kv.first)) {
+            LOG_DEBUG("CLI --" + kv.first +
+                      (kv.second.empty() ? "" : ("=" + kv.second)) +
+                      " (not set in config file)");
+        }
+    }
     LOG_INFO("Collector endpoint: " + collector_endpoint);
     LOG_INFO("Node ID: " + node_id);
     LOG_INFO("Interval: " + std::to_string(interval_ms) + "ms");
