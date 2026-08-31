@@ -124,9 +124,11 @@ target_link_libraries(pudim_proto
 # Agent executable
 add_executable(pudim-agent
   src/main.cpp
+  src/agent_config.cpp
   src/metrics/probes.cpp
   src/metrics/pcap_probe.cpp
   src/metrics/metrics_client.cpp
+  src/metrics/heartbeat_client.cpp
   src/metrics/ntp_probe.cpp
   src/metrics/failover_client.cpp
   src/diagnostic_service.cpp
@@ -214,6 +216,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(test-config PRIVATE -Wall -Wextra)
 endif()
 add_test(NAME config-tests COMMAND test-config)
+
+# Agent-config resolution unit tests (defaults < config file < CLI flags)
+add_executable(test-agent-config
+  tests/test_agent_config.cpp
+  src/agent_config.cpp
+  src/platform/getopt.cpp
+)
+target_include_directories(test-agent-config PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(test-agent-config PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME agent-config-tests COMMAND test-agent-config)
 
 # Pre-set command catalog unit tests
 add_executable(test-commands
