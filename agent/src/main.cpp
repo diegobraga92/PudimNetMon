@@ -37,26 +37,34 @@ using pudimnetmon::MetricsBatch;
 using pudimagent::MetricsClient;
 using pudimagent::ProbeConfig;
 
-// --------------------------------------------
-// Globals (must be before logger macros)
-// --------------------------------------------
 static std::atomic<bool> s_running{true};
 static std::string s_node_id;
 static std::string s_trace_id;
 static std::string s_diagnostic_endpoint;
 
-// --------------------------------------------
-// Logger: simple JSON-structured logging to stdout
-// --------------------------------------------
 namespace logger {
 
 // Guarded because the probe worker / diagnostic server may log concurrently.
 static std::mutex s_out_mu;
 
-// Log verbosity: 0=debug, 1=info, 2=warn, 3=error. Default: info.
-static int s_level = 1;
+// Severity threshold: messages at or above this level are emitted.
+// Keep the enumerators in increasing severity order — enabled() relies on it.
+enum class LogLevel {
+    Debug = 0,
+    Info = 1,
+    Warn = 2,
+    Error = 3,
+};
 
-static void SetLevel(int level) { s_level = level; }
+static LogLevel s_level = LogLevel::Info;
+
+static void SetLevel(LogLevel level) { s_level = level; }
+
+// True if a message of the given severity passes the configured threshold
+// (e.g. Warn emits Warn/Error and hides Debug/Info).
+static inline bool enabled(LogLevel level) {
+    return static_cast<int>(s_level) <= static_cast<int>(level);
+}
 
 static inline std::string escape(const std::string &s) {
     std::string out;
@@ -93,33 +101,33 @@ static inline void write(const std::string &level, const std::string &message,
 
 } // namespace logger
 
-// 0=debug, 1=info, 2=warn, 3=error (parsed from --log-level).
-static int ParseLogLevel(const std::string &s) {
-    if (s == "debug") return 0;
-    if (s == "info") return 1;
-    if (s == "warn") return 2;
-    if (s == "error") return 3;
-    return -1;
+// Map a --log-level string to a LogLevel; returns false if unrecognized.
+static bool ParseLogLevel(const std::string &s, logger::LogLevel &out) {
+    if (s == "debug") { out = logger::LogLevel::Debug; return true; }
+    if (s == "info") { out = logger::LogLevel::Info; return true; }
+    if (s == "warn") { out = logger::LogLevel::Warn; return true; }
+    if (s == "error") { out = logger::LogLevel::Error; return true; }
+    return false;
 }
 
 #define LOG_DEBUG(msg)                                                        \
     do {                                                                     \
-        if (logger::s_level <= 0)                                            \
+        if (logger::enabled(logger::LogLevel::Debug))                        \
             logger::write("debug", msg, s_node_id, s_trace_id);              \
     } while (0)
 #define LOG_INFO(msg)                                                         \
     do {                                                                     \
-        if (logger::s_level <= 1)                                            \
+        if (logger::enabled(logger::LogLevel::Info))                         \
             logger::write("info", msg, s_node_id, s_trace_id);               \
     } while (0)
 #define LOG_WARN(msg)                                                         \
     do {                                                                     \
-        if (logger::s_level <= 2)                                            \
+        if (logger::enabled(logger::LogLevel::Warn))                         \
             logger::write("warn", msg, s_node_id, s_trace_id);               \
     } while (0)
 #define LOG_ERROR(msg)                                                        \
     do {                                                                     \
-        if (logger::s_level <= 3)                                            \
+        if (logger::enabled(logger::LogLevel::Error))                        \
             logger::write("error", msg, s_node_id, s_trace_id);              \
     } while (0)
 
@@ -406,9 +414,9 @@ int RunAgent(int argc, char **argv) {
     // Configure the NTP offset probe (used by the SNTP client on Windows).
     pudimagent::SetNtpServer(ntp_server);
 
-    // Apply the log verbosity (invalid values fall back to "info").
-    int parsed_level = ParseLogLevel(log_level_str);
-    if (parsed_level < 0) {
+    // Apply the log verbosity (unrecognized values are rejected).
+    logger::LogLevel parsed_level;
+    if (!ParseLogLevel(log_level_str, parsed_level)) {
         std::cerr << "Invalid --log-level '" << log_level_str
                   << "'; expected debug|info|warn|error\n";
         return 1;
