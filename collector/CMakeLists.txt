@@ -4,6 +4,10 @@ project(pudim-collector VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Export a compilation database so clangd (and other tools) can resolve the
+# protobuf/gRPC headers generated into ${CMAKE_BINARY_DIR} (*.pb.h).
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Find required packages
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)

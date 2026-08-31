@@ -4,6 +4,10 @@ project(pudim-agent VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Export a compilation database so clangd (and other tools) can resolve the
+# protobuf/gRPC headers generated into ${CMAKE_BINARY_DIR} (*.pb.h).
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Find required packages
 # protobuf >= 5.x (as provided by vcpkg on Windows) must be consumed via its
 # CMake CONFIG package so the abseil/utf8_range link dependencies are propagated.
