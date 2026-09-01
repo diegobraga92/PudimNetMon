@@ -88,7 +88,7 @@ int main() {
         return 0;
     }
 
-    // --- 1. Produce a batch ---
+    // 1. Produce a batch.
     KafkaProducer producer;
     std::string err;
     if (!producer.Connect(brokers, topic, err)) {
@@ -138,7 +138,7 @@ int main() {
     std::cout << "PASS: produced batch to " << topic << " (delivery failures="
               << producer.DeliveryFailures() << ")\n";
 
-    // --- 2. Consume it back with a fresh group reading from earliest ---
+    // 2. Consume it back with a fresh group reading from earliest.
     auto consumer = CreateConsumer(brokers, topic, group, /*earliest=*/true, err);
     assert(consumer != nullptr);
 

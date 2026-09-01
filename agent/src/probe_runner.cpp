@@ -227,7 +227,7 @@ void ProbeRunner::RunLoop() {
 void ProbeRunner::RunCycle(const ProbeConfig &cfg,
                            std::vector<pudimnetmon::Metric> &out,
                            bool run_handshake) {
-    // Phase 5: kernel clock offset (cheap syscall; run inline).
+    // Kernel clock offset (cheap syscall; run inline).
     if (cfg.ntp_check) {
         pudimnetmon::Metric ntp;
         ProbeNtpOffset(ntp);

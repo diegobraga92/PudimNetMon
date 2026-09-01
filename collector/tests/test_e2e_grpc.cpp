@@ -115,7 +115,7 @@ int main() {
 
     MetricsClient client(endpoint);
 
-    // --- 1. Unary SendMetrics path ---
+    // 1. Unary SendMetrics path.
     {
         MetricsBatch batch;
         batch.set_agent_id("e2e-unary-agent");
@@ -130,7 +130,7 @@ int main() {
         std::cout << "PASS: unary SendMetrics ACKed\n";
     }
 
-    // --- 2. Client-streaming StreamMetrics path (agent_id via metadata) ---
+    // 2. Client-streaming StreamMetrics path (agent_id via metadata).
     {
         MetricsBatch batch;
         batch.set_agent_id("e2e-stream-agent");
@@ -145,7 +145,7 @@ int main() {
         std::cout << "PASS: streaming StreamMetrics ACKed\n";
     }
 
-    // --- 3. Verify both paths persisted to storage ---
+    // 3. Verify both paths persisted to storage.
     {
         std::string json = storage->QueryMetricsJson("e2e-unary-agent", "", 300);
         assert(json.find("e2e-unary-agent") != std::string::npos);
@@ -164,7 +164,7 @@ int main() {
                   << ", batches=" << metrics_service.BatchesReceived() << "\n";
     }
 
-    // --- 4. Stream without the x-agent-id header is rejected ---
+    // 4. Stream without the x-agent-id header is rejected.
     {
         auto channel = grpc::CreateChannel(endpoint, InsecureChannelCredentials());
         auto stub = MetricsService::NewStub(channel);

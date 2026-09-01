@@ -68,7 +68,7 @@ static void TestTcpLocalhost() {
               << (m.success() ? "(success)" : "(failure: " + m.detail() + ")") << "\n";
 }
 
-// ---- Phase 4 deep-diagnostic probes ----
+// Deep-diagnostic probes.
 
 static void TestDnsRecordLocalhost() {
     Metric m;
@@ -153,7 +153,7 @@ static void TestNtpOffset() {
               << "\n";
 }
 
-// ---- DnsResolver: time-bounded, cached lookups ----
+// DnsResolver: time-bounded, cached lookups.
 
 static void TestDnsResolverLocalhost() {
     struct addrinfo hints {};
@@ -191,7 +191,7 @@ static void TestDnsResolverIpLiteral() {
     std::cout << "PASS: DNS resolver accepts IP literals\n";
 }
 
-// ---- DiskBuffer: counters survive a restart (Phase 7 DR) ----
+// DiskBuffer: counters survive a restart.
 
 static void TestDiskBufferRestartCounters() {
     const std::string path = "test_disk_buffer.db";

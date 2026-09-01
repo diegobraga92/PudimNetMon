@@ -81,7 +81,7 @@ int64_t MonotonicUs() {
         .count();
 }
 
-// ---- Platform socket helpers (POSIX vs Winsock) ----
+// Platform socket helpers (POSIX vs Winsock).
 #ifdef _WIN32
 using Sock = SOCKET;
 static const Sock kInvalidSock = INVALID_SOCKET;
@@ -222,9 +222,6 @@ bool ConnectSocket(const std::string &host, int port, Sock &fd,
     return true;
 }
 
-// ------------------------------------------------------------
-// DNS resolution probe
-// ------------------------------------------------------------
 void RunDnsProbe(const std::string &host, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_DNS_RESOLUTION);
     metric.set_target(host);
@@ -236,10 +233,8 @@ void RunDnsProbe(const std::string &host, pudimnetmon::Metric &metric) {
     hints.ai_socktype = SOCK_STREAM;
 
     auto start = std::chrono::steady_clock::now();
-    // Bypass the cache so this probe measures a real resolution. The result
-    // back-fills the cache under this key (host + service=""), which is a
-    // separate entry from the connection probes' "host:port" key - they still
-    // deduplicate among themselves via ConnectSocket().
+    // Bypass the cache to measure a real resolution; the result still
+    // back-fills the cache for other probes.
     LookupResult lr = GlobalResolver().Lookup(host, "", hints, 3000, true);
     auto end = std::chrono::steady_clock::now();
 
@@ -255,9 +250,6 @@ void RunDnsProbe(const std::string &host, pudimnetmon::Metric &metric) {
     metric.set_success(true);
 }
 
-// ------------------------------------------------------------
-// TCP connect probe
-// ------------------------------------------------------------
 void RunTcpProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TCP_CONNECT);
     metric.set_target(host_port);
@@ -288,9 +280,6 @@ void RunTcpProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_success(true);
 }
 
-// ------------------------------------------------------------
-// TLS handshake probe (via OpenSSL over TCP)
-// ------------------------------------------------------------
 void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TLS_HANDSHAKE);
     metric.set_target(host_port);
@@ -379,17 +368,12 @@ void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_success(true);
 }
 
-// ------------------------------------------------------------
-// HTTP probe via libcurl
-// ------------------------------------------------------------
 size_t NullWriteCallback(char *, size_t size, size_t nmemb, void *) {
     return size * nmemb;
 }
 
-// Per-thread persistent curl handle. Reusing the handle across cycles lets
-// libcurl keep its connection pool and DNS cache alive, so repeated probes to
-// the same target reuse the TCP/TLS connection instead of performing a full
-// handshake every interval.
+// Per-thread persistent curl handle so libcurl keeps its connection pool and
+// DNS cache across cycles.
 thread_local CURL *t_curl = nullptr;
 
 CURL *GetCurlHandle() {
@@ -408,9 +392,6 @@ void RunHttpProbe(const std::string &url, pudimnetmon::Metric &metric) {
     RunHttpProbeVersioned(url, "", CURL_HTTP_VERSION_NONE, metric);
 }
 
-// ------------------------------------------------------------
-// ICMP ping probe (raw sockets on POSIX; ICMP API on Windows)
-// ------------------------------------------------------------
 #ifndef _WIN32
 struct PingResult {
     bool ok = false;
@@ -649,9 +630,6 @@ void RunIcmpProbe(const std::string &host, int count, int gap_ms,
     }
 }
 
-// ------------------------------------------------------------
-// DNS record probe (A/AAAA/CNAME + optional expected-value validation)
-// ------------------------------------------------------------
 void RunDnsRecordProbe(const std::string &host,
                        const std::vector<std::string> &expected,
                        pudimnetmon::Metric &metric) {
@@ -741,9 +719,6 @@ void RunDnsRecordProbe(const std::string &host,
     }
 }
 
-// ------------------------------------------------------------
-// TCP retransmission probe (getsockopt TCP_INFO)
-// ------------------------------------------------------------
 void RunTcpRetransmitProbe(const std::string &host_port,
                            pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT);
@@ -792,9 +767,6 @@ void RunTcpRetransmitProbe(const std::string &host_port,
     SockClose(fd);
 }
 
-// ------------------------------------------------------------
-// TLS certificate validation probe
-// ------------------------------------------------------------
 void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TLS_CERTIFICATE);
     metric.set_target(host_port);
@@ -897,9 +869,6 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
     SockClose(fd);
 }
 
-// ------------------------------------------------------------
-// HTTP probe with an explicit protocol version (HTTP/1.1, HTTP/2, HTTP/3)
-// ------------------------------------------------------------
 void RunHttpProbeVersioned(const std::string &url, const std::string &protocol,
                            long curl_version, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_HTTP_REQUEST);
@@ -952,9 +921,6 @@ void RunHttpProbeVersioned(const std::string &url, const std::string &protocol,
 
 } // anonymous namespace
 
-// ------------------------------------------------------------
-// Public API
-// ------------------------------------------------------------
 void ProbeDns(const std::string &host, pudimnetmon::Metric &metric) {
     RunDnsProbe(host, metric);
 }
@@ -1007,7 +973,7 @@ void ProbeIcmp(const std::string &host, int count, int gap_ms,
 
 void RunAllProbes(const ProbeConfig &config,
                   std::vector<pudimnetmon::Metric> &out_metrics) {
-    // Phase 5: kernel clock offset (always emitted when enabled).
+    // Kernel clock offset (always emitted when enabled).
     if (config.ntp_check) {
         pudimnetmon::Metric ntp;
         ProbeNtpOffset(ntp);
@@ -1017,7 +983,7 @@ void RunAllProbes(const ProbeConfig &config,
         pudimnetmon::Metric m;
         RunDnsProbe(t, m);
         out_metrics.push_back(std::move(m));
-        // Phase 4: DNS record lookup + optional expected-value validation.
+        // DNS record lookup + optional expected-value validation.
         auto it = config.dns_expected.find(t);
         std::vector<std::string> expected =
             (it != config.dns_expected.end()) ? it->second

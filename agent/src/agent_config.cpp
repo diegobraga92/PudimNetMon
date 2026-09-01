@@ -57,11 +57,9 @@ void ApplyDnsExpected(
 } // namespace
 
 ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
-    // ------------------------------------------------------------------
     // Layered configuration: built-in defaults < config file < CLI flags.
     // The config file is flat key=value with '#' comments; keys are the
     // long CLI option names (see agent/config/agent.conf.example).
-    // ------------------------------------------------------------------
     std::string config_path;
     bool config_explicit = false;
     const std::string kConfigFileFlag = "--config-file=";
@@ -142,7 +140,7 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
     int ping_count = get_i("ping-count", 4);
     int ping_gap_ms = get_i("ping-gap-ms", 200);  // delay between individual ICMP pings
 
-    // Phase 4 deep-diagnostics configuration
+    // Deep-diagnostics configuration.
     bool tls_cert_check = !get_b("no-tls-cert", false);
     bool tcp_retransmit_check = !get_b("no-tcp-retransmit", false);
     bool tcp_handshake_capture = !get_b("no-tcp-handshake", false);

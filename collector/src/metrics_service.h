@@ -16,7 +16,7 @@ namespace pudimcollector {
 // Where ingested metrics go after validation (ADR 004).
 enum class StorageMode {
     Direct,  // write to TimescaleDB + in-process alerting (default, Phases 1-2)
-    Kafka,   // produce to Kafka; consumers own storage + alerting (Phase 3)
+    Kafka,   // produce to Kafka; consumers own storage + alerting
 };
 
 // gRPC service implementation for MetricsService. In Direct mode it writes to

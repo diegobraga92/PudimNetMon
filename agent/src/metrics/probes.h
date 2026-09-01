@@ -25,7 +25,7 @@ struct ProbeConfig {
     // values spread the packet rate but stretch the probe's wall-clock time.
     int ping_gap_ms = 200;
 
-    // ---- Phase 4 deep diagnostics (all default-on; disabled via CLI) ----
+    // Deep diagnostics (all default-on; disabled via CLI).
     bool tls_cert_check = true;        // TLS_CERTIFICATE metrics for tls_targets
     bool tcp_retransmit_check = true;  // TCP_RETRANSMIT metrics for tcp_targets
     bool tcp_handshake_capture = true; // TCP_HANDSHAKE metrics (libpcap timing)
@@ -36,7 +36,7 @@ struct ProbeConfig {
     // A configured record that mismatches the resolved value marks the metric
     // success=false (alarm on mismatch).
     std::map<std::string, std::vector<std::string>> dns_expected;
-    // ---- Phase 5: clock hygiene ----
+    // Clock hygiene.
     bool ntp_check = true;             // emit CHECK_TYPE_NTP_OFFSET each cycle
 };
 
@@ -45,9 +45,9 @@ struct ProbeConfig {
 void RunAllProbes(const ProbeConfig &config,
                   std::vector<pudimnetmon::Metric> &out_metrics);
 
-// Runtime probe configuration store (Phase 8). The probe worker copies the
-// current config each cycle; the collector's Reconfigure RPC swaps in a new
-// one so checks can be added/edited without restarting the agent.
+// Runtime probe configuration store. The probe worker copies the current
+// config each cycle; the collector's Reconfigure RPC swaps in a new one so
+// checks can be added/edited without restarting the agent.
 struct ProbeConfigStore {
     mutable std::mutex mu;
     ProbeConfig cfg;

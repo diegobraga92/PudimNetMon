@@ -69,7 +69,7 @@ int getopt_long(int argc, char *const argv[], const char *optstring,
         g_pos = arg + 1;
     }
 
-    // ---- long option: --name[=value] ----
+    // Long option: --name[=value].
     if (*g_pos == '-' && longopts != nullptr) {
         const char *name = g_pos + 1;
         const char *eq = std::strchr(name, '=');
@@ -134,7 +134,7 @@ int getopt_long(int argc, char *const argv[], const char *optstring,
         return lo.val;
     }
 
-    // ---- short option(s) ----
+    // Short option(s).
     const char *p = optstring ? std::strchr(optstring, *g_pos) : nullptr;
     if (!p) {
         if (opterr) {

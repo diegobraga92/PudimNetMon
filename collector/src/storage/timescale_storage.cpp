@@ -71,12 +71,10 @@ const char *CheckTypeToString(pudimnetmon::CheckType type) {
         case pudimnetmon::CHECK_TYPE_HTTP_REQUEST:   return "http_request";
         case pudimnetmon::CHECK_TYPE_ICMP_PING:      return "icmp_ping";
         case pudimnetmon::CHECK_TYPE_JITTER:         return "jitter";
-        // Phase 4
         case pudimnetmon::CHECK_TYPE_TLS_CERTIFICATE: return "tls_certificate";
         case pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT:  return "tcp_retransmit";
         case pudimnetmon::CHECK_TYPE_DNS_RECORD:      return "dns_record";
         case pudimnetmon::CHECK_TYPE_TCP_HANDSHAKE:   return "tcp_handshake";
-        // Phase 5
         case pudimnetmon::CHECK_TYPE_NTP_OFFSET:      return "ntp_offset";
         default:                                     return "unspecified";
     }
@@ -217,8 +215,7 @@ END $$;
         // Non-fatal if already set or not supported
     }
 
-    // Retention: drop chunks older than 30 days (informational, Phase 7 will
-    // make configurable).
+    // Retention: drop chunks older than 30 days.
     if (!m_impl->ExecSimple(
             "SELECT add_retention_policy('network_metrics', INTERVAL '30 days');")) {
         // Non-fatal if policy already exists
@@ -303,7 +300,7 @@ bool TimescaleStorage::InsertMetrics(
 
         // Use agent-reported timestamp (metric itself carries no dedicated
         // time; use batch timestamp + a 1ms increment per metric to preserve
-        // ordering within a batch; Phase 5 will normalise timestamps).
+        // ordering within a batch).
         int64_t ts_ms = batch_timestamp_unix_ms + static_cast<int64_t>(total_inserted + batch_rows);
 
         auto tmp = m;

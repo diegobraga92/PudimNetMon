@@ -171,7 +171,7 @@ void TestActiveAlertsJson() {
     std::cout << "PASS: ActiveAlertsJson: " << active << "\n";
 }
 
-// Phase 8: acknowledging a firing alert is reflected in ActiveAlertsJson.
+// Acknowledging a firing alert is reflected in ActiveAlertsJson.
 void TestAck() {
     AlertManager mgr;
     std::string err;

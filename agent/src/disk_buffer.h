@@ -7,7 +7,7 @@
 
 namespace pudimagent {
 
-// Persistent, bounded on-disk buffer for metric batches (Phase 7 DR). Batches
+// Persistent, bounded on-disk buffer for metric batches. Batches
 // are serialized protobuf blobs stored in a local SQLite database so metrics
 // survive extended collector downtime and agent restarts. Built without
 // libsqlite3, the buffer is disabled and reports Available()==false.

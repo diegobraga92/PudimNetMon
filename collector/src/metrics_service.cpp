@@ -87,7 +87,7 @@ Status MetricsServiceImpl::SendMetrics(
 
     m_received_metrics += request->metrics_size();
 
-    // Phase 6: extract the W3C trace context so the whole ingest path
+    // Extract the W3C trace context so the whole ingest path
     // (storage + Kafka) can be correlated with the agent's trace.
     std::string traceparent;
     auto md = ctx->client_metadata();
@@ -96,7 +96,7 @@ Status MetricsServiceImpl::SendMetrics(
         traceparent.assign(tp->second.data(), tp->second.size());
     }
 
-    // Phase 5 clock hygiene (ADR 006): the collector's wall clock is the source
+    // Clock hygiene (ADR 006): the collector's wall clock is the source
     // of truth for storage. Detect large skew between the agent's reported
     // timestamp and the collector's own clock and surface it as a warning.
     auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -126,7 +126,7 @@ Status MetricsServiceImpl::SendMetrics(
         return Status::OK;
     }
 
-    // Phase 6 overload handling: if ingest took too long, signal the agent to
+    // Overload handling: if ingest took too long, signal the agent to
     // back off via gRPC trailing metadata ("x-overloaded").
     if (elapsed_ms > m_backpressure_threshold_ms) {
         m_backpressure_signals_sent++;
@@ -166,7 +166,7 @@ Status MetricsServiceImpl::StreamMetrics(
         agent_id.assign(it->second.data(), it->second.size());
     }
 
-    // Phase 6: W3C trace context for the whole stream.
+    // W3C trace context for the whole stream.
     std::string traceparent;
     auto tpit = md.find("traceparent");
     if (tpit != md.end()) {

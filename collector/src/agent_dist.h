@@ -7,7 +7,7 @@
 namespace pudimcollector {
 
 // A staged agent binary that the collector can serve to the dashboard
-// (self-hosted "Download the agent" flow; Phase 9).
+// (self-hosted "Download the agent" flow).
 struct AgentPlatform {
     std::string id;        // e.g. "linux-amd64"
     std::string os;        // "linux" | "windows" | ...

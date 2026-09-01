@@ -32,9 +32,7 @@ using pudimnetmon::AgentService;
 using pudimnetmon::HeartbeatRequest;
 using pudimnetmon::HeartbeatResponse;
 
-// --------------------------------------------
-// Logger: JSON-structured logging to stdout
-// --------------------------------------------
+// JSON-structured logging to stdout.
 namespace logger {
 
 static inline std::string escape(const std::string &s) {
@@ -71,9 +69,6 @@ static inline void emit(const std::string &level, const std::string &message,
 
 } // namespace logger
 
-// --------------------------------------------
-// Globals
-// --------------------------------------------
 static std::atomic<bool> s_running{true};
 
 static void handle_signal(int sig) {
@@ -83,9 +78,6 @@ static void handle_signal(int sig) {
     s_running = false;
 }
 
-// --------------------------------------------
-// In-memory agent registry
-// --------------------------------------------
 struct AgentEntry {
     std::string agent_id;
     int64_t last_seen_unix_ms;
@@ -196,9 +188,7 @@ static std::shared_ptr<pudimcollector::MetricsServiceImpl> s_metrics_service;
 static std::shared_ptr<pudimcollector::alerting::AlertManager> s_alert_manager;
 static std::shared_ptr<pudimcollector::kafka::KafkaProducer> s_kafka_producer;
 
-// --------------------------------------------
-// gRPC service implementation
-// --------------------------------------------
+// gRPC service implementation.
 class AgentServiceImpl final : public AgentService::Service {
 public:
     Status SendHeartbeat(ServerContext *ctx,
@@ -224,9 +214,7 @@ public:
     }
 };
 
-// --------------------------------------------
-// Prometheus /metrics helper
-// --------------------------------------------
+// Prometheus /metrics helper.
 static std::string format_prometheus_metrics() {
     auto hb_count = s_registry.HeartbeatCount();
     auto active_count = s_registry.ActiveAgentCount();
@@ -322,9 +310,6 @@ static std::string format_prometheus_metrics() {
     return out;
 }
 
-// --------------------------------------------
-// Main
-// --------------------------------------------
 int main(int argc, char **argv) {
     std::string grpc_addr = "0.0.0.0:50051";
     std::string http_addr = "0.0.0.0:8080";
@@ -336,8 +321,8 @@ int main(int argc, char **argv) {
     std::string alert_rules_path;
     std::string kafka_brokers;   // empty → Direct mode (Phases 1-2 behaviour)
     std::string kafka_topic = "network.metrics";
-    int64_t skew_threshold_ms = 5000;  // clock-skew warning threshold (Phase 5)
-    int64_t backpressure_threshold_ms = 1000;  // ingest latency that triggers x-overloaded (Phase 6)
+    int64_t skew_threshold_ms = 5000;  // clock-skew warning threshold
+    int64_t backpressure_threshold_ms = 1000;  // ingest latency that triggers x-overloaded
     std::string tls_ca;    // PEM CA used to verify agent client certs (mTLS)
     std::string tls_cert;  // PEM server certificate
     std::string tls_key;   // PEM server private key
@@ -522,7 +507,7 @@ int main(int argc, char **argv) {
         return new httplib::ThreadPool(4);
     };
 
-    // Self-hosted agent download (Phase 9): staged binaries served to the
+    // Self-hosted agent download: staged binaries served to the
     // dashboard. When the dist dir has no binaries the manifest is empty and
     // the download endpoints return 404.
     pudimcollector::AgentDist agent_dist;
@@ -689,7 +674,7 @@ int main(int argc, char **argv) {
     http_server.Post("/diagnostic", diagnostic_handler);
     http_server.Post("/api/diagnostic", diagnostic_handler);
 
-    // Alert acknowledge (Phase 8 dashboard): POST JSON
+    // Alert acknowledge: POST JSON
     // {"rule_id","agent_id","target"} → marks the active alert acknowledged.
     http_server.Post("/api/alerts/ack",
                      [](const httplib::Request &req, httplib::Response &resp) {
@@ -721,7 +706,7 @@ int main(int argc, char **argv) {
                          "application/json");
     });
 
-    // Agent config endpoint (Phase 8 dashboard): POST JSON AgentConfigRequest →
+    // Agent config endpoint: POST JSON AgentConfigRequest →
     // forwards the Reconfigure RPC to the agent's diagnostic service.
     // {"agent_id","dns_targets":[...],"tcp_targets":[...],"tls_targets":[...],
     //  "http_targets":[...],"ping_targets":[...],"ping_count":N,
@@ -793,7 +778,7 @@ int main(int argc, char **argv) {
         resp.set_content(json, "application/json");
     });
 
-    // Current agent config (Phase 8 dashboard form population): forwards the
+    // Current agent config (dashboard form population): forwards the
     // GetConfig RPC to the agent. Query param: ?agent_id=...
     http_server.Get("/api/agents/config",
                     [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
@@ -834,7 +819,7 @@ int main(int argc, char **argv) {
         resp.set_content(json, "application/json");
     });
 
-    // Pre-set agent commands (Phase 9): ListCommands + RunCommand forwarded to
+    // Pre-set agent commands: ListCommands + RunCommand forwarded to
     // the agent's DiagnosticService. Commands are a FIXED, whitelisted catalog
     // — the agent never executes arbitrary shell/terminal input.
     auto agent_commands_handler = [&tls_ca, &tls_cert, &tls_key](
@@ -978,7 +963,7 @@ int main(int argc, char **argv) {
     };
     http_server.Post("/api/agents/command", run_command_handler);
 
-    // Self-hosted agent download (Phase 9): manifest + binary download.
+    // Self-hosted agent download: manifest + binary download.
     auto agent_versions_handler = [&agent_dist](const httplib::Request &,
                                                 httplib::Response &resp) {
         resp.set_content(agent_dist.ManifestJson(), "application/json");
