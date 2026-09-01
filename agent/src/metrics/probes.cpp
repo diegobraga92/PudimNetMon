@@ -20,6 +20,9 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <iphlpapi.h>
+// ICMP API (IcmpCreateFile/IcmpSendEcho2/IcmpCloseHandle/ICMP_ECHO_REPLY).
+// Must be included after iphlpapi.h (per the SDK docs).
+#include <icmpapi.h>
 #include <mstcpip.h>  // SIO_TCP_INFO / TCP_INFO_v0 (Windows 10+)
 #else
 #include <arpa/inet.h>
@@ -740,13 +743,15 @@ void RunTcpRetransmitProbe(const std::string &host_port,
         return;
     }
 #ifdef _WIN32
-    // Windows 10+: SIO_TCP_INFO returns a TCP_INFO_v0 struct; TotalRetrans is
-    // the cumulative retransmission count for the connection.
+    // Windows 10+: SIO_TCP_INFO returns a TCP_INFO_v0 struct; BytesRetrans is
+    // the total number of bytes retransmitted for the connection. Linux's
+    // tcpi_total_retrans counts segments instead; bytes is the closest
+    // Windows analogue.
     TCP_INFO_v0 info{};
     DWORD bytes = 0;
     if (WSAIoctl(fd, SIO_TCP_INFO, nullptr, 0, &info, sizeof(info), &bytes,
                  nullptr, nullptr) == 0) {
-        metric.set_status_code(static_cast<int64_t>(info.TotalRetrans));
+        metric.set_status_code(static_cast<int64_t>(info.BytesRetrans));
         metric.set_success(true);
     } else {
         metric = FailureMetric(pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT,
