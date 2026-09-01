@@ -1,4 +1,4 @@
-# Builds the Phase 3 Kafka consumers (pudim-consumer-storage,
+# Builds the Kafka consumers (pudim-consumer-storage,
 # pudim-consumer-alert) from a single CMake invocation.
 FROM ubuntu:24.04 AS builder
 

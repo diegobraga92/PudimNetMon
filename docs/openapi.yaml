@@ -10,7 +10,7 @@ info:
     `/api` prefix. The non-prefixed paths are kept for legacy tooling and
     Prometheus scraping.
 
-    Two Phase 8 actions go through the collector to the agent's gRPC
+    Two actions go through the collector to the agent's gRPC
     DiagnosticService: agent reconfiguration (`POST /api/agents/config`) and
     reading the current config (`GET /api/agents/config`). Both require the
     agent to have advertised a diagnostic endpoint in its heartbeat.
@@ -247,7 +247,7 @@ paths:
 
   /api/alerts/ack:
     post:
-      summary: Acknowledge a firing alert (Phase 8)
+      summary: Acknowledge a firing alert
       requestBody:
         required: true
         content:
@@ -279,7 +279,7 @@ paths:
 
   /api/agents/config:
     get:
-      summary: Read an agent's current probe configuration (Phase 8)
+      summary: Read an agent's current probe configuration
       description: Forwarded to the agent's DiagnosticService.GetConfig.
       parameters:
         - name: agent_id
@@ -296,7 +296,7 @@ paths:
         '404':
           description: Agent has no advertised diagnostic endpoint
     post:
-      summary: Reconfigure an agent's probes at runtime (Phase 8)
+      summary: Reconfigure an agent's probes at runtime
       description: |
         Forwarded to the agent's DiagnosticService.Reconfigure. The request is
         the COMPLETE new config: empty arrays clear the corresponding target

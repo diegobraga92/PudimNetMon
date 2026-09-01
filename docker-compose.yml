@@ -103,7 +103,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Phase 7 DR: secondary collector standing in for a second region. In a real
+  # DR standby: a secondary collector standing in for a second region. In a real
   # multi-region deployment each region runs its own collector + Kafka + DB;
   # here both collectors share the local stack so the failover drill is easy to
   # run (see docs/dr-test.md).

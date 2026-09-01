@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# ---------------------------------------------------------------------------
 # PudimNetMon mTLS certificate bootstrap
 #
 # Generates a self-signed CA plus per-service certificates so the agent and
@@ -19,7 +18,6 @@
 #
 # NOTE: certs/*.key are plaintext private keys. In production, provision them
 # via a secret manager / cert-manager instead. See docs/certificate-rotation.md.
-# ---------------------------------------------------------------------------
 set -euo pipefail
 
 OUT="${1:-certs}"

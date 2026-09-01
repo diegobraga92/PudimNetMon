@@ -6,7 +6,7 @@ option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
 
 // Diagnostic service: the collector triggers one-off deep diagnostics on an
 // agent (traceroute, packet capture) and receives a human-readable report.
-// Phase 8 also adds runtime probe reconfiguration (Reconfigure) so the
+// It also supports runtime probe reconfiguration (Reconfigure) so the
 // dashboard can add/edit checks without restarting the agent.
 //
 // Pre-set commands (ListCommands/RunCommand): the dashboard can ask an agent
@@ -18,7 +18,7 @@ service DiagnosticService {
   rpc Reconfigure(AgentConfigRequest) returns (AgentConfigResponse);
   rpc GetConfig(GetConfigRequest) returns (AgentConfigResponse);
 
-  // Pre-set command execution (Phase 9).
+  // Pre-set command execution.
   rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse);
   rpc RunCommand(RunCommandRequest) returns (CommandResponse);
 }
@@ -37,7 +37,7 @@ message DiagnosticResponse {
   string error = 4;              // error message when success=false
 }
 
-// Runtime probe configuration (Phase 8). Reconfigure applies the request as
+// Runtime probe configuration. Reconfigure applies the request as
 // the COMPLETE new config: empty repeated fields clear the corresponding
 // target list, absent bools default to their proto defaults (true).
 message AgentConfigRequest {

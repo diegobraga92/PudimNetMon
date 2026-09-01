@@ -273,7 +273,7 @@ static std::string format_prometheus_metrics() {
     }
 
     if (s_metrics_service) {
-        out += "# HELP pudim_clock_skew_warnings_total Clock-skew warnings (Phase 5)\n";
+        out += "# HELP pudim_clock_skew_warnings_total Clock-skew warnings\n";
         out += "# TYPE pudim_clock_skew_warnings_total counter\n";
         out += "pudim_clock_skew_warnings_total " +
                std::to_string(s_metrics_service->SkewWarnings()) + "\n";

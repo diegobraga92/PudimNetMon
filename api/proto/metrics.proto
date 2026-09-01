@@ -6,11 +6,10 @@ option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
 
 // Metrics service: agent reports network measurement results to collector.
 service MetricsService {
-  // Unary send of a batch of metrics (simpler than streaming for Phase 1;
-  // can switch to client-streaming later for higher throughput).
+  // Unary send of a batch of metrics.
   rpc SendMetrics(MetricsBatch) returns (MetricsResponse);
 
-  // Client-streaming variant for future high-frequency data.
+  // Client-streaming variant for higher throughput.
   rpc StreamMetrics(stream Metric) returns (MetricsResponse);
 }
 
@@ -48,7 +47,7 @@ message Metric {
   // Optional metadata key-value pairs (e.g., {"dns_server": "8.8.8.8"}).
   map<string, string> attributes = 20;
 
-  // Sequence number to detect duplicates (for idempotent writes in Phase 3+).
+  // Sequence number to detect duplicates (for idempotent writes).
   uint64 seq = 21;
 
   // Agent's monotonic timestamp (for jitter/ordering analysis).
@@ -64,12 +63,10 @@ enum CheckType {
   CHECK_TYPE_HTTP_REQUEST = 4;
   CHECK_TYPE_ICMP_PING = 5;
   CHECK_TYPE_JITTER = 6;
-  // Phase 4 deep diagnostics:
   CHECK_TYPE_TLS_CERTIFICATE = 7;   // attributes: tls_cert_expiry_days, tls_cert_subject, tls_cert_issuer, tls_cert_valid
   CHECK_TYPE_TCP_RETRANSMIT = 8;    // status_code = tcpi_total_retrans
   CHECK_TYPE_DNS_RECORD = 9;        // attributes: A, AAAA, CNAME
   CHECK_TYPE_TCP_HANDSHAKE = 10;    // latency_ms = SYN->SYN-ACK; attributes: syn_synack_ms, synack_ack_ms
-  // Phase 5:
   CHECK_TYPE_NTP_OFFSET = 11;       // latency_ms = kernel clock offset (ms), signed
 }
 
