@@ -6,7 +6,13 @@ const STORAGE_KEY = 'pudim-theme'
 
 function getInitialTheme(): Theme {
   if (typeof window === 'undefined') return 'dark'
-  const stored = window.localStorage.getItem(STORAGE_KEY)
+  let stored: string | null = null
+  try {
+    stored = window.localStorage?.getItem(STORAGE_KEY) ?? null
+  } catch {
+    // Storage can be unavailable (blocked cookies / private browsing).
+    stored = null
+  }
   if (stored === 'dark' || stored === 'light') return stored
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
@@ -17,7 +23,11 @@ export function useTheme() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
-    window.localStorage.setItem(STORAGE_KEY, theme)
+    try {
+      window.localStorage?.setItem(STORAGE_KEY, theme)
+    } catch {
+      // Storage unavailable — the theme still applies for this session.
+    }
   }, [theme])
 
   const toggleTheme = useCallback(() => {

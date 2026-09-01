@@ -17,7 +17,13 @@ const queryClient = new QueryClient({
 })
 
 // Apply the saved theme before first paint to avoid a flash of the wrong theme.
-const storedTheme = window.localStorage.getItem('pudim-theme')
+let storedTheme: string | null = null
+try {
+  storedTheme = window.localStorage?.getItem('pudim-theme') ?? null
+} catch {
+  // Storage can be unavailable (blocked cookies / private browsing).
+  storedTheme = null
+}
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
 document.documentElement.classList.toggle('dark', storedTheme === 'dark' || (storedTheme == null && prefersDark))
 

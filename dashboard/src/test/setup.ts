@@ -29,4 +29,29 @@ if (typeof window !== 'undefined') {
       width: 800, height: 320, toJSON: () => ({}),
     }) as DOMRect
   }
+
+  // localStorage/sessionStorage are not reliably present on the jsdom window
+  // across every Node version (they can be undefined on newer Node), so install
+  // deterministic in-memory polyfills instead of depending on jsdom internals.
+  const createStorage = (): Storage => {
+    const store = new Map<string, string>()
+    return {
+      get length() { return store.size },
+      clear: () => store.clear(),
+      getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+      key: (index: number) => [...store.keys()][index] ?? null,
+      removeItem: (key: string) => { store.delete(key) },
+      setItem: (key: string, value: string) => { store.set(key, String(value)) },
+    }
+  }
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    writable: true,
+    value: createStorage(),
+  })
+  Object.defineProperty(window, 'sessionStorage', {
+    configurable: true,
+    writable: true,
+    value: createStorage(),
+  })
 }
