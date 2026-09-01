@@ -41,10 +41,10 @@ using pudimagent::ProbeConfig;
 static std::atomic<bool> s_running{true};
 
 #ifndef _WIN32
-// Async-signal-safe raw write (no mutex, no iostream) so the handler never
-// deadlocks against a log line being emitted by another thread.
+// Async-signal-safe raw write() so the handler never deadlocks.
 static void SafeWriteStr(const char *s) {
     size_t n = 0;
+    // strlen should be async-signal-safe, but avoid it to be safe
     while (s[n]) ++n;
     while (n > 0) {
         ssize_t w = ::write(STDOUT_FILENO, s, n);
@@ -75,12 +75,8 @@ static void handle_signal(int sig) {
     s_running = false;
 }
 
-// --------------------------------------------
-// Main
-// --------------------------------------------
 int RunAgent(int argc, char **argv) {
-    // Resolve the layered configuration once: built-in defaults < config file
-    // < CLI flags (see agent_config.cpp for the option table and --help).
+    // Initial config
     pudimagent::AgentConfig cfg;
     switch (pudimagent::LoadAgentConfig(argc, argv, cfg)) {
         case pudimagent::ConfigResult::Ok: break;
@@ -88,15 +84,12 @@ int RunAgent(int argc, char **argv) {
         case pudimagent::ConfigResult::Error: return 1;
     }
 
-    // Log context for the shared logger (embedded in every log line).
     logger::SetNodeId(cfg.node_id);
     logger::SetTraceId(cfg.trace_id);
     logger::SetLevel(cfg.log_level);
 
-    // Configure the NTP offset probe (used by the SNTP client on Windows).
     pudimagent::SetNtpServer(cfg.ntp_server);
 
-    // Setup signal handlers
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
 
@@ -104,19 +97,16 @@ int RunAgent(int argc, char **argv) {
     LOG_INFO(cfg.cfg_loaded ? ("Loaded config file: " + cfg.config_path)
                             : ("No config file at " + cfg.config_path +
                                "; using built-in defaults and CLI flags"));
-    // Layered-config audit: log every config-file value that survived, and call
-    // out any CLI flag that overrides the file, so the effective configuration
-    // (and where each value came from) is traceable in the logs.
+
     pudimagent::LogConfigAudit(cfg);
     LOG_INFO("Collector endpoint: " + cfg.collector_endpoint);
     LOG_INFO("Node ID: " + cfg.node_id);
     LOG_INFO("Interval: " + std::to_string(cfg.interval_ms) + "ms");
     LOG_INFO("Version: " + cfg.version);
 
-    // Start the diagnostic gRPC server (collector-triggered traceroute/pcap +
-    // Phase 8 runtime reconfiguration).
-    // Secured with mTLS when --tls-* flags are provided (the agent's own cert
-    // acts as the server cert here; the collector presents its client cert).
+    // TODO: Check mTLS usage
+
+    // Start diag thread
     auto diag_server_creds =
         pudimagent::MakeServerCredentials(cfg.tls_ca, cfg.tls_cert, cfg.tls_key);
     auto probe_store = std::make_shared<pudimagent::ProbeConfigStore>();
@@ -137,8 +127,6 @@ int RunAgent(int argc, char **argv) {
         });
     diagnostic_thread.detach();
 
-    // Phase 5 service discovery: --collector-endpoints is a comma-separated
-    // failover list; --collector-endpoint (single) is kept as a fallback.
     std::vector<std::string> endpoints;
     if (!cfg.collector_endpoints.empty()) {
         endpoints = cfg.collector_endpoints;
@@ -147,7 +135,6 @@ int RunAgent(int argc, char **argv) {
     }
     pudimagent::FailoverClient failover(endpoints);
 
-    // Phase 8 (Security): mutual TLS between agent and collector.
     auto creds = pudimagent::MakeChannelCredentials(cfg.tls_ca, cfg.tls_cert,
                                                     cfg.tls_key);
     LOG_INFO(cfg.tls_ca.empty() ? "gRPC transport: insecure (no --tls-*)"
@@ -164,7 +151,6 @@ int RunAgent(int argc, char **argv) {
     };
     auto clients = reconnect();
 
-    // Phase 5 daemon hardening: notify systemd (Type=notify) and ping watchdog.
 #ifndef _WIN32
     std::signal(SIGHUP, handle_signal);
 #endif
@@ -196,23 +182,17 @@ int RunAgent(int argc, char **argv) {
     probe_cfg.ping_targets = cfg.ping_targets;
     probe_cfg.ping_count = cfg.ping_count;
     probe_cfg.ping_gap_ms = cfg.ping_gap_ms;
-    // Phase 4 deep diagnostics
     probe_cfg.tls_cert_check = cfg.tls_cert_check;
     probe_cfg.tcp_retransmit_check = cfg.tcp_retransmit_check;
     probe_cfg.tcp_handshake_capture = cfg.tcp_handshake_capture;
     probe_cfg.http_protocols = cfg.http_protocols;
     probe_cfg.dns_expected = cfg.dns_expected;
 
-    // Phase 8: seed the runtime config store; the Reconfigure RPC and the
-    // metric loop both share this.
     probe_store->Set(probe_cfg);
 
     LOG_INFO("Running metrics probes every " + std::to_string(cfg.interval_ms) +
              "ms");
 
-    // Phase 7 DR: persistent disk buffer (SQLite). Metrics overflowed from the
-    // in-memory buffer are stored here and drained on reconnect, surviving
-    // agent restarts and extended collector downtime.
     pudimagent::DiskBuffer disk_buffer(
         cfg.disk_buffer_path,
         static_cast<uint64_t>(cfg.disk_buffer_max_mb) * 1024 * 1024);
@@ -232,14 +212,8 @@ int RunAgent(int argc, char **argv) {
     int current_interval_ms = cfg.interval_ms;
     bool backpressure = false;
 
-    // Bounded in-memory retry buffer (Phase 6 overload handling): oldest
-    // dropped first when full; sends drain the buffer FIFO so failed
-    // deliveries are retried rather than silently lost.
     std::deque<MetricsBatch> buffer;
 
-    // Dedicated probe worker thread. Probes run off the main loop so a slow or
-    // hung probe (blackholed target, slow resolver) no longer delays
-    // heartbeats or stalls the sender.
     pudimagent::ProbeRunner probe_runner;
     probe_runner.SetConfigStore(probe_store);
     probe_runner.SetIntervalMs(cfg.interval_ms);
@@ -328,9 +302,6 @@ int RunAgent(int argc, char **argv) {
                 failover.OnSendSuccess();
                 backpressure = clients.second->BackpressureSignalled();
 
-
-                // Phase 7: drain persisted batches from the disk buffer
-                // (bounded work per pass; oldest-first).
                 for (int i = 0; i < 10 && disk_buffer.Size() > 0; i++) {
                     std::vector<std::string> blobs;
                     disk_buffer.Peek(blobs, 1);
@@ -363,9 +334,6 @@ int RunAgent(int argc, char **argv) {
             }
         }
 
-        // Adaptive interval: back off (double, cap 10x) while the collector
-        // signals overload; restore once it clears. The probe worker picks the
-        // change up on its next cycle.
         if (backpressure) {
             current_interval_ms = std::min(current_interval_ms * 2,
                                            cfg.interval_ms * 10);
@@ -378,8 +346,6 @@ int RunAgent(int argc, char **argv) {
         }
         probe_runner.SetIntervalMs(current_interval_ms);
 
-        // Self-observability: report the probe worker's cycle stats once per
-        // minute so agent overhead is observable in the logs.
         if (now - last_self_report >= std::chrono::seconds(60)) {
             last_self_report = now;
             auto st = probe_runner.GetStats();
@@ -391,11 +357,9 @@ int RunAgent(int argc, char **argv) {
                      std::to_string(st.handshake_probe_count));
         }
 
-        // Short responsive sleep; the probe cadence lives in the worker thread.
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    // Stop the probe worker (drains/joins the pool) before reporting shutdown.
     probe_runner.Stop();
 
     watchdog_stop = true;
@@ -407,9 +371,6 @@ int RunAgent(int argc, char **argv) {
     return 0;
 }
 
-// --------------------------------------------
-// Entry point: console application or Windows service
-// --------------------------------------------
 int main(int argc, char **argv) {
 #ifdef _WIN32
     // Service lifecycle helpers never start the agent loop.
