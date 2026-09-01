@@ -221,24 +221,31 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME config-tests COMMAND test-config)
 
-# Agent-config resolution unit tests (defaults < config file < CLI flags)
+# Agent-config resolution unit tests (defaults < config file < CLI flags).
+# platform.cpp is required on Windows because agent_config.cpp resolves the
+# default config-file/disk-buffer paths through platform::DefaultStateDir().
 add_executable(test-agent-config
   tests/test_agent_config.cpp
   src/agent_config.cpp
   src/platform/getopt.cpp
+  src/platform/platform.cpp
 )
+target_link_libraries(test-agent-config PRIVATE ${PUDIM_PLATFORM_LIBS})
 target_include_directories(test-agent-config PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(test-agent-config PRIVATE -Wall -Wextra)
 endif()
 add_test(NAME agent-config-tests COMMAND test-agent-config)
 
-# Pre-set command catalog unit tests
+# Pre-set command catalog unit tests. platform.cpp is required on Windows
+# because commands.cpp resolves the state directory via
+# platform::DefaultStateDir() in the disk-usage command.
 add_executable(test-commands
   tests/test_commands.cpp
   src/commands.cpp
+  src/platform/platform.cpp
 )
-target_link_libraries(test-commands PRIVATE pudim_proto Threads::Threads)
+target_link_libraries(test-commands PRIVATE pudim_proto Threads::Threads ${PUDIM_PLATFORM_LIBS})
 target_include_directories(test-commands PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(test-commands PRIVATE -Wall -Wextra)
