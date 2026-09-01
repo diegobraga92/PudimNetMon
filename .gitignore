@@ -17,6 +17,9 @@ build/
 # vcpkg registry/tooling checked out into the workspace by CI
 .vcpkg/
 
+# vcpkg files-based binary cache (created by CI in the workspace)
+.vcpkg-cache/
+
 # vcpkg manifest-mode install output (created next to the manifest)
 **/vcpkg_installed/
 agent/vcpkg_installed/

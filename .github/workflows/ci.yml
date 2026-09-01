@@ -65,8 +65,16 @@ jobs:
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows-release
-      # vcpkg's native GitHub Actions binary cache (restore/upload via GHA).
-      VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
+      # Keep the vcpkg-tool release used below in sync with the cache key so a
+      # tool upgrade never restores a stale installed tree / binary cache.
+      VCPKG_TOOL_VERSION: "2026-07-27"
+      # vcpkg removed its GitHub Actions binary-cache provider (x-gha); parsing
+      # `x-gha` now only emits a deprecation warning and registers NO provider,
+      # so the previous `clear;x-gha,readwrite` silently disabled binary caching
+      # and forced a from-source rebuild of grpc/protobuf/openssl/curl on every
+      # run. Use a files-based binary cache inside the workspace instead and let
+      # actions/cache persist it between runs.
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite
     steps:
       - uses: actions/checkout@v7
 
@@ -82,21 +90,30 @@ jobs:
         run: |
           curl.exe -L --fail --retry 5 --retry-delay 5 --retry-connrefused `
             -o "$env:VCPKG_ROOT\vcpkg.exe" `
-            "https://github.com/microsoft/vcpkg-tool/releases/download/2026-07-27/vcpkg.exe"
+            "https://github.com/microsoft/vcpkg-tool/releases/download/$env:VCPKG_TOOL_VERSION/vcpkg.exe"
           & "$env:VCPKG_ROOT\vcpkg.exe" version --disable-metrics
 
       # Check latest: https://github.com/actions/cache/releases
+      # Two cache layers make the Configure step fast: the installed tree
+      # (build/agent-win/vcpkg_installed) and the files-based binary cache
+      # (.vcpkg-cache). `downloads` avoids re-downloading source tarballs.
+      # buildtrees/packages are intentionally NOT cached: buildtrees alone can
+      # push the repo past the 10 GB Actions-cache budget (silently evicting
+      # every entry, so every run is a cold build) and stale intermediate build
+      # state can corrupt later builds; `packages` is only a staging dir in
+      # manifest mode. save-always keeps the caches warm even when a later step
+      # (e.g. the build) fails.
       - name: Cache vcpkg artifacts
         uses: actions/cache@v5
         with:
           path: |
             ${{ env.VCPKG_ROOT }}/downloads
-            ${{ env.VCPKG_ROOT }}/buildtrees
-            ${{ env.VCPKG_ROOT }}/packages
+            ${{ github.workspace }}/.vcpkg-cache
             build/agent-win/vcpkg_installed
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('agent/vcpkg.json') }}
+          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('agent/vcpkg.json') }}-${{ env.VCPKG_TOOL_VERSION }}
           restore-keys: |
             vcpkg-${{ runner.os }}-
+          save-always: true
 
       - name: Configure (MSVC)
         shell: pwsh
