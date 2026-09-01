@@ -11,6 +11,9 @@ build-agent-windows/
 installer/payload/
 dist/
 
+# Local CI mirror build dirs (scripts/run-ci-locally.sh)
+build/
+
 # vcpkg registry/tooling checked out into the workspace by CI
 .vcpkg/
 
