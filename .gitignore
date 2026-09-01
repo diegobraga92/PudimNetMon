@@ -7,6 +7,10 @@ build-collector-debug/
 build-agent-debug/
 build-agent-windows/
 
+# Installer staging + output (produced by CI / package steps)
+installer/payload/
+dist/
+
 # vcpkg registry/tooling checked out into the workspace by CI
 .vcpkg/
 

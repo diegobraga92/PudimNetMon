@@ -204,7 +204,20 @@ report into the same collector stack over gRPC. Feature parity is near-total —
 ICMP uses the Windows ICMP API (`iphlpapi`), TCP retransmit uses
 `SIO_TCP_INFO`, NTP offset uses a built-in SNTP client, and traceroute maps to
 `tracert`. Packet capture (libpcap) degrades to an explicit "unsupported"
-metric. Full build/install instructions:
+metric.
+
+**Recommended install:** the CI job "C++ Agent (Windows build)" packages a
+self-contained install wizard (`PudimNetMon-Agent-Setup-<version>.exe`,
+uploaded as the `pudimnetmon-agent-windows-setup` artifact). The wizard asks
+for the node ID, collector endpoint(s) and polling interval, installs the
+binary under `Program Files`, registers and starts the `PudimNetMonAgent`
+auto-start service, and removes it again on uninstall. Silent mode:
+
+```powershell
+PudimNetMon-Agent-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
+Manual builds are still fully supported (this is what CI validates):
 
 ```powershell
 cmake -S agent -B build-agent-windows `
@@ -213,8 +226,8 @@ cmake --build build-agent-windows --config Release -j
 .\scripts\install-agent-windows.ps1 -ServiceArgs "--node-id=win-01", "--interval=10000"
 ```
 
-See [`docs/windows.md`](docs/windows.md) for details, the feature matrix, and
-the CI job that validates the Windows build.
+See [`docs/windows.md`](docs/windows.md) for details, the feature matrix, the
+installer workflow, and the CI job that produces the wizard.
 
 ### Dashboard & consumers outside Compose
 

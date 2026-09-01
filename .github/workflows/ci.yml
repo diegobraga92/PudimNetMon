@@ -118,6 +118,80 @@ jobs:
         working-directory: build/agent-win
         run: ctest -C Release --output-on-failure
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Stage installer payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer/payload | Out-Null
+          Copy-Item build/agent-win/Release/pudim-agent.exe installer/payload/
+          # The MSVC build links the dynamic CRT, so bundle the VC++ runtime for
+          # machines that do not have the redistributable installed.
+          curl.exe -L --fail --retry 5 --retry-delay 5 --retry-connrefused `
+            -o installer/payload/vc_redist.x64.exe `
+            "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          # Keep the installer version in sync with the CMake project version.
+          $match = Select-String -Path agent/CMakeLists.txt `
+            -Pattern 'project\(pudim-agent VERSION ([0-9]+\.[0-9]+\.[0-9]+)'
+          $version = if ($match) { $match.Matches[0].Groups[1].Value } else { '0.1.0' }
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          & $iscc "/DMyAppVersion=$version" installer/installer-agent.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "Built PudimNetMon-Agent-Setup-$version.exe"
+
+      - name: Smoke test installer (silent install -> service -> uninstall)
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist/installer/PudimNetMon-Agent-Setup-*.exe |
+            Select-Object -First 1
+          if (-not $setup) { throw 'Installer was not produced' }
+
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList `
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Install failed (exit $($p.ExitCode))" }
+
+          Start-Sleep -Seconds 3
+          $svc = Get-Service PudimNetMonAgent -ErrorAction SilentlyContinue
+          if (-not $svc) { throw 'PudimNetMonAgent service not registered' }
+          if ($svc.Status -notin 'Running', 'StartPending') {
+            throw "Service not running after install (status: $($svc.Status))"
+          }
+          Write-Host "Service OK ($($svc.Status))"
+
+          $entry = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+            Where-Object { $_.DisplayName -eq 'PudimNetMon Agent' } |
+            Select-Object -First 1
+          if (-not $entry) { throw 'Uninstaller not registered in Add/Remove Programs' }
+          if ($entry.UninstallString -match '^"([^"]+)"') {
+            $uninstExe = $Matches[1]
+          } else {
+            $uninstExe = $entry.UninstallString
+          }
+
+          $p = Start-Process -FilePath $uninstExe -ArgumentList `
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstall failed (exit $($p.ExitCode))" }
+
+          Start-Sleep -Seconds 3
+          if (Get-Service PudimNetMonAgent -ErrorAction SilentlyContinue) {
+            throw 'Service still registered after uninstall'
+          }
+          Write-Host 'Uninstall OK: service removed'
+
+      # Check latest: https://github.com/actions/upload-artifact/releases
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pudimnetmon-agent-windows-setup
+          path: dist/installer/*
+          if-no-files-found: error
+
   dashboard:
     name: Dashboard (lint + build)
     runs-on: ubuntu-26.04
