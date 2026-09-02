@@ -110,10 +110,33 @@ jobs:
             ${{ env.VCPKG_ROOT }}/downloads
             ${{ github.workspace }}/.vcpkg-cache
             build/agent-win/vcpkg_installed
-          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('agent/vcpkg.json') }}-${{ env.VCPKG_TOOL_VERSION }}
+          # "v2" in the key deliberately breaks prefix-matching against stale
+          # pre-v2 entries (restore-keys would otherwise resurrect a cache that
+          # contains downloads but an empty .vcpkg-cache, forcing a full 3h
+          # rebuild every run). Bump the marker whenever the cache layout or
+          # the vcpkg baseline changes.
+          key: vcpkg-v2-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('agent/vcpkg.json') }}-${{ env.VCPKG_TOOL_VERSION }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-
+            vcpkg-v2-${{ runner.os }}-
           save-always: true
+
+      # Makes cache behaviour visible in the log: if actions/cache restored a
+      # stale/empty entry, this shows it before vcpkg runs.
+      - name: Inspect restored vcpkg cache
+        shell: pwsh
+        run: |
+          function Show-CacheDir($name, $dir) {
+            if (Test-Path $dir) {
+              $files = Get-ChildItem $dir -Recurse -File -ErrorAction SilentlyContinue
+              $sizeMB = [math]::Round((($files | Measure-Object Length -Sum).Sum) / 1MB, 1)
+              Write-Host "$name restored: $($files.Count) file(s), $sizeMB MB ($dir)"
+            } else {
+              Write-Host "$name restored: MISSING ($dir)"
+            }
+          }
+          Show-CacheDir 'vcpkg downloads'   "$env:VCPKG_ROOT/downloads"
+          Show-CacheDir 'binary cache'      "${{ github.workspace }}/.vcpkg-cache"
+          Show-CacheDir 'installed tree'    "build/agent-win/vcpkg_installed"
 
       - name: Configure (MSVC)
         shell: pwsh
