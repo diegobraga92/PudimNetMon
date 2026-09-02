@@ -219,6 +219,7 @@ jobs:
                 Get-Content $LogFile -Tail 100 | Write-Host
                 Write-Host '---- end log ----'
               }
+              Write-ServiceDiagnostics -Label "[$Phase] TIMEOUT"
               throw "[$Phase] timed out after ${TimeoutSeconds}s"
             }
             Write-Host "[$Phase] exit code $($p.ExitCode)"
@@ -228,8 +229,47 @@ jobs:
                 Get-Content $LogFile -Tail 100 | Write-Host
                 Write-Host '---- end log ----'
               }
+              Write-ServiceDiagnostics -Label "[$Phase] failed"
               throw "[$Phase] failed with exit code $($p.ExitCode)"
             }
+          }
+
+          # Dumps everything needed to diagnose why PudimNetMonAgent is not
+          # running after an install/upgrade: the exact ImagePath sc stored
+          # (validates the Inno-side quoting), the service state/exit codes, any
+          # live agent processes, and the Windows event log entries the SCM or a
+          # crash would have written in the last 15 minutes.
+          function Write-ServiceDiagnostics {
+            param([string]$Label)
+            Write-Host "---- service diagnostics: $Label ----"
+            Write-Host '---- sc qc PudimNetMonAgent (ImagePath) ----'
+            sc.exe qc PudimNetMonAgent 2>&1 | Out-String | Write-Host
+            Write-Host '---- sc query PudimNetMonAgent (state) ----'
+            sc.exe query PudimNetMonAgent 2>&1 | Out-String | Write-Host
+            Write-Host '---- Get-Service ----'
+            Get-Service PudimNetMonAgent -ErrorAction SilentlyContinue |
+              Select-Object Status, Name, DisplayName, StartType |
+              Format-Table -AutoSize | Out-String | Write-Host
+            Write-Host '---- pudim-agent processes ----'
+            Get-Process pudim-agent -ErrorAction SilentlyContinue |
+              Select-Object Id, StartTime, Path |
+              Format-Table -AutoSize | Out-String | Write-Host
+            Write-Host '---- recent events mentioning the agent (System + Application) ----'
+            try {
+              Get-WinEvent -FilterHashtable @{
+                LogName = 'System', 'Application'
+                StartTime = (Get-Date).AddMinutes(-15)
+              } -MaxEvents 500 -ErrorAction Stop |
+                Where-Object {
+                  $_.Message -match 'PudimNetMonAgent|pudim-agent|PudimNetMon'
+                } |
+                Select-Object -First 20 TimeCreated, LogName, ProviderName, Id,
+                  LevelDisplayName, Message |
+                Format-List | Out-String -Width 300 | Write-Host
+            } catch {
+              Write-Host "  (event log unavailable: $($_.Exception.Message))"
+            }
+            Write-Host '---- end service diagnostics ----'
           }
 
           $setup = Get-ChildItem dist/installer/PudimNetMon-Agent-Setup-*.exe |
@@ -239,6 +279,44 @@ jobs:
           $upgradeLog = Join-Path $env:TEMP 'pudim-setup-upgrade.log'
           $uninstallLog = Join-Path $env:TEMP 'pudim-setup-uninstall.log'
 
+          # ---- 0. Agent startup probe (diagnostics only): launch the freshly
+          # built binary in the console for a few seconds and capture its stdout.
+          # This shows whether the exe loads, initializes and runs on this exact
+          # runner image BEFORE the Service Control Manager is involved, so a
+          # later service-start failure can be attributed to service plumbing
+          # rather than the binary itself. Bound and killed like every other
+          # child below.
+          $payloadAgent = Join-Path $PWD 'installer\payload\pudim-agent.exe'
+          if (Test-Path $payloadAgent) {
+            $probeOut = Join-Path $env:TEMP 'pudim-agent-probe.out'
+            $probeErr = Join-Path $env:TEMP 'pudim-agent-probe.err'
+            Write-Host '[probe] launching pudim-agent in console (15s bound)'
+            $probe = Start-Process -FilePath $payloadAgent `
+              -ArgumentList '--node-id=ci-console-probe' `
+              -RedirectStandardOutput $probeOut -RedirectStandardError $probeErr `
+              -PassThru -WindowStyle Hidden
+            if (-not $probe.WaitForExit(15000)) {
+              Write-Host '[probe] still running after 15s (startup OK); stopping it'
+              Stop-Process -Id $probe.Id -Force -ErrorAction SilentlyContinue
+              Start-Sleep -Milliseconds 500
+            } else {
+              Write-Host "[probe] exited on its own, code $($probe.ExitCode)"
+            }
+            Write-Host '---- probe stdout (agent startup log) ----'
+            Get-Content $probeOut -ErrorAction SilentlyContinue |
+              Select-Object -First 80 | Write-Host
+            Write-Host '---- probe stderr ----'
+            Get-Content $probeErr -ErrorAction SilentlyContinue |
+              Select-Object -First 40 | Write-Host
+            Get-Process pudim-agent -ErrorAction SilentlyContinue |
+              ForEach-Object {
+                Write-Host "  killing leftover probe pudim-agent pid=$($_.Id)"
+                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+              }
+          } else {
+            Write-Host "[probe] payload agent not found at $payloadAgent; skipping"
+          }
+
           # ---- 1. Silent install -----------------------------------------------
           Invoke-SetupProcess -Phase 'install' -FilePath $setup.FullName `
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$installLog" `
@@ -246,8 +324,24 @@ jobs:
 
           Start-Sleep -Seconds 3
           $svc = Get-Service PudimNetMonAgent -ErrorAction SilentlyContinue
-          if (-not $svc) { throw 'PudimNetMonAgent service not registered' }
+          if (-not $svc) {
+            Write-ServiceDiagnostics -Label 'install: service missing'
+            throw 'PudimNetMonAgent service not registered'
+          }
           if ($svc.Status -notin 'Running', 'StartPending') {
+            Write-ServiceDiagnostics -Label 'install: service not running'
+            Write-Host '---- manual sc start attempt (captures the real error) ----'
+            sc.exe start PudimNetMonAgent 2>&1 | Out-String | Write-Host
+            Start-Sleep -Seconds 2
+            sc.exe query PudimNetMonAgent 2>&1 | Out-String | Write-Host
+            Get-Process pudim-agent -ErrorAction SilentlyContinue |
+              Select-Object Id, StartTime, Path |
+              Format-Table -AutoSize | Out-String | Write-Host
+            if (Test-Path $installLog) {
+              Write-Host "---- $installLog (tail 100) ----"
+              Get-Content $installLog -Tail 100 | Write-Host
+              Write-Host '---- end log ----'
+            }
             throw "Service not running after install (status: $($svc.Status))"
           }
           Write-Host "[install] Service OK ($($svc.Status))"
@@ -284,8 +378,21 @@ jobs:
 
           Start-Sleep -Seconds 3
           $svc = Get-Service PudimNetMonAgent -ErrorAction SilentlyContinue
-          if (-not $svc) { throw 'PudimNetMonAgent service missing after upgrade' }
+          if (-not $svc) {
+            Write-ServiceDiagnostics -Label 'upgrade: service missing'
+            throw 'PudimNetMonAgent service missing after upgrade'
+          }
           if ($svc.Status -notin 'Running', 'StartPending') {
+            Write-ServiceDiagnostics -Label 'upgrade: service not running'
+            Write-Host '---- manual sc start attempt (captures the real error) ----'
+            sc.exe start PudimNetMonAgent 2>&1 | Out-String | Write-Host
+            Start-Sleep -Seconds 2
+            sc.exe query PudimNetMonAgent 2>&1 | Out-String | Write-Host
+            if (Test-Path $upgradeLog) {
+              Write-Host "---- $upgradeLog (tail 100) ----"
+              Get-Content $upgradeLog -Tail 100 | Write-Host
+              Write-Host '---- end log ----'
+            }
             throw "Service not running after upgrade (status: $($svc.Status))"
           }
           Write-Host '[upgrade] OK: service running after reinstall'
@@ -299,6 +406,7 @@ jobs:
           Start-Sleep -Seconds 5
           $svc = Get-Service PudimNetMonAgent
           if ($svc.Status -ne 'Running') {
+            Write-ServiceDiagnostics -Label 'agent.conf restart'
             throw "Service not running after agent.conf change + restart (status: $($svc.Status))"
           }
           Write-Host 'agent.conf change OK: service restarted and running'
@@ -320,6 +428,7 @@ jobs:
 
           Start-Sleep -Seconds 3
           if (Get-Service PudimNetMonAgent -ErrorAction SilentlyContinue) {
+            Write-ServiceDiagnostics -Label 'uninstall: service still registered'
             throw 'Service still registered after uninstall'
           }
           Write-Host '[uninstall] OK: service removed'
