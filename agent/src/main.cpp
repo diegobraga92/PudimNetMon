@@ -372,29 +372,9 @@ int RunAgent(int argc, char **argv) {
 
 int main(int argc, char **argv) {
 #ifdef _WIN32
-    // Service lifecycle helpers never start the agent loop. Install/uninstall
-    // register the service directly; the argv forwarding + quoting lives in
-    // win_service.cpp so the service ImagePath stays shell-safe on upgrades.
-    if (pudimagent::platform::WantsInstallService(argc, argv)) {
-        std::string err;
-        if (!pudimagent::platform::InstallAgentService(argc, argv, err)) {
-            std::cerr << "Failed to install PudimNetMonAgent service";
-            if (!err.empty()) std::cerr << ": " << err;
-            std::cerr << "\n";
-            return 1;
-        }
-        return 0;
-    }
-    if (pudimagent::platform::WantsUninstallService(argc, argv)) {
-        std::string err;
-        if (!pudimagent::platform::UninstallAgentService(err)) {
-            std::cerr << "Failed to uninstall PudimNetMonAgent service";
-            if (!err.empty()) std::cerr << ": " << err;
-            std::cerr << "\n";
-            return 1;
-        }
-        return 0;
-    }
+    // Service registration/removal is the Inno Setup installer's job (it talks
+    // to the Service Control Manager through sc.exe); the agent itself only
+    // ever runs the monitoring loop, either as a service or in the console.
 
     std::string net_err;
     if (!pudimagent::platform::InitNetwork(net_err)) {

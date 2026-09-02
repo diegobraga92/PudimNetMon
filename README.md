@@ -222,7 +222,9 @@ PudimNetMon-Agent-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 Manual builds are still fully supported (this is what CI validates). To run
 the freshly built binary as the auto-start service instead of in the
-foreground, register it directly (elevated PowerShell): only the node ID is
+foreground, register it with the Service Control Manager from an elevated
+PowerShell (the agent binary itself has no `--install-service` flag — that is
+what the install wizard does internally with `sc.exe`). Only the node ID is
 baked into the service command line; the mutable settings live in
 `%ProgramData%\PudimNetMon\agent.conf`.
 
@@ -235,7 +237,10 @@ $dir = Join-Path $env:ProgramData 'PudimNetMon'
 New-Item -ItemType Directory -Force $dir | Out-Null
 'collector-endpoints=collector.lan:50051', 'interval=10000' |
   Set-Content (Join-Path $dir 'agent.conf')
-& $exe --install-service '--node-id=win-01'   # registers PudimNetMonAgent
+# New-Service stores the ImagePath verbatim (no shell re-parsing)
+$binPath = '"' + $exe + '" --node-id=win-01'
+New-Service -Name PudimNetMonAgent -DisplayName 'PudimNetMon Agent' `
+  -BinaryPathName $binPath -StartupType Automatic
 Start-Service PudimNetMonAgent
 ```
 

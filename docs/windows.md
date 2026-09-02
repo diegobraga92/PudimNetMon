@@ -33,15 +33,18 @@ The installer then:
 1. installs `pudim-agent.exe` under `%ProgramFiles%\PudimNetMon Agent`,
 2. writes `%ProgramData%\PudimNetMon\agent.conf` with the wizard's interval /
    collector endpoint(s) (before the service is registered or started),
-3. registers the `PudimNetMonAgent` auto-start service via the agent's own
-   `--install-service` support, baking in only `--node-id`,
+3. registers the `PudimNetMonAgent` auto-start service directly with the
+   Service Control Manager — `installer\installer-agent.iss` drives `sc.exe`,
+   which ships with Windows, so the agent binary itself has no
+   `--install-service` flag. Only `--node-id` is baked into the service command
+   line,
 4. starts the service,
 5. bundles the Microsoft VC++ redistributable for machines that lack it.
 
 Uninstalling via **Add/Remove Programs** stops and removes the service
-(`--uninstall-service`) before deleting the files. State files under
-`%ProgramData%\PudimNetMon` (`agent.conf`, `pending.db`) are kept so buffered
-metrics survive an uninstall.
+(`sc.exe stop` / `sc.exe delete`, run by the uninstaller before files are
+deleted). State files under `%ProgramData%\PudimNetMon` (`agent.conf`,
+`pending.db`) are kept so buffered metrics survive an uninstall.
 
 ### Silent / unattended install
 
@@ -84,18 +87,25 @@ $exe = "$PWD\build-agent-windows\Release\pudim-agent.exe"
 # Console mode (foreground; stops when the session closes)
 & $exe --node-id=win-01 --interval=10000
 
-# Run as the auto-start "PudimNetMonAgent" service instead.
-# The binary does the registration; only the node ID is baked into the service
-# command line — write the mutable settings to agent.conf first:
+# Run as the auto-start "PudimNetMonAgent" service instead. The agent binary
+# does not self-register — register it with the Service Control Manager from an
+# elevated PowerShell (same thing the installer's sc.exe steps do). Only the
+# node ID is baked into the service command line; write the mutable settings to
+# agent.conf first:
 $confDir = Join-Path $env:ProgramData 'PudimNetMon'
 New-Item -ItemType Directory -Force $confDir | Out-Null
 'collector-endpoints=collector.lan:50051', 'interval=10000' |
   Set-Content (Join-Path $confDir 'agent.conf')
-& $exe --install-service '--node-id=win-01'
+# New-Service stores the ImagePath verbatim (no intermediate shell parsing),
+# so this quoting is exactly what the SCM must keep:
+$binPath = '"' + $exe + '" --node-id=win-01'
+New-Service -Name PudimNetMonAgent -DisplayName 'PudimNetMon Agent' `
+  -BinaryPathName $binPath -StartupType Automatic
 Start-Service PudimNetMonAgent
 
 # Uninstall the service (state files in the agent.conf folder are kept)
-& $exe --uninstall-service
+sc.exe stop PudimNetMonAgent
+sc.exe delete PudimNetMonAgent
 ```
 
 The installer script lives at `installer\installer-agent.iss` and is compiled

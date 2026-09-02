@@ -1,17 +1,19 @@
-// Windows Service integration for pudim-agent.
+// Windows Service runtime integration for pudim-agent.
 //
-// The agent binary is both a console application and a Windows service. When
-// the Service Control Manager launches it, StartServiceCtrlDispatcher() routes
+// The agent binary is a console application and a Windows service: when the
+// Service Control Manager launches it, StartServiceCtrlDispatcher() routes
 // execution to ServiceMain, which runs the normal agent main in a worker
 // thread and pumps SERVICE_CONTROL_STOP/SHUTDOWN into the agent's stop flag.
+//
+// Registering/removing the "PudimNetMonAgent" service is owned by the Inno
+// Setup installer (installer\installer-agent.iss drives sc.exe directly), so
+// the binary itself exposes no --install-service/--uninstall-service verbs.
 //
 // On non-Windows builds this file compiles to an empty translation unit with
 // safe no-op stubs, so it can be part of the build unconditionally.
 
 #include "win_service.h"
 
-#include <cstring>
-#include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -32,7 +34,6 @@ namespace pudimagent::platform {
 namespace {
 
 const wchar_t kServiceName[] = L"PudimNetMonAgent";
-const wchar_t kServiceDisplayName[] = L"PudimNetMon Agent";
 
 SERVICE_STATUS_HANDLE g_status_handle = nullptr;
 HANDLE g_stop_event = nullptr;
@@ -109,176 +110,7 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR *argv) {
     g_stop_event = nullptr;
 }
 
-// Formats a specific Win32 error code. LastErrorString() only reads the
-// thread's last error, so restore the code first.
-std::string ErrorText(DWORD err) {
-    if (err == ERROR_SUCCESS) return std::string();
-    ::SetLastError(err);
-    return LastErrorString();
-}
-
-// Encodes a single command-line token so that a later Windows argv parse (the
-// CRT startup the SCM performs when starting the service) yields the same
-// token. Per the CommandLineToArgvW rules, backslashes preceding a quote are
-// doubled (2n+1 -> n literal + escaped quote) and trailing backslashes are
-// doubled so the closing quote is not consumed as an escape.
-std::wstring QuoteArg(const std::wstring &s) {
-    if (s.empty()) return L"\"\"";
-    bool need_quotes = false;
-    for (wchar_t c : s) {
-        if (c == L' ' || c == L'\t' || c == L'"') {
-            need_quotes = true;
-            break;
-        }
-    }
-    if (!need_quotes) return s;
-
-    std::wstring out;
-    out.reserve(s.size() + 2);
-    out.push_back(L'"');
-    size_t i = 0;
-    while (i < s.size()) {
-        size_t bs = 0;
-        while (i < s.size() && s[i] == L'\\') {
-            ++bs;
-            ++i;
-        }
-        if (i >= s.size()) {
-            out.append(bs * 2, L'\\');  // trailing backslashes: keep them literal
-            break;
-        }
-        if (s[i] == L'"') {
-            out.append(bs * 2 + 1, L'\\');  // escape the quote (literal, not delimiter)
-            out.push_back(L'"');
-            ++i;
-        } else {
-            out.append(bs, L'\\');  // backslashes before any other char are literal
-            out.push_back(s[i]);    // and the ordinary character itself
-            ++i;
-        }
-    }
-    out.push_back(L'"');
-    return out;
-}
-
 } // namespace
-
-bool WantsInstallService(int argc, char **argv) {
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--install-service") == 0) return true;
-    }
-    return false;
-}
-
-bool WantsUninstallService(int argc, char **argv) {
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--uninstall-service") == 0) return true;
-    }
-    return false;
-}
-
-bool InstallAgentService(int argc, char **argv, std::string &error) {
-    error.clear();
-    wchar_t exe[MAX_PATH];
-    DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) {
-        error = "cannot determine the agent executable path";
-        return false;
-    }
-
-    // ImagePath = "<exe>" + every forwarded CLI token (the --install-service
-    // verb itself is stripped). Each token is quoted so values containing
-    // spaces survive the SCM's re-parse of this command line.
-    std::wstring bin = QuoteArg(exe);
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--install-service") == 0) continue;
-        bin += L" " + QuoteArg(Utf8ToWide(argv[i]));
-    }
-
-    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
-    if (!scm) {
-        error = ErrorText(GetLastError());
-        return false;
-    }
-
-    SC_HANDLE svc = CreateServiceW(
-        scm, kServiceName, kServiceDisplayName, SERVICE_ALL_ACCESS,
-        SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL,
-        bin.c_str(), nullptr, nullptr, nullptr, L"NT AUTHORITY\\LocalSystem",
-        nullptr);
-    DWORD err = svc ? ERROR_SUCCESS : GetLastError();
-
-    if (!svc && err == ERROR_SERVICE_EXISTS) {
-        // Reinstall/upgrade: the service already exists. Update its ImagePath
-        // (and description) so new arguments actually take effect instead of
-        // silently keeping the stale registration from the previous install.
-        svc = OpenServiceW(scm, kServiceName,
-                           SERVICE_CHANGE_CONFIG | SERVICE_QUERY_CONFIG);
-        err = svc ? ERROR_SUCCESS : GetLastError();
-        if (svc &&
-            !ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_NO_CHANGE,
-                                  SERVICE_NO_CHANGE, bin.c_str(), nullptr,
-                                  nullptr, nullptr, nullptr, nullptr, nullptr)) {
-            err = GetLastError();
-        }
-    }
-    if (svc) {
-        SERVICE_DESCRIPTIONW desc{ L"PudimNetMon network monitoring agent" };
-        ChangeServiceConfig2W(svc, SERVICE_CONFIG_DESCRIPTION, &desc);
-        CloseServiceHandle(svc);
-    }
-    CloseServiceHandle(scm);
-
-    if (err != ERROR_SUCCESS) {
-        error = ErrorText(err);
-        if (err == ERROR_ACCESS_DENIED) error += " (run from an elevated prompt)";
-        return false;
-    }
-    return true;
-}
-
-bool UninstallAgentService(std::string &error) {
-    error.clear();
-    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!scm) {
-        error = ErrorText(GetLastError());
-        return false;
-    }
-    SC_HANDLE svc = OpenServiceW(scm, kServiceName,
-                                 SERVICE_STOP | SERVICE_QUERY_STATUS | DELETE);
-    if (!svc) {
-        DWORD err = GetLastError();
-        CloseServiceHandle(scm);
-        // Idempotent uninstall: nothing left to remove is not a failure.
-        if (err == ERROR_SERVICE_DOES_NOT_EXIST) return true;
-        error = ErrorText(err);
-        return false;
-    }
-
-    SERVICE_STATUS status{};
-    if (ControlService(svc, SERVICE_CONTROL_STOP, &status)) {
-        // Wait up to ~10s for the stop to complete (DeleteService requires it).
-        for (int i = 0; i < 20; ++i) {
-            QueryServiceStatus(svc, &status);
-            if (status.dwCurrentState == SERVICE_STOPPED) break;
-            Sleep(500);
-        }
-    }
-    bool deleted = DeleteService(svc) != 0;
-    DWORD err = deleted ? ERROR_SUCCESS : GetLastError();
-    CloseServiceHandle(svc);
-    CloseServiceHandle(scm);
-
-    if (!deleted) {
-        if (err == ERROR_SERVICE_MARKED_FOR_DELETE) {
-            error = "service is still stopping; retry in a few seconds";
-        } else {
-            error = ErrorText(err);
-        }
-        return false;
-    }
-    return true;
-}
 
 bool InitNetwork(std::string &error) {
     WSADATA wsa{};
@@ -318,10 +150,6 @@ bool TryRunAsService(int argc, char **argv,
 
 namespace pudimagent::platform {
 
-bool WantsInstallService(int, char **) { return false; }
-bool WantsUninstallService(int, char **) { return false; }
-bool InstallAgentService(int, char **, std::string &) { return false; }
-bool UninstallAgentService(std::string &) { return false; }
 bool InitNetwork(std::string &) { return true; }
 void CleanupNetwork() {}
 bool TryRunAsService(int, char **, std::function<int(int, char **)>,

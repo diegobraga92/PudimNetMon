@@ -4,11 +4,13 @@
 ; self-contained setup EXE that:
 ;   * collects the agent identity + collector settings on a wizard page,
 ;   * installs pudim-agent.exe under Program Files,
-;   * registers the "PudimNetMonAgent" auto-start Windows service through the
-;     agent's own --install-service support,
+;   * registers the "PudimNetMonAgent" auto-start Windows service directly with
+;     the Service Control Manager (via sc.exe, which ships with Windows - the
+;     agent binary has no --install-service verb and only ever runs under the
+;     SCM or in the console),
 ;   * writes %ProgramData%\PudimNetMon\agent.conf so settings are easy to
 ;     review/adjust later, and
-;   * removes the service again on uninstall via --uninstall-service.
+;   * stops and removes the service again on uninstall (sc.exe stop/delete).
 ;
 ; Configuration model (single source of truth per setting):
 ;   * node-id is baked into the service command line (like the Linux unit's
@@ -73,15 +75,24 @@ Source: "payload\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 #if FileExists("payload\vc_redist.x64.exe")
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Redistributable..."; Flags: waituntilterminated
 #endif
-; Register the auto-start service via the agent's own installer support, then
-; bring it up (failure is only informational; it is configured as auto-start).
-; WriteAgentConfig (BeforeInstall) guarantees agent.conf exists before the
-; service starts, regardless of setup-step ordering.
-Filename: "{app}\{#MyAppExeName}"; Parameters: {code:GetServiceArgs}; StatusMsg: "Registering PudimNetMonAgent service..."; Flags: waituntilterminated runhidden; BeforeInstall: WriteAgentConfig; AfterInstall: StartAgentService
+; Register the auto-start service directly through the Service Control Manager
+; (sc.exe ships with every supported Windows version). The create step exits
+; non-zero with "service already exists" when upgrading/reinstalling; that is
+; expected, and the sc config step that follows rewrites the ImagePath in both
+; cases so a reinstall never keeps stale command-line arguments. WriteAgentConfig
+; (BeforeInstall) guarantees agent.conf exists before the service starts.
+; sc create/config/description exit codes are only logged by Inno Setup, and
+; the final start failure is informational (the service is configured auto-start).
+Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceCreateParams}; StatusMsg: "Registering PudimNetMonAgent service..."; Flags: waituntilterminated runhidden; BeforeInstall: WriteAgentConfig
+Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceConfigParams}; StatusMsg: "Configuring PudimNetMonAgent service..."; Flags: waituntilterminated runhidden
+Filename: "{sys}\sc.exe"; Parameters: "description PudimNetMonAgent ""PudimNetMon network monitoring agent"""; Flags: waituntilterminated runhidden; AfterInstall: StartAgentService
 
 [UninstallRun]
-; Remove the service (it stops the service first) before files are deleted.
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--uninstall-service"; Flags: waituntilterminated runhidden
+; Stop and delete the auto-start service before files are removed (the running
+; service locks pudim-agent.exe). [UninstallRun] runs as the first step of the
+; uninstaller; the commands are idempotent and non-zero exits are ignored.
+Filename: "{sys}\sc.exe"; Parameters: "stop PudimNetMonAgent"; Flags: waituntilterminated runhidden
+Filename: "{sys}\sc.exe"; Parameters: "delete PudimNetMonAgent"; Flags: waituntilterminated runhidden
 
 [Code]
 
@@ -133,6 +144,13 @@ begin
       MsgBox('Node ID must not be empty.', mbError, MB_OK);
       Result := False;
     end
+    else if (Pos(' ', NodeIdValue) > 0) or (Pos(#9, NodeIdValue) > 0) or
+            (Pos('"', NodeIdValue) > 0) then
+    begin
+      MsgBox('Node ID must not contain spaces, tabs or double quotes because ' +
+             'it is baked into the service command line.', mbError, MB_OK);
+      Result := False;
+    end
     else if StrToIntDef(IntervalValue, 0) <= 0 then
     begin
       MsgBox('Polling interval must be a positive number of milliseconds.', mbError, MB_OK);
@@ -141,13 +159,37 @@ begin
   end;
 end;
 
-// Builds the service command-line arguments. Only the immutable node ID is
-// baked into the service registration (like the Linux unit's --node-id=%H);
-// mutable settings (interval, collector-endpoints) go into agent.conf instead,
-// so re-installs/upgrades never leave stale command-line args behind.
-function GetServiceArgs(Param: String): String;
+// The service ImagePath is the quoted agent exe plus the immutable node ID
+// baked in (like the Linux unit's --node-id=%H); mutable settings (interval,
+// collector-endpoints) go into agent.conf instead, so re-installs/upgrades
+// never leave stale command-line args behind. NodeIdValue is validated on the
+// wizard page to contain no spaces/tabs/quotes, so the exe path is the only
+// token that needs quoting.
+//
+// sc.exe parses its own command line with the standard Windows CRT rules, so
+// the quotes that must survive verbatim into the service ImagePath are escaped
+// as \" below. sc stores binPath as-is; the SCM re-parses it when starting the
+// service, yielding the ImagePath above again.
+function GetServiceCreateParams(Param: String): String;
+var
+  ExePath: String;
 begin
-  Result := '--install-service --node-id="' + NodeIdValue + '"';
+  ExePath := ExpandConstant('{app}\{#MyAppExeName}');
+  Result := 'create PudimNetMonAgent start= auto binPath= "\"' + ExePath +
+            '\" --node-id=' + NodeIdValue + '"' +
+            ' DisplayName= "PudimNetMon Agent"';
+end;
+
+// Runs on every install (including upgrades over an existing service) to
+// refresh the ImagePath/start type, mirroring the create-or-reconfigure logic
+// that used to live in the agent binary.
+function GetServiceConfigParams(Param: String): String;
+var
+  ExePath: String;
+begin
+  ExePath := ExpandConstant('{app}\{#MyAppExeName}');
+  Result := 'config PudimNetMonAgent start= auto binPath= "\"' + ExePath +
+            '\" --node-id=' + NodeIdValue + '"';
 end;
 
 // Starts the service right after it is registered. Failure is informational:
