@@ -8,6 +8,7 @@
 
 #include "agent_config.h"
 #include "platform/getopt.h"
+#include "platform/platform.h"
 
 namespace {
 
@@ -80,7 +81,13 @@ int main() {
               "defaults deep diagnostics on");
         Check(cfg.log_level == logger::LogLevel::Info, "defaults log level");
         Check(!cfg.cfg_loaded, "defaults no config file");
-        Check(cfg.config_path == "/etc/pudim/agent.conf", "defaults config path");
+#ifdef _WIN32
+        const std::string kDefaultConfigPath =
+            pudimagent::platform::DefaultStateDir() + "\\agent.conf";
+#else
+        const std::string kDefaultConfigPath = "/etc/pudim/agent.conf";
+#endif
+        Check(cfg.config_path == kDefaultConfigPath, "defaults config path");
     }
 
     // 2. Config file overrides the built-in defaults.
