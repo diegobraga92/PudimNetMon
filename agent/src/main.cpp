@@ -8,7 +8,6 @@
 #include <chrono>
 #include <thread>
 #include <csignal>
-#include <cstring>
 #include "platform/platform.h"
 #include "platform/win_service.h"
 
@@ -373,20 +372,28 @@ int RunAgent(int argc, char **argv) {
 
 int main(int argc, char **argv) {
 #ifdef _WIN32
-    // Service lifecycle helpers never start the agent loop.
+    // Service lifecycle helpers never start the agent loop. Install/uninstall
+    // register the service directly; the argv forwarding + quoting lives in
+    // win_service.cpp so the service ImagePath stays shell-safe on upgrades.
     if (pudimagent::platform::WantsInstallService(argc, argv)) {
-        std::wstring args;
-        bool first = true;
-        for (int i = 1; i < argc; ++i) {
-            if (std::strcmp(argv[i], "--install-service") == 0) continue;
-            if (!first) args += L" ";
-            first = false;
-            args += pudimagent::platform::Utf8ToWide(argv[i]);
+        std::string err;
+        if (!pudimagent::platform::InstallAgentService(argc, argv, err)) {
+            std::cerr << "Failed to install PudimNetMonAgent service";
+            if (!err.empty()) std::cerr << ": " << err;
+            std::cerr << "\n";
+            return 1;
         }
-        return pudimagent::platform::InstallAgentService(args) ? 0 : 1;
+        return 0;
     }
     if (pudimagent::platform::WantsUninstallService(argc, argv)) {
-        return pudimagent::platform::UninstallAgentService() ? 0 : 1;
+        std::string err;
+        if (!pudimagent::platform::UninstallAgentService(err)) {
+            std::cerr << "Failed to uninstall PudimNetMonAgent service";
+            if (!err.empty()) std::cerr << ": " << err;
+            std::cerr << "\n";
+            return 1;
+        }
+        return 0;
     }
 
     std::string net_err;

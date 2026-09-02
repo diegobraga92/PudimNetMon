@@ -210,20 +210,33 @@ metric.
 self-contained install wizard (`PudimNetMon-Agent-Setup-<version>.exe`,
 uploaded as the `pudimnetmon-agent-windows-setup` artifact). The wizard asks
 for the node ID, collector endpoint(s) and polling interval, installs the
-binary under `Program Files`, registers and starts the `PudimNetMonAgent`
-auto-start service, and removes it again on uninstall. Silent mode:
+binary under `Program Files`, writes `%ProgramData%\PudimNetMon\agent.conf`
+(node-id stays on the service command line; all other settings come from the
+file — the same split as the Linux systemd unit), registers and starts the
+`PudimNetMonAgent` auto-start service, and removes it again on uninstall.
+Silent mode:
 
 ```powershell
 PudimNetMon-Agent-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
-Manual builds are still fully supported (this is what CI validates):
+Manual builds are still fully supported (this is what CI validates). To run
+the freshly built binary as the auto-start service instead of in the
+foreground, register it directly (elevated PowerShell): only the node ID is
+baked into the service command line; the mutable settings live in
+`%ProgramData%\PudimNetMon\agent.conf`.
 
 ```powershell
 cmake -S agent -B build-agent-windows `
   -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 cmake --build build-agent-windows --config Release -j
-.\scripts\install-agent-windows.ps1 -ServiceArgs "--node-id=win-01", "--interval=10000"
+$exe = "$PWD\build-agent-windows\Release\pudim-agent.exe"
+$dir = Join-Path $env:ProgramData 'PudimNetMon'
+New-Item -ItemType Directory -Force $dir | Out-Null
+'collector-endpoints=collector.lan:50051', 'interval=10000' |
+  Set-Content (Join-Path $dir 'agent.conf')
+& $exe --install-service '--node-id=win-01'   # registers PudimNetMonAgent
+Start-Service PudimNetMonAgent
 ```
 
 See [`docs/windows.md`](docs/windows.md) for details, the feature matrix, the

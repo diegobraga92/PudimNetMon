@@ -12,12 +12,21 @@ namespace pudimagent::platform {
 bool WantsInstallService(int argc, char **argv);
 bool WantsUninstallService(int argc, char **argv);
 
-// Installs the agent as the "PudimNetMonAgent" auto-start service. `args` is
-// appended to the executable path in ImagePath (the agent's own CLI flags).
-bool InstallAgentService(const std::wstring &args);
+// Installs (or, if the service already exists, reconfigures) the agent as the
+// "PudimNetMonAgent" auto-start service running as LocalSystem. The service
+// ImagePath is `"<this exe>"` followed by every argv token except the
+// `--install-service` verb itself; each token is quoted with Windows
+// command-line escaping so values containing spaces survive the SCM's re-parse.
+//
+// Only immutable/identity flags belong here (e.g. --node-id); mutable settings
+// (collector endpoints, interval, ...) belong in the agent.conf the installer
+// writes, so re-installs/upgrades never leave stale arguments behind. On
+// failure `error` holds a human-readable reason (e.g. "access denied").
+bool InstallAgentService(int argc, char **argv, std::string &error);
 
-// Stops (if running) and removes the service.
-bool UninstallAgentService();
+// Stops (if running) and removes the service. Succeeds when the service is
+// already gone (idempotent uninstall). On failure `error` holds the reason.
+bool UninstallAgentService(std::string &error);
 
 // One-time Winsock initialization / teardown (Windows only).
 bool InitNetwork(std::string &error);

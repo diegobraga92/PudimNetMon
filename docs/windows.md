@@ -21,18 +21,27 @@ registration). The wizard collects:
 | Collector endpoint(s) | *(empty → `localhost:50051`)* | comma-separated failover list, e.g. `collector.lan:50051,backup.lan:50051` |
 | Polling interval | `5000` ms | heartbeat + probe cadence |
 
+Configuration is split so an upgrade/reinstall never leaves stale values
+frozen into the service registration: **the node ID is baked into the service
+command line** (like the Linux unit's `--node-id=%H`), and everything mutable
+(collector endpoints, interval) lives in `%ProgramData%\PudimNetMon\agent.conf`
+which the agent reads at startup. Precedence stays
+`built-in defaults < agent.conf < service command line`.
+
 The installer then:
 
 1. installs `pudim-agent.exe` under `%ProgramFiles%\PudimNetMon Agent`,
-2. registers the `PudimNetMonAgent` auto-start service via the agent's own
-   `--install-service` support (same code path as the legacy PS1 wrapper),
-3. starts the service,
-4. writes `%ProgramData%\PudimNetMon\agent.conf` so the values are easy to
-   review/adjust later,
+2. writes `%ProgramData%\PudimNetMon\agent.conf` with the wizard's interval /
+   collector endpoint(s) (before the service is registered or started),
+3. registers the `PudimNetMonAgent` auto-start service via the agent's own
+   `--install-service` support, baking in only `--node-id`,
+4. starts the service,
 5. bundles the Microsoft VC++ redistributable for machines that lack it.
 
 Uninstalling via **Add/Remove Programs** stops and removes the service
-(`--uninstall-service`) before deleting the files.
+(`--uninstall-service`) before deleting the files. State files under
+`%ProgramData%\PudimNetMon` (`agent.conf`, `pending.db`) are kept so buffered
+metrics survive an uninstall.
 
 ### Silent / unattended install
 
@@ -47,9 +56,10 @@ CI uses for its own smoke test:
 "C:\Program Files\PudimNetMon Agent\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
-After a silent install, tune the values in `%ProgramData%\PudimNetMon\agent.conf`
-(agent precedence: built-in defaults < config file < service command line) and
-restart the service:
+After a silent install, all agent settings live in
+`%ProgramData%\PudimNetMon\agent.conf` (the node ID is on the service command
+line — see `sc.exe qc PudimNetMonAgent`). Edit the file and restart the
+service to apply changes:
 
 ```powershell
 Restart-Service PudimNetMonAgent
@@ -61,18 +71,31 @@ Restart-Service PudimNetMonAgent
 
 ## Build and install manually (MSVC + vcpkg)
 
-CI validates this flow; it is the fallback when you want to build locally:
+CI validates this build; it is the fallback when you want to build locally
+without the CI wizard. Run the binary in the foreground for a quick check, or
+register it as the auto-start service yourself (elevated PowerShell):
 
 ```powershell
 cmake -S agent -B build-agent-windows `
   -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 cmake --build build-agent-windows --config Release -j
-# Console mode (foreground)
-.\build-agent-windows\Release\pudim-agent.exe --node-id=win-01 --interval=10000
-# Or install as the auto-start service (requires an elevated PowerShell)
-.\scripts\install-agent-windows.ps1 -ServiceArgs "--node-id=win-01", "--interval=10000"
-# Uninstall the service
-.\scripts\install-agent-windows.ps1 -Uninstall
+$exe = "$PWD\build-agent-windows\Release\pudim-agent.exe"
+
+# Console mode (foreground; stops when the session closes)
+& $exe --node-id=win-01 --interval=10000
+
+# Run as the auto-start "PudimNetMonAgent" service instead.
+# The binary does the registration; only the node ID is baked into the service
+# command line — write the mutable settings to agent.conf first:
+$confDir = Join-Path $env:ProgramData 'PudimNetMon'
+New-Item -ItemType Directory -Force $confDir | Out-Null
+'collector-endpoints=collector.lan:50051', 'interval=10000' |
+  Set-Content (Join-Path $confDir 'agent.conf')
+& $exe --install-service '--node-id=win-01'
+Start-Service PudimNetMonAgent
+
+# Uninstall the service (state files in the agent.conf folder are kept)
+& $exe --uninstall-service
 ```
 
 The installer script lives at `installer\installer-agent.iss` and is compiled
@@ -86,12 +109,16 @@ ISCC.exe /DMyAppVersion=0.1.0 installer\installer-agent.iss
 
 ```powershell
 Get-Service PudimNetMonAgent
-sc.exe query PudimNetMonAgent        # details, incl. the baked-in args
-sc.exe qc PudimNetMonAgent           # service configuration
-Restart-Service PudimNetMonAgent     # pick up config changes
+sc.exe query PudimNetMonAgent        # running state
+sc.exe qc PudimNetMonAgent           # service config (binPath carries --node-id)
+type "$env:ProgramData\PudimNetMon\agent.conf"   # all mutable settings
+Restart-Service PudimNetMonAgent     # pick up agent.conf changes
 ```
 
-The service runs as `NT AUTHORITY\LocalSystem` with automatic start.
+The service runs as `NT AUTHORITY\LocalSystem` with automatic start. To change
+the node ID, re-run the installer/PS1 script (or update the ImagePath with
+`sc.exe config PudimNetMonAgent binPath= "..."`); every other setting is edited
+in `agent.conf` and applied with a restart.
 
 ## Feature matrix
 
