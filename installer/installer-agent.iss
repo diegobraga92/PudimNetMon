@@ -106,6 +106,25 @@ var
 const
   DefaultInterval = '5000';
 
+// Runs before anything else -- including Inno Setup's RestartManager scan that
+// detects files in use. A reinstall/upgrade must replace pudim-agent.exe while
+// the running service holds it open; Inno only waits ~5 s for applications to
+// close and then aborts (exit code 5) if they cannot. The agent can
+// legitimately take longer to stop (it finishes the probe cycle already in
+// flight), so stop the service here and let the process fully exit before
+// Setup's file-in-use check runs. On a fresh install there is no service yet
+// and sc stop fails fast (error 1060), which is ignored.
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  Exec('{sys}\sc.exe', 'stop PudimNetMonAgent', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  if ResultCode = 0 then
+    Sleep(1500);  // let the process release its image before file replacement
+end;
+
 procedure InitializeWizard();
 begin
   // Defaults are captured here so silent installs (which skip the wizard
