@@ -25,8 +25,6 @@ std::string g_ntp_server = "pool.ntp.org";
 
 #ifdef _WIN32
 
-// Current time as an NTP 64-bit timestamp: seconds since 1900-01-01 in the
-// high 32 bits and a 2^-32 second fraction in the low 32 bits.
 uint64_t NtpNow() {
     FILETIME ft{};
     GetSystemTimeAsFileTime(&ft);
@@ -115,7 +113,6 @@ bool RunSntpOffset(std::string &detail, double &offset_ms) {
     double t3 = NtpSecondsFromPacket(reply + 40);  // server transmit time
     double t4 = static_cast<double>(NtpNow()) / 4294967296.0;
 
-    // Offset = ((T2 - T1) + (T3 - T4)) / 2, in seconds.
     double t1_sec = static_cast<double>(t1) / 4294967296.0;
     double offset_sec = ((t2 - t1_sec) + (t3 - t4)) / 2.0;
     offset_ms = offset_sec * 1000.0;
@@ -157,13 +154,9 @@ void ProbeNtpOffset(pudimnetmon::Metric &metric) {
         return;
     }
 
-    // tx.offset is in microseconds (kernel discipline offset); the clock may be
-    // un-synchronised (STA_UNSYNC) in which case the offset is stale but still
-    // reported for visibility. Convert to signed milliseconds.
     double offset_ms = static_cast<double>(tx.offset) / 1000.0;
     metric.set_latency_ms(offset_ms);
 
-    // Expose the kernel discipline state for the dashboard/debugging.
     auto attrs = metric.mutable_attributes();
     attrs->insert({"ntp_status", std::to_string(tx.status)});
     attrs->insert({"ntp_maxerror_ms", std::to_string(tx.maxerror / 1000.0)});
