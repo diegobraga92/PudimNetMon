@@ -121,8 +121,6 @@ bool TryRunAsService(int, char **,
         { nullptr, nullptr },
     };
     if (!StartServiceCtrlDispatcherW(table)) {
-        // ERROR_FAILED_SERVICE_CONTROLLER_CONNECT means we were not launched by
-        // the SCM -> fall through to console mode.
         return false;
     }
     return true;

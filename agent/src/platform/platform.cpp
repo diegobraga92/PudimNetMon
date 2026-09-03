@@ -38,13 +38,10 @@ int64_t NowMs() {
 bool RandomBytes(unsigned char *out, size_t n) {
     if (!out || n == 0) return n == 0;
 #ifdef _WIN32
-    // n is tiny (8 or 16 bytes) so a direct ULONG cast is safe.
     return BCryptGenRandom(nullptr, out, static_cast<ULONG>(n),
                            BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
 #else
 #if defined(__linux__) && !defined(_WIN32)
-    // getrandom() is a single syscall with no file-descriptor or buffering
-    // cost; fall back to /dev/urandom on other POSIX platforms.
     ssize_t n_read = getrandom(out, n, 0);
     if (n_read > 0 && static_cast<size_t>(n_read) == n) return true;
 #endif

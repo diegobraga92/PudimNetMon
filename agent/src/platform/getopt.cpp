@@ -1,10 +1,3 @@
-// Minimal GNU-style getopt/getopt_long for MSVC (see getopt.h). Supports:
-//   - short options with required/optional arguments, clustered short options
-//   - long options with required/optional arguments, unique-prefix abbreviation
-//   - "--" end-of-options terminator
-// Compiles to an empty translation unit on POSIX (the system <getopt.h> is used
-// there), so this file can be part of the build unconditionally.
-
 #ifdef _WIN32
 
 #include "getopt.h"
@@ -19,19 +12,15 @@ int optopt = 0;
 
 namespace {
 
-// Pointer into the current argv element (after the leading '-'), or nullptr
-// when the current element has been fully consumed.
 const char *g_pos = nullptr;
 
-// Returns the matching long-option index, -1 when no match, or -2 when the
-// prefix is ambiguous.
 int FindLong(const struct option *longopts, const char *name, size_t namelen) {
     int match = -1;
     bool ambiguous = false;
     for (int i = 0; longopts[i].name; ++i) {
         if (std::strncmp(longopts[i].name, name, namelen) != 0) continue;
         if (std::strlen(longopts[i].name) == namelen) {
-            return i;  // exact match wins immediately
+            return i;
         }
         if (match != -1) {
             ambiguous = true;
@@ -61,15 +50,14 @@ int getopt_long(int argc, char *const argv[], const char *optstring,
 
     const char *arg = argv[optind];
     if (g_pos == nullptr) {
-        if (arg[0] != '-' || arg[1] == '\0') return -1;  // not an option
-        if (arg[1] == '-' && arg[2] == '\0') {           // "--"
+        if (arg[0] != '-' || arg[1] == '\0') return -1;
+        if (arg[1] == '-' && arg[2] == '\0') {
             optind++;
             return -1;
         }
         g_pos = arg + 1;
     }
 
-    // Long option: --name[=value].
     if (*g_pos == '-' && longopts != nullptr) {
         const char *name = g_pos + 1;
         const char *eq = std::strchr(name, '=');
@@ -134,7 +122,6 @@ int getopt_long(int argc, char *const argv[], const char *optstring,
         return lo.val;
     }
 
-    // Short option(s).
     const char *p = optstring ? std::strchr(optstring, *g_pos) : nullptr;
     if (!p) {
         if (opterr) {
