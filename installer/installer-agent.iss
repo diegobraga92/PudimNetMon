@@ -196,16 +196,33 @@ end;
 // the service is configured as auto-start, so it comes up on next boot.
 // sc.exe start (rather than net.exe) talks to the SCM directly and reports a
 // precise, well-defined start error code (1053/1067/2/193/5, ...).
+//
+// The freshly written agent exe can be briefly un-startable by the SCM right
+// after install: the first `sc start` in the CI smoke test returned error 2
+// ("file not found") while the identical command a second or two later
+// succeeded, because Windows Defender's real-time scan had not finished with
+// the just-installed (large, self-contained) binary. Retrying bridges that
+// window instead of leaving the service stopped until the next reboot.
 procedure StartAgentService();
 var
   ResultCode: Integer;
+  Attempt: Integer;
 begin
-  if not Exec('{sys}\sc.exe', 'start PudimNetMonAgent', '', SW_HIDE,
-              ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+  ResultCode := 1;
+  for Attempt := 1 to 15 do
   begin
-    Log('sc start PudimNetMonAgent failed with exit code ' +
-        IntToStr(ResultCode) + '; the service is configured to start ' +
-        'automatically and will be available after the next reboot');
+    if Exec('{sys}\sc.exe', 'start PudimNetMonAgent', '', SW_HIDE,
+            ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+      Break;
+    if Attempt < 15 then
+      Sleep(2000);
+  end;
+  if ResultCode <> 0 then
+  begin
+    Log('sc start PudimNetMonAgent failed after ' + IntToStr(Attempt) +
+        ' attempt(s); last exit code ' + IntToStr(ResultCode) +
+        '; the service is configured to start automatically and will be ' +
+        'available after the next reboot');
     // MsgBox() is NOT suppressible by /SUPPRESSMSGBOXES, so showing it during a
     // silent install would leave a hidden modal dialog blocking Setup forever
     // (the CI smoke test has seen exactly this class of 15-minute stall).
@@ -216,7 +233,10 @@ begin
              'started (sc start exit ' + IntToStr(ResultCode) + '). It is ' +
              'configured to start automatically and will be available after ' +
              'the next reboot.', mbInformation, MB_OK);
-  end;
+  end
+  else
+    Log('PudimNetMonAgent service started successfully (attempt ' +
+        IntToStr(Attempt) + ')');
 end;
 
 // Persists the wizard settings to %ProgramData%\PudimNetMon\agent.conf.
@@ -252,8 +272,9 @@ begin
   if CurStep = ssInstall then
   begin
     // Let an existing installation be upgraded: stop the service so the exe
-    // is not locked while it is being replaced.
-    Exec('net.exe', 'stop PudimNetMonAgent', '', SW_HIDE,
+    // is not locked while it is being replaced. The result is ignored -- a
+    // fresh install has no service to stop, and net/sc both fail harmlessly.
+    Exec('{sys}\sc.exe', 'stop PudimNetMonAgent', '', SW_HIDE,
          ewWaitUntilTerminated, ResultCode);
   end;
 end;
