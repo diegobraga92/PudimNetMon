@@ -1,17 +1,3 @@
-// Windows Service runtime integration for pudim-agent.
-//
-// The agent binary is a console application and a Windows service: when the
-// Service Control Manager launches it, StartServiceCtrlDispatcher() routes
-// execution to ServiceMain, which runs the normal agent main in a worker
-// thread and pumps SERVICE_CONTROL_STOP/SHUTDOWN into the agent's stop flag.
-//
-// Registering/removing the "PudimNetMonAgent" service is owned by the Inno
-// Setup installer (installer\installer-agent.iss drives sc.exe directly), so
-// the binary itself exposes no --install-service/--uninstall-service verbs.
-//
-// On non-Windows builds this file compiles to an empty translation unit with
-// safe no-op stubs, so it can be part of the build unconditionally.
-
 #include "win_service.h"
 
 #include <string>
@@ -124,11 +110,9 @@ bool InitNetwork(std::string &error) {
 
 void CleanupNetwork() { WSACleanup(); }
 
-bool TryRunAsService(int argc, char **argv,
+bool TryRunAsService(int, char **,
                      std::function<int(int, char **)> run_main,
                      std::function<void()> on_stop) {
-    (void)argc;
-    (void)argv;
     g_run_main = std::move(run_main);
     g_on_stop = std::move(on_stop);
 

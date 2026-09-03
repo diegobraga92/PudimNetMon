@@ -372,19 +372,12 @@ int RunAgent(int argc, char **argv) {
 
 int main(int argc, char **argv) {
 #ifdef _WIN32
-    // Service registration/removal is the Inno Setup installer's job (it talks
-    // to the Service Control Manager through sc.exe); the agent itself only
-    // ever runs the monitoring loop, either as a service or in the console.
-
     std::string net_err;
     if (!pudimagent::platform::InitNetwork(net_err)) {
         std::cerr << net_err << "\n";
         return 1;
     }
 
-    // If the Service Control Manager launched us, the dispatcher below runs
-    // the whole agent lifecycle inside ServiceMain and returns only after the
-    // service has stopped. Otherwise fall through to console mode.
     if (pudimagent::platform::TryRunAsService(
             argc, argv,
             [](int ac, char **av) { return RunAgent(ac, av); },

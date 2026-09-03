@@ -76,10 +76,9 @@ std::string SummaryOf(const ProbeConfig &c) {
 } // anonymous namespace
 
 grpc::Status DiagnosticServiceImpl::RunDiagnostic(
-    grpc::ServerContext *ctx,
+    [[maybe_unused]] grpc::ServerContext *ctx,
     const pudimnetmon::DiagnosticRequest *request,
     pudimnetmon::DiagnosticResponse *response) {
-    (void)ctx;
     if (!request || !response) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "request and response must not be null");
@@ -146,10 +145,9 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
 }
 
 grpc::Status DiagnosticServiceImpl::Reconfigure(
-    grpc::ServerContext *ctx,
+    [[maybe_unused]] grpc::ServerContext *ctx,
     const pudimnetmon::AgentConfigRequest *request,
     pudimnetmon::AgentConfigResponse *response) {
-    (void)ctx;
     if (!request || !response || !m_store) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "request/response/store must not be null");
@@ -190,11 +188,9 @@ grpc::Status DiagnosticServiceImpl::Reconfigure(
 }
 
 grpc::Status DiagnosticServiceImpl::GetConfig(
-    grpc::ServerContext *ctx,
-    const pudimnetmon::GetConfigRequest *request,
+    [[maybe_unused]] grpc::ServerContext *ctx,
+    [[maybe_unused]] const pudimnetmon::GetConfigRequest *request,
     pudimnetmon::AgentConfigResponse *response) {
-    (void)ctx;
-    (void)request;
     if (!response || !m_store) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "response/store must not be null");
@@ -205,11 +201,9 @@ grpc::Status DiagnosticServiceImpl::GetConfig(
 }
 
 grpc::Status DiagnosticServiceImpl::ListCommands(
-    grpc::ServerContext *ctx,
-    const pudimnetmon::ListCommandsRequest *request,
+    [[maybe_unused]] grpc::ServerContext *ctx,
+    [[maybe_unused]] const pudimnetmon::ListCommandsRequest *request,
     pudimnetmon::ListCommandsResponse *response) {
-    (void)ctx;
-    (void)request;
     if (!response) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "response must not be null");
@@ -219,10 +213,9 @@ grpc::Status DiagnosticServiceImpl::ListCommands(
 }
 
 grpc::Status DiagnosticServiceImpl::RunCommand(
-    grpc::ServerContext *ctx,
+    [[maybe_unused]] grpc::ServerContext *ctx,
     const pudimnetmon::RunCommandRequest *request,
     pudimnetmon::CommandResponse *response) {
-    (void)ctx;
     if (!request || !response) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                             "request and response must not be null");

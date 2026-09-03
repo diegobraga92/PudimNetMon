@@ -371,8 +371,7 @@ std::string AlertManager::RulesJson() const {
 size_t AlertManager::ActiveAlertCount() const {
     std::lock_guard lock(m_mutex);
     size_t count = 0;
-    for (const auto &[key, st] : m_states) {
-        (void)key;
+    for ([[maybe_unused]] const auto &[key, st] : m_states) {
         if (st.firing) count++;
     }
     return count;

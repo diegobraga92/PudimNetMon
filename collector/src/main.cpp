@@ -191,10 +191,9 @@ static std::shared_ptr<pudimcollector::kafka::KafkaProducer> s_kafka_producer;
 // gRPC service implementation.
 class AgentServiceImpl final : public AgentService::Service {
 public:
-    Status SendHeartbeat(ServerContext *ctx,
+    Status SendHeartbeat([[maybe_unused]] ServerContext *ctx,
                          const HeartbeatRequest *req,
                          HeartbeatResponse *resp) override {
-        (void)ctx;
         // Record the heartbeat
         s_registry.RecordHeartbeat(*req);
 
