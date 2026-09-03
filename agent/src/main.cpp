@@ -43,7 +43,7 @@ static std::atomic<bool> s_running{true};
 // Async-signal-safe raw write() so the handler never deadlocks.
 static void SafeWriteStr(const char *s) {
     size_t n = 0;
-    // strlen should be async-signal-safe, but avoid it to be safe
+    // strlen should be async-signal-safe, but avoids it to be extra safe
     while (s[n]) ++n;
     while (n > 0) {
         ssize_t w = ::write(STDOUT_FILENO, s, n);
@@ -233,7 +233,6 @@ int RunAgent(int argc, char **argv) {
     while (s_running) {
         auto now = std::chrono::steady_clock::now();
 
-        // Heartbeat on its own cadence, decoupled from probe latency.
         if (now - last_heartbeat >=
             std::chrono::milliseconds(current_interval_ms)) {
             last_heartbeat = now;
@@ -249,7 +248,6 @@ int RunAgent(int argc, char **argv) {
             }
         }
 
-        // Drain freshly produced batches into the retry buffer.
         std::vector<MetricsBatch> fresh;
         probe_runner.Drain(fresh, 50);
         for (auto &b : fresh) {
@@ -272,8 +270,7 @@ int RunAgent(int argc, char **argv) {
             }
         }
 
-        // Send policy: send when new batches arrived, or retry a failed send
-        // at most once per interval.
+        // Send when new batches arrived, or retry a failed send.
         bool should_send = false;
         if (!buffer.empty()) {
             if (!fresh.empty()) {

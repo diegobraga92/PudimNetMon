@@ -35,7 +35,7 @@ std::string WriteTempConfig(const std::string &content) {
     return path.string();
 }
 
-// Owns the storage behind an argv array (argv[0] is always "pudim-agent").
+// Owns the storage behind an argv array.
 struct Args {
     std::vector<std::string> storage;
     std::vector<char *> argv;
@@ -53,7 +53,6 @@ struct Args {
     char **data() { return argv.data(); }
 };
 
-// getopt keeps global state; reset it so each call rescans from argv[1].
 void ResetGetopt() {
     optind = 1;
     opterr = 0;
@@ -81,13 +80,10 @@ int main() {
               "defaults deep diagnostics on");
         Check(cfg.log_level == logger::LogLevel::Info, "defaults log level");
         Check(!cfg.cfg_loaded, "defaults no config file");
-#ifdef _WIN32
-        const std::string kDefaultConfigPath =
-            pudimagent::platform::DefaultStateDir() + "\\agent.conf";
-#else
-        const std::string kDefaultConfigPath = "/etc/pudim/agent.conf";
-#endif
-        Check(cfg.config_path == kDefaultConfigPath, "defaults config path");
+        Check(cfg.config_path == pudimagent::DefaultConfigPath(),
+              "defaults config path");
+        Check(cfg.disk_buffer_path == pudimagent::DefaultDiskBufferPath(),
+              "defaults disk-buffer path");
     }
 
     // 2. Config file overrides the built-in defaults.

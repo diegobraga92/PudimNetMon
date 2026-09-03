@@ -12,7 +12,6 @@ namespace pudimagent {
 
 namespace {
 
-// Returns true and sets `out` when `s` names a supported log verbosity.
 bool ParseLogLevel(const std::string &s, logger::LogLevel &out) {
     if (s == "debug") { out = logger::LogLevel::Debug; return true; }
     if (s == "info") { out = logger::LogLevel::Info; return true; }
@@ -21,7 +20,6 @@ bool ParseLogLevel(const std::string &s, logger::LogLevel &out) {
     return false;
 }
 
-// Splits a comma-separated value into non-empty entries.
 std::vector<std::string> ParseList(const std::string &s) {
     std::vector<std::string> out;
     std::string cur;
@@ -37,8 +35,6 @@ std::vector<std::string> ParseList(const std::string &s) {
     return out;
 }
 
-// Appends entries of the form host=TYPE:value to `out` (the dns-expected
-// option; multiple records for one host accumulate).
 void ApplyDnsExpected(
     const std::string &s,
     std::map<std::string, std::vector<std::string>> &out) {
@@ -56,10 +52,23 @@ void ApplyDnsExpected(
 
 } // namespace
 
+std::string DefaultConfigPath() {
+#ifdef _WIN32
+    return platform::DefaultStateDir() + "\\agent.conf";
+#else
+    return "/etc/pudim/agent.conf";
+#endif
+}
+
+std::string DefaultDiskBufferPath() {
+#ifdef _WIN32
+    return platform::DefaultStateDir() + "\\pending.db";
+#else
+    return "/var/lib/pudim/pending.db";
+#endif
+}
+
 ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
-    // Layered configuration: built-in defaults < config file < CLI flags.
-    // The config file is flat key=value with '#' comments; keys are the
-    // long CLI option names (see agent/config/agent.conf.example).
     std::string config_path;
     bool config_explicit = false;
     const std::string kConfigFileFlag = "--config-file=";
@@ -74,18 +83,13 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
         }
     }
     if (config_path.empty()) {
-#ifdef _WIN32
-        config_path = pudimagent::platform::DefaultStateDir() + "\\agent.conf";
-#else
-        config_path = "/etc/pudim/agent.conf";
-#endif
+        config_path = DefaultConfigPath();
     }
 
     std::map<std::string, std::string> file_cfg;
     std::string cfg_error;
     bool cfg_loaded = false;
-    // An explicitly requested file must exist and parse; the default path is
-    // optional and silently skipped when absent.
+
     if (config_explicit || config::Exists(config_path)) {
         if (!config::LoadConfigFile(config_path, file_cfg, cfg_error)) {
             std::cerr << "Error loading config file '" << config_path
@@ -95,7 +99,6 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
         cfg_loaded = true;
     }
 
-    // Typed accessors with built-in defaults as the bottom layer.
     auto get_s = [&file_cfg](const char *key, std::string fallback) -> std::string {
         auto it = file_cfg.find(key);
         return it != file_cfg.end() ? it->second : std::move(fallback);
@@ -122,8 +125,6 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
         return fallback;
     };
 
-
-    // Defaults (config file wins over these; CLI flags win over the file)
     std::string collector_endpoint = get_s("collector-endpoint", "localhost:50051");
     std::string node_id = get_s("node-id", "agent-unknown");
     std::string trace_id = get_s("trace-id", "");
@@ -131,42 +132,34 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
     std::string version = get_s("version", "0.1.0");
     bool use_stream_metrics = get_b("stream-metrics", false);
 
-    // Probe targets (comma-separated lists)
     std::vector<std::string> dns_targets;
     std::vector<std::string> tcp_targets;
     std::vector<std::string> tls_targets;
     std::vector<std::string> http_targets;
     std::vector<std::string> ping_targets;
     int ping_count = get_i("ping-count", 4);
-    int ping_gap_ms = get_i("ping-gap-ms", 200);  // delay between individual ICMP pings
+    int ping_gap_ms = get_i("ping-gap-ms", 200);
 
-    // Deep-diagnostics configuration.
     bool tls_cert_check = !get_b("no-tls-cert", false);
     bool tcp_retransmit_check = !get_b("no-tcp-retransmit", false);
     bool tcp_handshake_capture = !get_b("no-tcp-handshake", false);
-    int tcp_handshake_interval_ms = get_i("tcp-handshake-interval", 0);  // 0 = every cycle
+    int tcp_handshake_interval_ms = get_i("tcp-handshake-interval", 0);
+
     std::vector<std::string> http_protocols;
     std::map<std::string, std::vector<std::string>> dns_expected;
     std::string diagnostic_port = get_s("diagnostic-port", "50052");
     std::string diagnostic_address = get_s("diagnostic-address", "");
     std::string collector_endpoints_input = get_s("collector-endpoints", "");
-    int max_buffer_size = get_i("max-buffer-size", 200);  // in-memory batch buffer cap
+    int max_buffer_size = get_i("max-buffer-size", 200);
     std::string disk_buffer_path =
-        get_s("disk-buffer-path",
-#ifdef _WIN32
-              pudimagent::platform::DefaultStateDir() + "\\pending.db"
-#else
-              "/var/lib/pudim/pending.db"
-#endif
-        );
+        get_s("disk-buffer-path", DefaultDiskBufferPath());
     int disk_buffer_max_mb = get_i("disk-buffer-max-mb", 100);
-    std::string tls_ca = get_s("tls-ca", "");      // PEM CA used to verify the collector (mTLS)
-    std::string tls_cert = get_s("tls-cert", "");  // PEM client certificate
-    std::string tls_key = get_s("tls-key", "");    // PEM client private key
+    std::string tls_ca = get_s("tls-ca", "");
+    std::string tls_cert = get_s("tls-cert", "");
+    std::string tls_key = get_s("tls-key", "");
     std::string ntp_server = get_s("ntp-server", "pool.ntp.org");
-    std::string log_level_str = get_s("log-level", "info");  // debug|info|warn|error
+    std::string log_level_str = get_s("log-level", "info");
 
-    // Apply list-valued options from the config file (CLI flags override below).
     dns_targets = ParseList(get_s("dns-targets", ""));
     tcp_targets = ParseList(get_s("tcp-targets", ""));
     tls_targets = ParseList(get_s("tls-targets", ""));
@@ -175,8 +168,6 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
     http_protocols = ParseList(get_s("http-protocols", ""));
     ApplyDnsExpected(get_s("dns-expected", ""), dns_expected);
 
-
-    // Parse CLI flags using getopt
     static struct option long_options[] = {
         {"collector-endpoint", required_argument, nullptr, 'c'},
         {"node-id",            required_argument, nullptr, 'n'},
@@ -213,8 +204,6 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
         {nullptr, 0, nullptr, 0}
     };
 
-    // Reject unknown keys from the config file so a typo fails fast instead of
-    // silently falling back to defaults (tracking/debugging aid).
     for (const auto &kv : file_cfg) {
         bool known = false;
         for (const auto &o : long_options) {
@@ -230,8 +219,6 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
         }
     }
 
-    // Map each option's code back to its long name so the CLI values actually
-    // applied can be audited against the config file (see the startup log).
     std::map<int, const char *> name_by_val;
     for (const auto &o : long_options) {
         if (o.name && std::string(o.name) != "config-file") {
@@ -240,10 +227,11 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
     }
     std::map<std::string, std::string> cli_options;
 
+    // TODO: Check about removing CLI args altogether
+
     int opt;
     int option_index = 0;
     while ((opt = getopt_long(argc, argv, "c:n:i:t:v:d:p:s:w:g:k:u:mo:qrex:y:z:a:b:f:j:l:C:E:K:h", long_options, &option_index)) != -1) {
-        // Record what the CLI actually provided (presence flags have no value).
         auto nit = name_by_val.find(opt);
         if (nit != name_by_val.end()) {
             cli_options[nit->second] = optarg ? optarg : "";
@@ -283,11 +271,8 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
 
             case 'h':
                 std::cout << "Usage: pudim-agent [options]\n"
-#ifdef _WIN32
-                          << "      --config-file        Key=value config file (default: <state-dir>\\agent.conf)\n"
-#else
-                          << "      --config-file        Key=value config file (default: /etc/pudim/agent.conf)\n"
-#endif
+                          << "      --config-file        Key=value config file (default: "
+                          << DefaultConfigPath() << ")\n"
                           << "  -c, --collector-endpoint  Collector gRPC endpoint (default: localhost:50051)\n"
                           << "  -n, --node-id             Unique node identifier (default: agent-unknown)\n"
                           << "  -i, --interval            Heartbeat interval in ms (default: 5000)\n"
@@ -312,7 +297,8 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
                           << "  -a, --diagnostic-address  Advertised diagnostic endpoint, e.g. agent.example.com:50052\n"
                           << "  -b, --collector-endpoints Comma-separated collector endpoints for failover\n"
                           << "  -f, --max-buffer-size     Max queued metric batches before dropping (default: 200)\n"
-                          << "  -j, --disk-buffer-path    SQLite path for persistent buffering (default: /var/lib/pudim/pending.db)\n"
+                          << "  -j, --disk-buffer-path    SQLite path for persistent buffering (default: "
+                          << DefaultDiskBufferPath() << ")\n"
                           << "  -l, --disk-buffer-max-mb  Max disk buffer size in MB (default: 100)\n"
                           << "  -C, --tls-ca              PEM CA to verify the collector (mTLS)\n"
                           << "  -E, --tls-cert             PEM client certificate (mTLS)\n"
@@ -326,7 +312,6 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
         }
     }
 
-    // Populate the resolved configuration.
     out.config_path = std::move(config_path);
     out.cfg_loaded = cfg_loaded;
     out.file_cfg = std::move(file_cfg);
@@ -363,7 +348,6 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
     out.disk_buffer_path = std::move(disk_buffer_path);
     out.disk_buffer_max_mb = disk_buffer_max_mb;
 
-    // Apply the log verbosity (unrecognized values are rejected).
     if (!ParseLogLevel(log_level_str, out.log_level)) {
         std::cerr << "Invalid --log-level '" << log_level_str
                   << "'; expected debug|info|warn|error\n";
@@ -374,9 +358,6 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
 }
 
 void LogConfigAudit(const AgentConfig &cfg) {
-    // Layered-config audit: log every config-file value that survived, and call
-    // out any CLI flag that overrides the file, so the effective configuration
-    // (and where each value came from) is traceable in the logs.
     for (const auto &kv : cfg.file_cfg) {
         auto cli = cfg.cli_options.find(kv.first);
         if (cli != cfg.cli_options.end() && cli->second != kv.second) {
