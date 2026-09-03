@@ -194,14 +194,16 @@ end;
 
 // Starts the service right after it is registered. Failure is informational:
 // the service is configured as auto-start, so it comes up on next boot.
+// sc.exe start (rather than net.exe) talks to the SCM directly and reports a
+// precise, well-defined start error code (1053/1067/2/193/5, ...).
 procedure StartAgentService();
 var
   ResultCode: Integer;
 begin
-  if not Exec('net.exe', 'start PudimNetMonAgent', '', SW_HIDE,
+  if not Exec('{sys}\sc.exe', 'start PudimNetMonAgent', '', SW_HIDE,
               ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
   begin
-    Log('net start PudimNetMonAgent failed with exit code ' +
+    Log('sc start PudimNetMonAgent failed with exit code ' +
         IntToStr(ResultCode) + '; the service is configured to start ' +
         'automatically and will be available after the next reboot');
     // MsgBox() is NOT suppressible by /SUPPRESSMSGBOXES, so showing it during a
@@ -211,7 +213,7 @@ begin
     // test) check the service state themselves.
     if not WizardSilent then
       MsgBox('The PudimNetMonAgent service was registered but could not be ' +
-             'started (net start exit ' + IntToStr(ResultCode) + '). It is ' +
+             'started (sc start exit ' + IntToStr(ResultCode) + '). It is ' +
              'configured to start automatically and will be available after ' +
              'the next reboot.', mbInformation, MB_OK);
   end;

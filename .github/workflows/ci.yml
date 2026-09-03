@@ -263,8 +263,8 @@ jobs:
                 Where-Object {
                   $_.Message -match 'PudimNetMonAgent|pudim-agent|PudimNetMon'
                 } |
-                Select-Object -First 20 TimeCreated, LogName, ProviderName, Id,
-                  LevelDisplayName, Message |
+                Sort-Object TimeCreated -Descending |
+                Select-Object -First 20 TimeCreated, LogName, ProviderName, Id, LevelDisplayName, Message |
                 Format-List | Out-String -Width 300 | Write-Host
             } catch {
               Write-Host "  (event log unavailable: $($_.Exception.Message))"
@@ -285,36 +285,43 @@ jobs:
           # runner image BEFORE the Service Control Manager is involved, so a
           # later service-start failure can be attributed to service plumbing
           # rather than the binary itself. Bound and killed like every other
-          # child below.
-          $payloadAgent = Join-Path $PWD 'installer\payload\pudim-agent.exe'
-          if (Test-Path $payloadAgent) {
-            $probeOut = Join-Path $env:TEMP 'pudim-agent-probe.out'
-            $probeErr = Join-Path $env:TEMP 'pudim-agent-probe.err'
-            Write-Host '[probe] launching pudim-agent in console (15s bound)'
-            $probe = Start-Process -FilePath $payloadAgent `
-              -ArgumentList '--node-id=ci-console-probe' `
-              -RedirectStandardOutput $probeOut -RedirectStandardError $probeErr `
-              -PassThru -WindowStyle Hidden
-            if (-not $probe.WaitForExit(15000)) {
-              Write-Host '[probe] still running after 15s (startup OK); stopping it'
-              Stop-Process -Id $probe.Id -Force -ErrorAction SilentlyContinue
-              Start-Sleep -Milliseconds 500
+          # child below. Purely diagnostic: any probe failure must never fail
+          # the step, so the whole block is guarded.
+          try {
+            $payloadAgent = Join-Path $PWD 'installer\payload\pudim-agent.exe'
+            if (Test-Path $payloadAgent) {
+              $probeOut = Join-Path $env:TEMP 'pudim-agent-probe.out'
+              $probeErr = Join-Path $env:TEMP 'pudim-agent-probe.err'
+              Write-Host '[probe] launching pudim-agent in console (15s bound)'
+              $probe = Start-Process -FilePath $payloadAgent `
+                -ArgumentList '--node-id=ci-console-probe' `
+                -RedirectStandardOutput $probeOut -RedirectStandardError $probeErr `
+                -PassThru -WindowStyle Hidden
+              if (-not $probe.WaitForExit(15000)) {
+                Write-Host '[probe] still running after 15s (startup OK); stopping it'
+                Stop-Process -Id $probe.Id -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Milliseconds 500
+              } else {
+                Write-Host "[probe] exited on its own, code $($probe.ExitCode)"
+              }
+              Write-Host '---- probe stdout (agent startup log) ----'
+              Get-Content $probeOut -ErrorAction SilentlyContinue |
+                Select-Object -First 80 | Write-Host
+              Write-Host '---- probe stderr ----'
+              Get-Content $probeErr -ErrorAction SilentlyContinue |
+                Select-Object -First 40 | Write-Host
             } else {
-              Write-Host "[probe] exited on its own, code $($probe.ExitCode)"
+              Write-Host "[probe] payload agent not found at $payloadAgent; skipping"
             }
-            Write-Host '---- probe stdout (agent startup log) ----'
-            Get-Content $probeOut -ErrorAction SilentlyContinue |
-              Select-Object -First 80 | Write-Host
-            Write-Host '---- probe stderr ----'
-            Get-Content $probeErr -ErrorAction SilentlyContinue |
-              Select-Object -First 40 | Write-Host
+          } catch {
+            Write-Host "[probe] diagnostics failed (non-fatal): $($_.Exception.Message)"
+          } finally {
+            # Never leave a probe agent running behind.
             Get-Process pudim-agent -ErrorAction SilentlyContinue |
               ForEach-Object {
                 Write-Host "  killing leftover probe pudim-agent pid=$($_.Id)"
                 Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
               }
-          } else {
-            Write-Host "[probe] payload agent not found at $payloadAgent; skipping"
           }
 
           # ---- 1. Silent install -----------------------------------------------
