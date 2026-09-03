@@ -5,20 +5,8 @@
 #include <mutex>
 #include <string>
 
-// Structured JSON logger shared by all agent components. Emits one JSON object
-// per line to stdout:
-//   {"timestamp":<unix_ms>,"level":"info","component":"agent",
-//    "message":"...","agent_id":"...","trace_id":"..."}
-// The output mutex exists because the probe worker / diagnostic server / gRPC
-// client threads may log concurrently.
-//
-// Header-only (C++17 inline state) so any agent TU can include it without
-// adding a .cpp to the build. Level and node/trace context are configured once
-// at startup by main via SetLevel/SetNodeId/SetTraceId.
 namespace logger {
 
-// Severity threshold: messages at or above this level are emitted.
-// Keep the enumerators in increasing severity order — enabled() relies on it.
 enum class LogLevel {
     Debug = 0,
     Info = 1,
@@ -39,8 +27,6 @@ inline void SetLevel(LogLevel level) { s_level = level; }
 inline void SetNodeId(const std::string &id) { s_node_id = id; }
 inline void SetTraceId(const std::string &id) { s_trace_id = id; }
 
-// True if a message of the given severity passes the configured threshold
-// (e.g. Warn emits Warn/Error and hides Debug/Info).
 inline bool enabled(LogLevel level) {
     return static_cast<int>(s_level) <= static_cast<int>(level);
 }
@@ -52,7 +38,7 @@ inline const char *Name(LogLevel level) {
         case LogLevel::Warn:  return "warn";
         case LogLevel::Error: return "error";
     }
-    return "error";  // unreachable: all enumerators handled above
+    return "error";
 }
 
 inline std::string escape(const std::string &s) {
