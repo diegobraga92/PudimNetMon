@@ -280,6 +280,23 @@ jobs:
             Write-Host '---- end service diagnostics ----'
           }
 
+          # Waits (and retries) for the service to reach Running. The installer
+          # defers the initial start to a detached helper that fires after Setup
+          # exits, so right after install the service may legitimately still be
+          # Stopped for a few seconds.
+          function Wait-AgentServiceRunning {
+            param([string]$Label)
+            for ($i = 1; $i -le 8; $i++) {
+              $svc = Get-Service PudimNetMonAgent -ErrorAction SilentlyContinue
+              if (-not $svc) { return $false }
+              if ($svc.Status -in 'Running', 'StartPending') { return $true }
+              Write-Host "[$Label] service not running yet (attempt $i/8); starting it"
+              sc.exe start PudimNetMonAgent 2>&1 | Out-String | Write-Host
+              Start-Sleep -Seconds 3
+            }
+            return $false
+          }
+
           $setup = Get-ChildItem dist/installer/PudimNetMon-Agent-Setup-*.exe |
             Select-Object -First 1
           if (-not $setup) { throw 'Installer was not produced' }
@@ -343,15 +360,8 @@ jobs:
             Write-ServiceDiagnostics -Label 'install: service missing'
             throw 'PudimNetMonAgent service not registered'
           }
-          if ($svc.Status -notin 'Running', 'StartPending') {
+          if (-not (Wait-AgentServiceRunning -Label 'install')) {
             Write-ServiceDiagnostics -Label 'install: service not running'
-            Write-Host '---- manual sc start attempt (captures the real error) ----'
-            sc.exe start PudimNetMonAgent 2>&1 | Out-String | Write-Host
-            Start-Sleep -Seconds 2
-            sc.exe query PudimNetMonAgent 2>&1 | Out-String | Write-Host
-            Get-Process pudim-agent -ErrorAction SilentlyContinue |
-              Select-Object Id, StartTime, Path |
-              Format-Table -AutoSize | Out-String | Write-Host
             if (Test-Path $installLog) {
               Write-Host "---- $installLog (tail 100) ----"
               Get-Content $installLog -Tail 100 | Write-Host
@@ -359,6 +369,7 @@ jobs:
             }
             throw "Service not running after install (status: $($svc.Status))"
           }
+          $svc = Get-Service PudimNetMonAgent
           Write-Host "[install] Service OK ($($svc.Status))"
 
           # ---- 2. Config model: only node-id is baked into the ImagePath; every
@@ -397,12 +408,8 @@ jobs:
             Write-ServiceDiagnostics -Label 'upgrade: service missing'
             throw 'PudimNetMonAgent service missing after upgrade'
           }
-          if ($svc.Status -notin 'Running', 'StartPending') {
+          if (-not (Wait-AgentServiceRunning -Label 'upgrade')) {
             Write-ServiceDiagnostics -Label 'upgrade: service not running'
-            Write-Host '---- manual sc start attempt (captures the real error) ----'
-            sc.exe start PudimNetMonAgent 2>&1 | Out-String | Write-Host
-            Start-Sleep -Seconds 2
-            sc.exe query PudimNetMonAgent 2>&1 | Out-String | Write-Host
             if (Test-Path $upgradeLog) {
               Write-Host "---- $upgradeLog (tail 100) ----"
               Get-Content $upgradeLog -Tail 100 | Write-Host
@@ -410,6 +417,7 @@ jobs:
             }
             throw "Service not running after upgrade (status: $($svc.Status))"
           }
+          $svc = Get-Service PudimNetMonAgent
           Write-Host '[upgrade] OK: service running after reinstall'
 
           # ---- 4. agent.conf is authoritative: change the interval, restart, and

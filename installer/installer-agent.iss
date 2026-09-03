@@ -81,8 +81,9 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 ; expected, and the sc config step that follows rewrites the ImagePath in both
 ; cases so a reinstall never keeps stale command-line arguments. WriteAgentConfig
 ; (BeforeInstall) guarantees agent.conf exists before the service starts.
-; sc create/config/description exit codes are only logged by Inno Setup, and
-; the final start failure is informational (the service is configured auto-start).
+; sc create/config/description exit codes are only logged by Inno Setup. The
+; service start itself is deferred to a detached helper (see StartAgentService)
+; because Setup keeps the just-installed exe open until it exits.
 Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceCreateParams}; StatusMsg: "Registering PudimNetMonAgent service..."; Flags: waituntilterminated runhidden; BeforeInstall: WriteAgentConfig
 Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceConfigParams}; StatusMsg: "Configuring PudimNetMonAgent service..."; Flags: waituntilterminated runhidden
 Filename: "{sys}\sc.exe"; Parameters: "description PudimNetMonAgent ""PudimNetMon network monitoring agent"""; Flags: waituntilterminated runhidden; AfterInstall: StartAgentService
@@ -192,51 +193,22 @@ begin
             '\" --node-id=' + NodeIdValue + '"';
 end;
 
-// Starts the service right after it is registered. Failure is informational:
-// the service is configured as auto-start, so it comes up on next boot.
-// sc.exe start (rather than net.exe) talks to the SCM directly and reports a
-// precise, well-defined start error code (1053/1067/2/193/5, ...).
-//
-// The freshly written agent exe can be briefly un-startable by the SCM right
-// after install: the first `sc start` in the CI smoke test returned error 2
-// ("file not found") while the identical command a second or two later
-// succeeded, because Windows Defender's real-time scan had not finished with
-// the just-installed (large, self-contained) binary. Retrying bridges that
-// window instead of leaving the service stopped until the next reboot.
+// Starts the service after registration. Inno Setup keeps the just-installed
+// executable open (for its rollback / RestartManager bookkeeping) until the
+// Setup process itself exits, so a synchronous `sc start` launched from here
+// fails with error 2 for the entire install. Defer the start to a detached
+// helper that outlives Setup: it waits a few seconds for Setup to exit (and
+// for any real-time AV scan of the new exe to finish), then starts the
+// service. The service is also configured AUTO_START, so a failed helper is
+// non-fatal -- it will come up on the next boot.
 procedure StartAgentService();
 var
   ResultCode: Integer;
-  Attempt: Integer;
 begin
-  ResultCode := 1;
-  for Attempt := 1 to 15 do
-  begin
-    if Exec('{sys}\sc.exe', 'start PudimNetMonAgent', '', SW_HIDE,
-            ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
-      Break;
-    if Attempt < 15 then
-      Sleep(2000);
-  end;
-  if ResultCode <> 0 then
-  begin
-    Log('sc start PudimNetMonAgent failed after ' + IntToStr(Attempt) +
-        ' attempt(s); last exit code ' + IntToStr(ResultCode) +
-        '; the service is configured to start automatically and will be ' +
-        'available after the next reboot');
-    // MsgBox() is NOT suppressible by /SUPPRESSMSGBOXES, so showing it during a
-    // silent install would leave a hidden modal dialog blocking Setup forever
-    // (the CI smoke test has seen exactly this class of 15-minute stall).
-    // Only notify in an interactive wizard; silent callers (e.g. the CI smoke
-    // test) check the service state themselves.
-    if not WizardSilent then
-      MsgBox('The PudimNetMonAgent service was registered but could not be ' +
-             'started (sc start exit ' + IntToStr(ResultCode) + '). It is ' +
-             'configured to start automatically and will be available after ' +
-             'the next reboot.', mbInformation, MB_OK);
-  end
-  else
-    Log('PudimNetMonAgent service started successfully (attempt ' +
-        IntToStr(Attempt) + ')');
+  Exec(ExpandConstant('{sys}\cmd.exe'),
+       '/c ping -n 6 127.0.0.1 >nul & sc.exe start PudimNetMonAgent >nul 2>&1',
+       '', SW_HIDE, ewNoWait, ResultCode);
+  Log('Service start deferred to a detached helper after Setup exits');
 end;
 
 // Persists the wizard settings to %ProgramData%\PudimNetMon\agent.conf.
