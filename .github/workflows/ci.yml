@@ -64,7 +64,13 @@ jobs:
     runs-on: windows-latest
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
-      VCPKG_DEFAULT_TRIPLET: x64-windows-release
+      # Static vcpkg libraries (x64-windows-static-md) so pudim-agent.exe is
+      # self-contained: the installer payload is a single exe and the service
+      # runs from "Program Files", where the vcpkg DLLs (grpc/protobuf/openssl/
+      # curl/sqlite3) would not be present. The MSVC build still links the
+      # dynamic CRT, which the bundled vc_redist.x64.exe installs. "-release"
+      # keeps the vcpkg ports to Release-only builds so the cache stays small.
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static-md-release
       # Keep the vcpkg-tool release used below in sync with the cache key so a
       # tool upgrade never restores a stale installed tree / binary cache.
       VCPKG_TOOL_VERSION: "2026-07-27"
@@ -113,11 +119,13 @@ jobs:
           # "v2" in the key deliberately breaks prefix-matching against stale
           # pre-v2 entries (restore-keys would otherwise resurrect a cache that
           # contains downloads but an empty .vcpkg-cache, forcing a full 3h
-          # rebuild every run). Bump the marker whenever the cache layout or
-          # the vcpkg baseline changes.
-          key: vcpkg-v2-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('agent/vcpkg.json') }}-${{ env.VCPKG_TOOL_VERSION }}
+          # rebuild every run). Bump the marker whenever the cache layout, the
+          # vcpkg baseline, or the linkage/triplet changes -- "v3" here
+          # invalidates the dynamic-linkage caches from the x64-windows-release
+          # era after switching to static vcpkg libraries.
+          key: vcpkg-v3-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('agent/vcpkg.json') }}-${{ env.VCPKG_TOOL_VERSION }}
           restore-keys: |
-            vcpkg-v2-${{ runner.os }}-
+            vcpkg-v3-${{ runner.os }}-
           save-always: true
 
       # Makes cache behaviour visible in the log: if actions/cache restored a
@@ -144,7 +152,7 @@ jobs:
           cmake -S agent -B build/agent-win `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-release
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md-release
 
       - name: Build
         shell: pwsh

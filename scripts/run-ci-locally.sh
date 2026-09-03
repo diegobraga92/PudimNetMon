@@ -144,7 +144,7 @@ job_cpp_agent_windows() {
     section "C++ Agent (Windows build) - Prepare vcpkg (pinned baseline)"
     VCPKG_ROOT="${VCPKG_ROOT:-$ROOT/.vcpkg}"
     export VCPKG_ROOT
-    export VCPKG_DEFAULT_TRIPLET="x64-windows-release"
+    export VCPKG_DEFAULT_TRIPLET="x64-windows-static-md-release"
     if [ ! -f "$VCPKG_ROOT/vcpkg.exe" ]; then
         git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
         git -C "$VCPKG_ROOT" checkout "$VCPKG_PIN"
@@ -158,7 +158,7 @@ job_cpp_agent_windows() {
     run cmake -S "$ROOT/agent" -B "$ROOT/build/agent-win" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-        -DVCPKG_TARGET_TRIPLET=x64-windows-release
+        -DVCPKG_TARGET_TRIPLET=x64-windows-static-md-release
 
     section "C++ Agent (Windows build) - Build (MSVC)"
     # Bounded parallelism, same as CI (unbounded MSBuild /m can OOM while
