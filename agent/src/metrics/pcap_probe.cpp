@@ -8,6 +8,7 @@
 #include "metrics.pb.h"
 #include "probes.h"
 #include "dns_resolver.h"
+#include "platform/platform.h"
 
 #ifdef HAVE_LIBPCAP
 
@@ -25,13 +26,6 @@
 namespace pudimagent {
 
 namespace {
-
-std::string MonotonicUsStr() {
-    return std::to_string(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count());
-}
 
 // The capture device rarely changes; enumerating all interfaces via
 // pcap_findalldevs() on every probe is comparatively expensive. Cache the
@@ -72,7 +66,7 @@ std::string GetCaptureDevice() {
 void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TCP_HANDSHAKE);
     metric.set_target(host_port);
-    metric.set_monotonic_us(std::stoll(MonotonicUsStr()));
+    metric.set_monotonic_us(platform::MonotonicUs());
 
     auto fail = [&](const std::string &detail) {
         metric.set_check_type(pudimnetmon::CHECK_TYPE_TCP_HANDSHAKE);

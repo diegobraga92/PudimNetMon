@@ -1,9 +1,9 @@
-#include <chrono>
 #include <cstring>
 #include <string>
 
 #include "ntp_probe.h"
 #include "dns_resolver.h"
+#include "platform/platform.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -22,13 +22,6 @@ namespace pudimagent {
 namespace {
 
 std::string g_ntp_server = "pool.ntp.org";
-
-// Monotone clock in microseconds (portable CLOCK_MONOTONIC).
-int64_t MonotonicUs() {
-    return std::chrono::duration_cast<std::chrono::microseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
 
 #ifdef _WIN32
 
@@ -140,7 +133,7 @@ void SetNtpServer(const std::string &server) {
 void ProbeNtpOffset(pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_NTP_OFFSET);
     metric.set_target("localhost");
-    metric.set_monotonic_us(MonotonicUs());
+    metric.set_monotonic_us(platform::MonotonicUs());
 
 #ifdef _WIN32
     double offset_ms = 0.0;

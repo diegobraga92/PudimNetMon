@@ -77,13 +77,6 @@ pudimnetmon::Metric FailureMetric(pudimnetmon::CheckType type,
     return m;
 }
 
-// Monotone clock in microseconds (portable).
-int64_t MonotonicUs() {
-    return std::chrono::duration_cast<std::chrono::microseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-
 // Platform socket helpers (POSIX vs Winsock).
 #ifdef _WIN32
 using Sock = SOCKET;
@@ -228,7 +221,7 @@ bool ConnectSocket(const std::string &host, int port, Sock &fd,
 void RunDnsProbe(const std::string &host, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_DNS_RESOLUTION);
     metric.set_target(host);
-    metric.set_monotonic_us(MonotonicUs());
+    metric.set_monotonic_us(platform::MonotonicUs());
 
     struct addrinfo hints;
     std::memset(&hints, 0, sizeof(hints));
@@ -256,7 +249,7 @@ void RunDnsProbe(const std::string &host, pudimnetmon::Metric &metric) {
 void RunTcpProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TCP_CONNECT);
     metric.set_target(host_port);
-    metric.set_monotonic_us(MonotonicUs());
+    metric.set_monotonic_us(platform::MonotonicUs());
 
     std::string host;
     int port;
@@ -286,7 +279,7 @@ void RunTcpProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
 void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TLS_HANDSHAKE);
     metric.set_target(host_port);
-    metric.set_monotonic_us(MonotonicUs());
+    metric.set_monotonic_us(platform::MonotonicUs());
 
     std::string host;
     int port;
@@ -478,13 +471,13 @@ void RunIcmpProbe(const std::string &host, int count, int gap_ms,
                   pudimnetmon::Metric &jitter_metric) {
     loss_metric.set_check_type(pudimnetmon::CHECK_TYPE_ICMP_PING);
     loss_metric.set_target(host);
-    loss_metric.set_monotonic_us(MonotonicUs());
+    loss_metric.set_monotonic_us(platform::MonotonicUs());
     rtt_metric.set_check_type(pudimnetmon::CHECK_TYPE_ICMP_PING);
     rtt_metric.set_target(host);
-    rtt_metric.set_monotonic_us(MonotonicUs());
+    rtt_metric.set_monotonic_us(platform::MonotonicUs());
     jitter_metric.set_check_type(pudimnetmon::CHECK_TYPE_JITTER);
     jitter_metric.set_target(host);
-    jitter_metric.set_monotonic_us(MonotonicUs());
+    jitter_metric.set_monotonic_us(platform::MonotonicUs());
 
     if (count <= 0) count = 4;
     if (gap_ms < 0) gap_ms = 0;
@@ -638,7 +631,7 @@ void RunDnsRecordProbe(const std::string &host,
                        pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_DNS_RECORD);
     metric.set_target(host);
-    metric.set_monotonic_us(MonotonicUs());
+    metric.set_monotonic_us(platform::MonotonicUs());
     metric.set_success(true);
 
     auto attrs = metric.mutable_attributes();
@@ -726,7 +719,7 @@ void RunTcpRetransmitProbe(const std::string &host_port,
                            pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TCP_RETRANSMIT);
     metric.set_target(host_port);
-    metric.set_monotonic_us(MonotonicUs());
+    metric.set_monotonic_us(platform::MonotonicUs());
 
     std::string host;
     int port;
@@ -775,7 +768,7 @@ void RunTcpRetransmitProbe(const std::string &host_port,
 void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TLS_CERTIFICATE);
     metric.set_target(host_port);
-    metric.set_monotonic_us(MonotonicUs());
+    metric.set_monotonic_us(platform::MonotonicUs());
     metric.set_success(true);
 
     std::string host;
@@ -877,7 +870,7 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
 void RunHttpProbeVersioned(const std::string &url, const std::string &protocol,
                            long curl_version, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_HTTP_REQUEST);
-    metric.set_monotonic_us(MonotonicUs());
+    metric.set_monotonic_us(platform::MonotonicUs());
     // Append the protocol to the target so the dashboard can group by it
     // (e.g. "https://example.com;http2").
     metric.set_target(protocol.empty() ? url : url + ";" + protocol);
