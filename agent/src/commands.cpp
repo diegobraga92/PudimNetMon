@@ -38,8 +38,6 @@ std::string ReadAll(FILE *fp) {
     return out;
 }
 
-// Runs a FIXED tool invocation (no requester-controlled input ever reaches the
-// command line) and returns combined stdout+stderr.
 std::string RunFixed(const std::string &cmd) {
     FILE *fp = popen((cmd + " 2>&1").c_str(), "r");
     if (!fp) return "";
@@ -99,10 +97,7 @@ void RunAgentInfo(const CommandParams &, CommandResponse *resp) {
 }
 
 #ifndef _WIN32
-// Whole disk backing the root mount (as smartctl expects it), or "" when there
-// is no raw block device (overlay/tmpfs/UUID). Partition names are mapped to
-// their disk: /dev/sda1 -> /dev/sda, /dev/nvme0n1p2 -> /dev/nvme0n1,
-// /dev/mmcblk0p1 -> /dev/mmcblk0.
+
 std::string RootDisk() {
     FILE *fp = fopen("/proc/self/mounts", "r");
     if (!fp) return "";
@@ -143,7 +138,6 @@ std::string FindSmartctl() {
 
 void RunHddCheck(const CommandParams &, CommandResponse *resp) {
 #ifdef _WIN32
-    // Usage of the volume holding the agent's state directory.
     std::string state_dir = pudimagent::platform::DefaultStateDir();
     std::string drive = state_dir.size() >= 2 && state_dir[1] == ':'
                             ? state_dir.substr(0, 3)

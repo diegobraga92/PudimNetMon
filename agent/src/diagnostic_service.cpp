@@ -8,7 +8,6 @@
 #include "logger.h"
 #include "platform/platform.h"
 
-// POSIX popen is _popen on Windows.
 #ifdef _WIN32
 #define popen _popen
 #define pclose _pclose
@@ -34,7 +33,6 @@ std::string ReadAll(FILE *fp) {
     return out;
 }
 
-// Runs a shell command and returns its combined stdout+stderr.
 std::string RunShellCmd(const std::string &cmd) {
     FILE *fp = popen((cmd + " 2>&1").c_str(), "r");
     if (!fp) return "popen failed\n";
@@ -89,8 +87,7 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
     bool ok = true;
 
     if (!request->trace_target().empty()) {
-        // traceroute needs root for ICMP/UDP probes; -n avoids DNS lookups and
-        // -w 1 bounds per-hop timeout.
+        // traceroute needs root for ICMP/UDP probes
         std::string target = request->trace_target();
 #ifdef _WIN32
         std::string cmd = "tracert -d -h 15 -w 1000 " + target;
@@ -117,7 +114,6 @@ grpc::Status DiagnosticServiceImpl::RunDiagnostic(
         result += RunShellCmd(cmd);
         result += "\n";
 
-        // Summarize the captured packets.
         result += "=== pcap summary (first 15 packets) ===\n";
         result += RunShellCmd("tcpdump -r " + cap_file + " -nn -c 15 2>&1");
         result += "\n";
@@ -154,8 +150,6 @@ grpc::Status DiagnosticServiceImpl::Reconfigure(
                             "request/response/store must not be null");
     }
 
-    // Full replacement semantics: the request is the COMPLETE new config.
-    // Empty repeated fields clear the corresponding target list.
     ProbeConfig next;
     next.dns_targets.assign(request->dns_targets().begin(),
                             request->dns_targets().end());

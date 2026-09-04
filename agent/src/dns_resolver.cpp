@@ -41,8 +41,6 @@ char *StrDup(const char *s) {
     return out;
 }
 
-// Deep-copies a getaddrinfo() chain into a self-owned representation that can
-// outlive the original allocation.
 AddrInfoPtr DeepCopyChain(const struct addrinfo *src) {
     if (!src) return AddrInfoPtr();
     struct addrinfo *head = nullptr;
@@ -138,8 +136,6 @@ LookupResult DnsResolver::Lookup(const std::string &host,
     }
 
     if (pending) {
-        // A lookup for this key is already in flight; wait on it instead of
-        // spawning another resolver thread.
         std::unique_lock<std::mutex> lock(pending->mu);
         if (!pending->cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                                   [&] { return pending->done; })) {
@@ -152,9 +148,6 @@ LookupResult DnsResolver::Lookup(const std::string &host,
         return pending->result;
     }
 
-    // Start a background lookup. The shared Impl keeps the worker's cache
-    // references alive even if this resolver instance is destroyed while the
-    // lookup is still in flight.
     pending = std::make_shared<Impl::PendingLookup>();
     {
         std::lock_guard<std::mutex> lock(impl_->mu);
@@ -190,9 +183,6 @@ LookupResult DnsResolver::Lookup(const std::string &host,
         }
         pending->cv.notify_all();
 
-        // Back-fill the cache so the next cycle is served instantly. Failures
-        // are intentionally not cached so a transient DNS outage recovers
-        // automatically.
         std::lock_guard<std::mutex> lock(impl->mu);
         auto inf = impl->inflight.find(key);
         if (inf != impl->inflight.end() &&
@@ -212,7 +202,6 @@ LookupResult DnsResolver::Lookup(const std::string &host,
     });
     worker.detach();
 
-    // Wait for the background lookup with a hard deadline.
     std::unique_lock<std::mutex> lock(pending->mu);
     if (!pending->cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                               [&] { return pending->done; })) {

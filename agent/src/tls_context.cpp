@@ -42,8 +42,7 @@ struct ssl_session_st *TlsSessionCache::Get(const std::string &host_port) {
     std::lock_guard<std::mutex> lock(impl_->mu);
     auto it = impl_->sessions.find(host_port);
     if (it == impl_->sessions.end()) return nullptr;
-    // Take our own reference so the caller's pointer stays valid even if
-    // another thread replaces/frees the cache entry before the caller uses it.
+    
     SSL_SESSION_up_ref(it->second);
     return it->second;
 }

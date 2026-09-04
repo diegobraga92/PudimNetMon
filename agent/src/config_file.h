@@ -5,28 +5,13 @@
 #include <map>
 #include <string>
 
-// Layered-config support for the agent: a flat key=value file whose keys match
-// the long CLI option names (e.g. `collector-endpoints=...`). Precedence is:
-// built-in defaults < config file < CLI flags.
-//
-// Format (see agent/config/agent.conf.example):
-//   # comment lines start with '#' or ';'
-//   key = value           (whitespace around key/value is trimmed)
-//   list=one,two,three    (values are comma-separated, like the CLI)
-// The value may itself contain '='; the line is split on the first '='.
-// CRLF line endings are tolerated. Unknown keys are not rejected here — the
-// caller validates them against its option table.
 namespace config {
 
-// True when a file exists at `path` (used to make the default config path
-// optional: silently skipped when absent).
 inline bool Exists(const std::string &path) {
     std::ifstream in(path);
     return in.good();
 }
 
-// Parses `path` into `out`. Returns false and sets `error` if the file cannot
-// be opened or a line is malformed. Duplicate keys: last occurrence wins.
 inline bool LoadConfigFile(const std::string &path,
                            std::map<std::string, std::string> &out,
                            std::string &error) {

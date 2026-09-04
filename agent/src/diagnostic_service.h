@@ -10,9 +10,6 @@
 
 namespace pudimagent {
 
-// gRPC service the collector calls to trigger on-demand deep diagnostics on
-// this agent (traceroute, packet capture summary) and to reconfigure its
-// probes at runtime.
 class DiagnosticServiceImpl final
     : public pudimnetmon::DiagnosticService::Service {
 public:
