@@ -134,6 +134,7 @@ export interface AgentConfigForm {
   http: string
   ping: string
   pingCount: string
+  pingGap: string
   tlsCert: boolean
   tcpRetransmit: boolean
   tcpHandshake: boolean

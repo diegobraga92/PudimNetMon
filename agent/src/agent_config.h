@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "logger.h"
+#include "metrics/probe_config.h"
 
 namespace pudimagent {
 
@@ -33,18 +34,8 @@ struct AgentConfig {
 
     logger::LogLevel log_level = logger::LogLevel::Info;
 
-    std::vector<std::string> dns_targets;
-    std::vector<std::string> tcp_targets;
-    std::vector<std::string> tls_targets;
-    std::vector<std::string> http_targets;
-    std::vector<std::string> ping_targets;
-    std::vector<std::string> http_protocols;
-    std::map<std::string, std::vector<std::string>> dns_expected;
-    int ping_count = 4;
-    int ping_gap_ms = 200;
-    bool tls_cert_check = true;
-    bool tcp_retransmit_check = true;
-    bool tcp_handshake_capture = true;
+    ProbeConfig probe_cfg;
+
     int tcp_handshake_interval_ms = 0;
 
     bool use_stream_metrics = false;

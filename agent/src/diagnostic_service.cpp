@@ -66,6 +66,7 @@ std::string SummaryOf(const ProbeConfig &c) {
             << " http=" << JoinList(c.http_targets)
             << " ping=" << JoinList(c.ping_targets)
             << " ping_count=" << c.ping_count
+            << " ping_gap_ms=" << c.ping_gap_ms
             << " tls_cert=" << (c.tls_cert_check ? "on" : "off")
             << " tcp_retransmit=" << (c.tcp_retransmit_check ? "on" : "off")
             << " tcp_handshake=" << (c.tcp_handshake_capture ? "on" : "off")
@@ -168,6 +169,8 @@ grpc::Status DiagnosticServiceImpl::Reconfigure(
                              request->ping_targets().end());
     next.ping_count = request->ping_count() > 0 ? request->ping_count()
                                                 : ProbeConfig{}.ping_count;
+    next.ping_gap_ms = request->ping_gap_ms() > 0 ? request->ping_gap_ms()
+                                                  : ProbeConfig{}.ping_gap_ms;
     if (request->has_tls_cert_check()) {
         next.tls_cert_check = request->tls_cert_check();
     }

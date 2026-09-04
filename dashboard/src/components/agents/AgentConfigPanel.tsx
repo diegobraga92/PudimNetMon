@@ -47,6 +47,10 @@ function validateForm(form: AgentConfigForm): FormErrors {
   if (!Number.isInteger(count) || count < 1 || count > 100) {
     errors.pingCount = 'Ping count must be 1–100'
   }
+  const gap = Number(form.pingGap)
+  if (!Number.isInteger(gap) || gap < 1 || gap > 10000) {
+    errors.pingGap = 'Ping gap must be 1–10000 ms'
+  }
   return errors
 }
 
@@ -227,6 +231,16 @@ export function AgentConfigPanel() {
                   value={form.pingCount}
                   onChange={(e) => setField('pingCount', e.target.value)}
                   error={errors.pingCount}
+                />
+                <Input
+                  label="Ping gap (ms)"
+                  type="number"
+                  min={1}
+                  max={10000}
+                  value={form.pingGap}
+                  onChange={(e) => setField('pingGap', e.target.value)}
+                  hint="Delay between pings of the same probe"
+                  error={errors.pingGap}
                 />
                 <Input
                   label="HTTP protocols"

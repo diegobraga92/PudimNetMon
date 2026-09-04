@@ -35,7 +35,6 @@
 using pudimnetmon::MetricsBatch;
 using pudimagent::HeartbeatClient;
 using pudimagent::MetricsClient;
-using pudimagent::ProbeConfig;
 
 static std::atomic<bool> s_running{true};
 
@@ -160,36 +159,21 @@ int RunAgent(int argc, char **argv) {
     pudimagent::StartWatchdogThread(&watchdog_stop);
 
     std::vector<std::string> probe_targets;
-    for (const auto *vec : {&cfg.dns_targets, &cfg.tcp_targets, &cfg.tls_targets,
-                            &cfg.http_targets, &cfg.ping_targets}) {
+    for (const auto *vec : {&cfg.probe_cfg.dns_targets, &cfg.probe_cfg.tcp_targets,
+                            &cfg.probe_cfg.tls_targets, &cfg.probe_cfg.http_targets,
+                            &cfg.probe_cfg.ping_targets}) {
         probe_targets.insert(probe_targets.end(), vec->begin(), vec->end());
     }
 
     if (probe_targets.empty()) {
         // Default demo targets so a bare `pudim-agent` produces useful output
-        cfg.dns_targets = {"example.com"};
-        cfg.tcp_targets = {"example.com:443"};
-        cfg.tls_targets = {"example.com:443"};
-        cfg.http_targets = {"https://example.com"};
-        cfg.ping_targets = {"1.1.1.1"};
+        cfg.probe_cfg.dns_targets = {"example.com"};
+        cfg.probe_cfg.tcp_targets = {"example.com:443"};
+        cfg.probe_cfg.tls_targets = {"example.com:443"};
+        cfg.probe_cfg.http_targets = {"https://example.com"};
+        cfg.probe_cfg.ping_targets = {"1.1.1.1"};
     }
-
-
-    ProbeConfig probe_cfg;
-    probe_cfg.dns_targets = cfg.dns_targets;
-    probe_cfg.tcp_targets = cfg.tcp_targets;
-    probe_cfg.tls_targets = cfg.tls_targets;
-    probe_cfg.http_targets = cfg.http_targets;
-    probe_cfg.ping_targets = cfg.ping_targets;
-    probe_cfg.ping_count = cfg.ping_count;
-    probe_cfg.ping_gap_ms = cfg.ping_gap_ms;
-    probe_cfg.tls_cert_check = cfg.tls_cert_check;
-    probe_cfg.tcp_retransmit_check = cfg.tcp_retransmit_check;
-    probe_cfg.tcp_handshake_capture = cfg.tcp_handshake_capture;
-    probe_cfg.http_protocols = cfg.http_protocols;
-    probe_cfg.dns_expected = cfg.dns_expected;
-
-    probe_store->Set(probe_cfg);
+    probe_store->Set(cfg.probe_cfg);
 
     LOG_INFO("Running metrics probes every " + std::to_string(cfg.interval_ms) +
              "ms");

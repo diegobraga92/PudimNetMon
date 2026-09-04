@@ -48,6 +48,7 @@ message AgentConfigRequest {
   repeated string http_targets = 5;
   repeated string ping_targets = 6;
   int32 ping_count = 7;              // 0 resets to default (4)
+  int32 ping_gap_ms = 12;            // 0 resets to default (200)
   optional bool tls_cert_check = 8;           // default true
   optional bool tcp_retransmit_check = 9;     // default true
   optional bool tcp_handshake_capture = 10;   // default true

@@ -74,9 +74,11 @@ int main() {
         Check(cfg.node_id == "agent-unknown", "defaults node-id");
         Check(cfg.interval_ms == 5000, "defaults interval");
         Check(cfg.version == "0.1.0", "defaults version");
-        Check(cfg.ping_count == 4 && cfg.ping_gap_ms == 200, "defaults ping");
-        Check(cfg.tls_cert_check && cfg.tcp_retransmit_check &&
-                  cfg.tcp_handshake_capture,
+        Check(cfg.probe_cfg.ping_count == 4 && cfg.probe_cfg.ping_gap_ms == 200,
+              "defaults ping");
+        Check(cfg.probe_cfg.tls_cert_check &&
+                  cfg.probe_cfg.tcp_retransmit_check &&
+                  cfg.probe_cfg.tcp_handshake_capture,
               "defaults deep diagnostics on");
         Check(cfg.log_level == logger::LogLevel::Info, "defaults log level");
         Check(!cfg.cfg_loaded, "defaults no config file");
@@ -100,8 +102,9 @@ int main() {
         Check(cfg.cfg_loaded, "file cfg_loaded");
         Check(cfg.node_id == "file-node", "file node-id");
         Check(cfg.interval_ms == 7000, "file interval");
-        Check(cfg.dns_targets.size() == 2 && cfg.dns_targets[0] == "dns1.lan" &&
-                  cfg.dns_targets[1] == "dns2.lan",
+        Check(cfg.probe_cfg.dns_targets.size() == 2 &&
+                  cfg.probe_cfg.dns_targets[0] == "dns1.lan" &&
+                  cfg.probe_cfg.dns_targets[1] == "dns2.lan",
               "file dns-targets list");
         Check(cfg.use_stream_metrics, "file stream-metrics");
         std::filesystem::remove(path);
@@ -133,16 +136,17 @@ int main() {
         Check(pudimagent::LoadAgentConfig(args.argc(), args.data(), cfg) ==
                   pudimagent::ConfigResult::Ok,
               "cli lists ok");
-        Check(cfg.dns_targets.size() == 2 && cfg.dns_targets[1] == "b.com",
+        Check(cfg.probe_cfg.dns_targets.size() == 2 &&
+                  cfg.probe_cfg.dns_targets[1] == "b.com",
               "cli dns-targets");
-        Check(cfg.tcp_targets.size() == 2, "cli tcp-targets");
+        Check(cfg.probe_cfg.tcp_targets.size() == 2, "cli tcp-targets");
         Check(cfg.collector_endpoints.size() == 2 &&
                   cfg.collector_endpoints[0] == "c1:50051",
               "cli collector-endpoints");
         Check(cfg.use_stream_metrics, "cli stream-metrics flag");
-        Check(!cfg.tls_cert_check, "cli no-tls-cert flag");
+        Check(!cfg.probe_cfg.tls_cert_check, "cli no-tls-cert flag");
         Check(cfg.log_level == logger::LogLevel::Debug, "cli log-level");
-        Check(cfg.ping_count == 8, "cli ping-count");
+        Check(cfg.probe_cfg.ping_count == 8, "cli ping-count");
     }
 
     // 5. dns-expected parses host -> records (multiple records per host).
@@ -154,8 +158,8 @@ int main() {
         Check(pudimagent::LoadAgentConfig(args.argc(), args.data(), cfg) ==
                   pudimagent::ConfigResult::Ok,
               "dns-expected ok");
-        auto it = cfg.dns_expected.find("example.com");
-        Check(it != cfg.dns_expected.end() && it->second.size() == 2,
+        auto it = cfg.probe_cfg.dns_expected.find("example.com");
+        Check(it != cfg.probe_cfg.dns_expected.end() && it->second.size() == 2,
               "dns-expected host records");
     }
 

@@ -708,7 +708,7 @@ int main(int argc, char **argv) {
     // Agent config endpoint: POST JSON AgentConfigRequest →
     // forwards the Reconfigure RPC to the agent's diagnostic service.
     // {"agent_id","dns_targets":[...],"tcp_targets":[...],"tls_targets":[...],
-    //  "http_targets":[...],"ping_targets":[...],"ping_count":N,
+    //  "http_targets":[...],"ping_targets":[...],"ping_count":N,"ping_gap_ms":N,
     //  "tls_cert_check":bool,"tcp_retransmit_check":bool,
     //  "tcp_handshake_capture":bool,"http_protocols":[...]}
     http_server.Post("/api/agents/config",
@@ -757,6 +757,7 @@ int main(int argc, char **argv) {
         put("http_targets", creq.mutable_http_targets());
         put("ping_targets", creq.mutable_ping_targets());
         if (body.contains("ping_count")) creq.set_ping_count(body["ping_count"].get<int32_t>());
+        if (body.contains("ping_gap_ms")) creq.set_ping_gap_ms(body["ping_gap_ms"].get<int32_t>());
         if (body.contains("tls_cert_check")) creq.set_tls_cert_check(body["tls_cert_check"].get<bool>());
         if (body.contains("tcp_retransmit_check")) creq.set_tcp_retransmit_check(body["tcp_retransmit_check"].get<bool>());
         if (body.contains("tcp_handshake_capture")) creq.set_tcp_handshake_capture(body["tcp_handshake_capture"].get<bool>());
