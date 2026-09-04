@@ -7,7 +7,7 @@ namespace pudimagent {
 
 namespace {
 
-// Reads an entire file into a string. Empty on failure.
+// Reads an entire file into a string.
 std::string ReadFile(const std::string &path) {
     if (path.empty()) return "";
     std::ifstream in(path, std::ios::binary);
@@ -44,7 +44,7 @@ std::shared_ptr<grpc::ServerCredentials> MakeServerCredentials(
     opts.pem_root_certs = ReadFile(ca_path);  // used to verify client certs
     opts.pem_key_cert_pairs.push_back({ReadFile(key_path),
                                        ReadFile(cert_path)});
-    // Mutual TLS: require + verify the client certificate.
+    // Rrequire + verify the client certificate.
     opts.client_certificate_request =
         GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY;
     if (opts.pem_root_certs.empty()) {
