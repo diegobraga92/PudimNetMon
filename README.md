@@ -355,6 +355,7 @@ docker compose logs agent | grep 'Drained'         # disk buffer drained
 | Chaos & DR | [`docs/chaos-experiments.md`](docs/chaos-experiments.md), [`docs/dr-test.md`](docs/dr-test.md) |
 | Deployment | [`docs/deployment.md`](docs/deployment.md) — agents on target hosts (systemd), dashboard standalone, consumers as services |
 | Windows agent | [`docs/windows.md`](docs/windows.md) — build with MSVC + vcpkg, run as console/service, feature matrix |
+| Local Windows CI | [`docs/running-windows-ci-locally.md`](docs/running-windows-ci-locally.md) — reproduce the `cpp-agent-windows` CI job locally (MSVC + vcpkg + Inno Setup) |
 | Performance | [`docs/performance.md`](docs/performance.md) — bundle optimization + Lighthouse runbook |
 | Deep dives | [`docs/networking-deep-dive.md`](docs/networking-deep-dive.md), [`docs/kernel-tuning.md`](docs/kernel-tuning.md), [`docs/cost-analysis.md`](docs/cost-analysis.md) |
 | Demo | [`docs/demo.md`](docs/demo.md) — recorded portfolio walkthrough |
