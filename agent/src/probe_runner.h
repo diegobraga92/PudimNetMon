@@ -16,15 +16,6 @@
 
 namespace pudimagent {
 
-// Runs the configured probes on a dedicated worker thread at a fixed cadence
-// and hands completed metric batches to the main loop through a bounded FIFO
-// queue. Independent probes (DNS/TCP/TLS/HTTP) are parallelized across a small
-// worker pool; ICMP raw sockets and the libpcap handshake capture run serially
-// on the worker thread because they share global kernel state.
-//
-// Decoupling probes from the sender means a slow or hung probe (e.g. a
-// blackholed target or a slow resolver) no longer delays heartbeats or stalls
-// the watchdog path.
 class ProbeRunner {
 public:
     ProbeRunner();
@@ -33,35 +24,20 @@ public:
     ProbeRunner(const ProbeRunner &) = delete;
     ProbeRunner &operator=(const ProbeRunner &) = delete;
 
-    // Starts the probe worker thread. `agent_id` is stamped into produced
-    // batches.
     void Start(const std::string &agent_id);
-
-    // Stops the worker and the internal pool, waiting for them to exit.
     void Stop();
 
-    // The probe cadence in milliseconds. May be updated at runtime by the
-    // sender loop (backpressure adaptation); the worker picks it up on its
-    // next cycle.
     void SetIntervalMs(int interval_ms);
     int GetIntervalMs() const { return s_interval_ms_.load(); }
 
-    // The libpcap TCP-handshake capture cadence in ms. Lower-bounded by the
-    // probe interval. 0 disables throttling (run every cycle).
     void SetHandshakeIntervalMs(int interval_ms);
     int GetHandshakeIntervalMs() const { return s_handshake_interval_ms_.load(); }
 
-    // Runtime probe configuration source (the shared ProbeConfigStore updated
-    // by the collector's Reconfigure RPC).
     void SetConfigStore(std::shared_ptr<ProbeConfigStore> store);
 
-    // Number of completed batches currently waiting to be sent.
     size_t PendingCount();
-
-    // Pops up to `limit` completed batches (FIFO). Returns the number popped.
     size_t Drain(std::vector<pudimnetmon::MetricsBatch> &out, size_t limit);
 
-    // Per-cycle statistics for the self-observability log.
     struct CycleStats {
         int64_t cycle_duration_ms = 0;
         int64_t probe_duration_ms = 0;

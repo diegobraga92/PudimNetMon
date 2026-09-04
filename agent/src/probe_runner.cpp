@@ -13,9 +13,6 @@ namespace {
 
 constexpr size_t kMaxQueuedBatches = 50;
 
-// Minimal fixed-size worker pool used to parallelize independent probes within
-// a single collection cycle. Tasks are plain closures; the pool persists
-// across cycles so we do not pay thread-creation cost every interval.
 class ThreadPool {
 public:
     explicit ThreadPool(size_t n) {
@@ -180,8 +177,6 @@ void ProbeRunner::RunLoop() {
         {
             std::lock_guard<std::mutex> lock(queue_mu_);
             if (queue_.size() >= kMaxQueuedBatches) {
-                // Sender is falling behind (long collector outage); drop the
-                // oldest queued batch rather than grow without bound.
                 queue_.pop_front();
             }
             queue_.push_back(std::move(batch));
@@ -207,8 +202,6 @@ void ProbeRunner::RunLoop() {
                 static_cast<int64_t>(handshake_cycles);
         }
 
-        // Fixed-rate scheduling: wait for the next cadence slot. When a cycle
-        // overruns, skip missed slots instead of running back-to-back.
         int interval_ms = s_interval_ms_.load();
         if (interval_ms < 100) interval_ms = 100;
         next += std::chrono::milliseconds(interval_ms);
@@ -234,8 +227,6 @@ void ProbeRunner::RunCycle(const ProbeConfig &cfg,
         out.push_back(std::move(ntp));
     }
 
-    // Build the parallel task list. Results go into per-task slots so the
-    // final metric order stays deterministic regardless of completion order.
     std::vector<std::vector<pudimnetmon::Metric>> slots;
     std::vector<std::function<void(std::vector<pudimnetmon::Metric> &)>> tasks;
 
@@ -318,8 +309,6 @@ void ProbeRunner::RunCycle(const ProbeConfig &cfg,
         }
     }
 
-    // Serial phase: ICMP raw sockets + libpcap handshake capture (shared
-    // kernel state).
     for (const auto &t : cfg.ping_targets) {
         pudimnetmon::Metric loss, rtt, jitter;
         ProbeIcmp(t, cfg.ping_count, cfg.ping_gap_ms, loss, rtt, jitter);
