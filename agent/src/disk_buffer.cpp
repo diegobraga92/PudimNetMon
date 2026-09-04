@@ -8,10 +8,10 @@ namespace pudimagent {
 
 struct DiskBuffer::Impl {
     sqlite3 *db = nullptr;
-    sqlite3_stmt *insert_stmt = nullptr;  // INSERT INTO pending(payload) VALUES(?)
-    sqlite3_stmt *peek_stmt = nullptr;    // SELECT payload ... LIMIT ?
-    sqlite3_stmt *delete_stmt = nullptr;  // DELETE ... WHERE seq IN (SELECT ... LIMIT ?)
-    sqlite3_stmt *count_stmt = nullptr;   // SELECT count(*) FROM pending
+    sqlite3_stmt *insert_stmt = nullptr;
+    sqlite3_stmt *peek_stmt = nullptr;
+    sqlite3_stmt *delete_stmt = nullptr;
+    sqlite3_stmt *count_stmt = nullptr;
     uint64_t rows = 0;
     uint64_t bytes = 0;
 
@@ -37,7 +37,6 @@ bool Exec(sqlite3 *db, const std::string &sql) {
     return true;
 }
 
-// Lazily prepares (and then reuses) a cached statement.
 bool Prepare(sqlite3 *db, sqlite3_stmt **stmt, const char *sql) {
     if (*stmt) return true;
     return sqlite3_prepare_v2(db, sql, -1, stmt, nullptr) == SQLITE_OK;
@@ -60,8 +59,8 @@ bool DiskBuffer::Open(std::string &error) {
         return false;
     }
     sqlite3_busy_timeout(m_impl->db, 5000);
-    // WAL + synchronous=NORMAL: fast commits, crash-safe against process
-    // death; a lost tail on power loss is acceptable for a metric buffer.
+    // Fast commits, crash-safe against process death
+    // Can lose tail on crash/powerloss but its fine
     if (!Exec(m_impl->db, "PRAGMA journal_mode=WAL;") ||
         !Exec(m_impl->db, "PRAGMA synchronous=NORMAL;") ||
         !Exec(m_impl->db, "CREATE TABLE IF NOT EXISTS pending("
@@ -71,8 +70,6 @@ bool DiskBuffer::Open(std::string &error) {
         return false;
     }
 
-    // Seed the in-memory counters from any rows persisted by a previous run so
-    // the size-cap accounting (Push/Trim) is correct after a restart.
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(m_impl->db,
                            "SELECT count(*), COALESCE(sum(length(payload)),0) "
@@ -96,7 +93,6 @@ bool DiskBuffer::Available() const {
 bool DiskBuffer::Push(const std::string &payload_blob) {
     if (!Available()) return false;
 
-    // Enforce the size cap before inserting.
     Trim();
     if (m_impl->bytes + payload_blob.size() > m_max_bytes) {
         LOG_ERROR("DiskBuffer full; refusing to buffer more");
@@ -139,7 +135,6 @@ void DiskBuffer::Peek(std::vector<std::string> &out, size_t limit) {
 void DiskBuffer::Pop(size_t count) {
     if (!Available() || count == 0) return;
 
-    // Measure the exact bytes being removed (the payloads of the oldest rows).
     if (!Prepare(m_impl->db, &m_impl->peek_stmt,
                  "SELECT payload FROM pending ORDER BY seq ASC LIMIT ?")) {
         return;
@@ -185,8 +180,6 @@ uint64_t DiskBuffer::Size() const {
 uint64_t DiskBuffer::Trim() {
     if (!Available() || m_impl->bytes <= m_max_bytes) return 0;
 
-    // Walk the FIFO row sizes until the remaining total fits under the cap;
-    // this computes the exact number of oldest rows to drop in one pass.
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(m_impl->db,
                            "SELECT length(payload) FROM pending ORDER BY seq ASC",
@@ -217,7 +210,7 @@ uint64_t DiskBuffer::Trim() {
     if (sqlite3_step(m_impl->delete_stmt) != SQLITE_DONE) return 0;
 
     m_impl->rows = m_impl->rows > to_remove ? m_impl->rows - to_remove : 0;
-    m_impl->bytes = kept;  // exact: bytes remaining after the drop
+    m_impl->bytes = kept;
     return to_remove;
 }
 
