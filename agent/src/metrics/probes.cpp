@@ -47,7 +47,6 @@ namespace pudimagent {
 
 namespace {
 
-// Convert a "host:port" or "host" string into host + port for TCP/TLS probes.
 bool SplitHostPort(const std::string &host_port, std::string &host,
                    int &port) {
     auto colon = host_port.rfind(':');
@@ -65,7 +64,6 @@ bool SplitHostPort(const std::string &host_port, std::string &host,
     return !host.empty();
 }
 
-// Returns a Metric with success=false and a detail message.
 pudimnetmon::Metric FailureMetric(pudimnetmon::CheckType type,
                                   const std::string &target,
                                   const std::string &detail) {
@@ -77,7 +75,6 @@ pudimnetmon::Metric FailureMetric(pudimnetmon::CheckType type,
     return m;
 }
 
-// Platform socket helpers (POSIX vs Winsock).
 #ifdef _WIN32
 using Sock = SOCKET;
 static const Sock kInvalidSock = INVALID_SOCKET;
@@ -157,8 +154,6 @@ static inline int GetSocketError(Sock s) {
     return so_err;
 }
 
-// Resolves host:port and establishes a blocking TCP connection with a 3s
-// connect timeout. Returns true + fd on success.
 bool ConnectSocket(const std::string &host, int port, Sock &fd,
                    std::string &err) {
     struct addrinfo hints;
@@ -229,8 +224,7 @@ void RunDnsProbe(const std::string &host, pudimnetmon::Metric &metric) {
     hints.ai_socktype = SOCK_STREAM;
 
     auto start = std::chrono::steady_clock::now();
-    // Bypass the cache to measure a real resolution; the result still
-    // back-fills the cache for other probes.
+
     LookupResult lr = GlobalResolver().Lookup(host, "", hints, 3000, true);
     auto end = std::chrono::steady_clock::now();
 
@@ -299,7 +293,6 @@ void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
 
     auto start = std::chrono::steady_clock::now();
 
-    // Reuse the process-wide SSL_CTX (no per-call context creation).
     SSL_CTX *ctx = SharedSslCtx();
     if (!ctx) {
         SockClose(fd);
@@ -319,17 +312,13 @@ void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     SSL_set_fd(ssl, static_cast<int>(fd));
     SSL_set_tlsext_host_name(ssl, host.c_str());
 
-    // Reuse a previously negotiated session so repeated handshakes to the
-    // same target use an abbreviated handshake (less CPU, one fewer RTT).
-    // Get() returns an owned reference; release it after handing it to SSL.
     SSL_SESSION *cached_session = GlobalSessionCache().Get(host_port);
     if (cached_session) {
         SSL_set_session(ssl, cached_session);
         SSL_SESSION_free(cached_session);
     }
 
-    // Client cert verification is disabled for the handshake probe; full
-    // chain validation is done by the TLS certificate probe.
+    // Client cert verification is disabled for the handshake probe
     SSL_set_verify(ssl, SSL_VERIFY_NONE, nullptr);
 
     int rc = SSL_connect(ssl);
@@ -340,8 +329,6 @@ void RunTlsProbe(const std::string &host_port, pudimnetmon::Metric &metric) {
     }
 
     if (ok) {
-        // Store the negotiated session for the next cycle (takes ownership of
-        // the returned reference).
         SSL_SESSION *new_session = SSL_get1_session(ssl);
         if (new_session) {
             GlobalSessionCache().Put(host_port, new_session);
@@ -368,8 +355,6 @@ size_t NullWriteCallback(char *, size_t size, size_t nmemb, void *) {
     return size * nmemb;
 }
 
-// Per-thread persistent curl handle so libcurl keeps its connection pool and
-// DNS cache across cycles.
 thread_local CURL *t_curl = nullptr;
 
 CURL *GetCurlHandle() {
@@ -379,12 +364,10 @@ CURL *GetCurlHandle() {
     return t_curl;
 }
 
-// Defined later in this translation unit.
 void RunHttpProbeVersioned(const std::string &url, const std::string &protocol,
                            long curl_version, pudimnetmon::Metric &metric);
 
 void RunHttpProbe(const std::string &url, pudimnetmon::Metric &metric) {
-    // Default (curl-negotiated) protocol version.
     RunHttpProbeVersioned(url, "", CURL_HTTP_VERSION_NONE, metric);
 }
 
@@ -409,7 +392,6 @@ PingResult RunSinglePing(int fd, const sockaddr_in &addr, uint16_t id,
     icmp->un.echo.id = htons(id);
     icmp->un.echo.sequence = htons(seq);
 
-    // Build checksum
     uint32_t sum = 0;
     const uint16_t *ptr = reinterpret_cast<const uint16_t *>(packet);
     for (size_t i = 0; i < sizeof(packet) / 2; i++) {
@@ -429,7 +411,6 @@ PingResult RunSinglePing(int fd, const sockaddr_in &addr, uint16_t id,
         return res;
     }
 
-    // Receive reply with 3s timeout
     struct timeval tv{3, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
@@ -442,7 +423,7 @@ PingResult RunSinglePing(int fd, const sockaddr_in &addr, uint16_t id,
                              : std::string("recv failed: ") + strerror(errno);
             return res;
         }
-        // Parse IP header
+
         struct iphdr *iph = reinterpret_cast<struct iphdr *>(recv_buf);
         if (iph->protocol != IPPROTO_ICMP) continue;
         size_t ip_hdr_len = static_cast<size_t>(iph->ihl) * 4;
@@ -482,7 +463,6 @@ void RunIcmpProbe(const std::string &host, int count, int gap_ms,
     if (count <= 0) count = 4;
     if (gap_ms < 0) gap_ms = 0;
 
-    // Resolve host
     struct addrinfo hints;
     std::memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET; // IPv4 only for raw ICMP in this version
@@ -527,7 +507,7 @@ void RunIcmpProbe(const std::string &host, int count, int gap_ms,
     int lost_count = 0;
 
 #ifdef _WIN32
-    // Windows: use the ICMP API (iphlpapi). No admin/capability needed.
+    // Use the ICMP API (iphlpapi). No admin/capability needed.
     HANDLE icmp = IcmpCreateFile();
     if (icmp == INVALID_HANDLE_VALUE) {
         std::string d = "IcmpCreateFile failed";
@@ -544,8 +524,6 @@ void RunIcmpProbe(const std::string &host, int count, int gap_ms,
     std::memset(send_data, 'P', sizeof(send_data));
 
     for (int i = 0; i < count; i++) {
-        // Reply buffer: ICMP_ECHO_REPLY header + 8 bytes of reply overhead +
-        // the echoed payload.
         unsigned char reply[sizeof(ICMP_ECHO_REPLY) + 8 + sizeof(send_data)];
         DWORD rc = IcmpSendEcho2(icmp, nullptr, nullptr, nullptr,
                                  dst.sin_addr.S_un.S_addr, send_data,
@@ -562,7 +540,7 @@ void RunIcmpProbe(const std::string &host, int count, int gap_ms,
         } else {
             lost_count++;
         }
-        // Configurable delay between pings
+
         if (gap_ms > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(gap_ms));
         }
@@ -591,7 +569,7 @@ void RunIcmpProbe(const std::string &host, int count, int gap_ms,
         } else {
             lost_count++;
         }
-        // Configurable delay between pings
+
         if (gap_ms > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(gap_ms));
         }
@@ -636,7 +614,6 @@ void RunDnsRecordProbe(const std::string &host,
 
     auto attrs = metric.mutable_attributes();
 
-    // Canonical name (CNAME target) via AI_CANONNAME.
     {
         struct addrinfo hints;
         std::memset(&hints, 0, sizeof(hints));
@@ -651,7 +628,6 @@ void RunDnsRecordProbe(const std::string &host,
         }
     }
 
-    // A records.
     {
         struct addrinfo hints;
         std::memset(&hints, 0, sizeof(hints));
@@ -672,7 +648,6 @@ void RunDnsRecordProbe(const std::string &host,
         }
     }
 
-    // AAAA records.
     {
         struct addrinfo hints;
         std::memset(&hints, 0, sizeof(hints));
@@ -693,7 +668,6 @@ void RunDnsRecordProbe(const std::string &host,
         }
     }
 
-    // Validate against expected records ("A:1.2.3.4", "CNAME:www.example.com").
     bool mismatch = false;
     std::string detail;
     for (const auto &exp : expected) {
@@ -736,10 +710,6 @@ void RunTcpRetransmitProbe(const std::string &host_port,
         return;
     }
 #ifdef _WIN32
-    // Windows 10+: SIO_TCP_INFO returns a TCP_INFO_v0 struct; BytesRetrans is
-    // the total number of bytes retransmitted for the connection. Linux's
-    // tcpi_total_retrans counts segments instead; bytes is the closest
-    // Windows analogue.
     TCP_INFO_v0 info{};
     DWORD bytes = 0;
     if (WSAIoctl(fd, SIO_TCP_INFO, nullptr, 0, &info, sizeof(info), &bytes,
@@ -786,8 +756,6 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
         return;
     }
 
-    // Reuse the process-wide SSL_CTX (TLS >= 1.2 + system CA bundle loaded
-    // once at startup).
     SSL_CTX *ctx = SharedSslCtx();
     if (!ctx) {
         SockClose(fd);
@@ -807,8 +775,7 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
     SSL_set_tlsext_host_name(ssl, host.c_str());
     SSL_set_verify(ssl, SSL_VERIFY_PEER, nullptr);
 
-    // NOTE: no TLS session resumption here on purpose - the certificate probe
-    // needs a full handshake so the server actually presents its certificate.
+    // The certificate probe needs a full handshake so the server actually presents its certificate.
 
     int rc = SSL_connect(ssl);
     long verify_result = SSL_get_verify_result(ssl);
@@ -832,7 +799,6 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
             OPENSSL_free(issuer);
         }
 
-        // Days until expiry (negative if already expired).
         ASN1_TIME *not_after =
             const_cast<ASN1_TIME *>(X509_get0_notAfter(cert));
         int days = 0, secs = 0;
@@ -840,7 +806,6 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
             (*attrs)["tls_cert_expiry_days"] = std::to_string(days);
         }
 
-        // Not-yet-valid certificate?
         ASN1_TIME *not_before =
             const_cast<ASN1_TIME *>(X509_get0_notBefore(cert));
         if (not_before && ASN1_TIME_diff(&days, &secs, not_before, nullptr) &&
@@ -851,7 +816,6 @@ void RunTlsCertProbe(const std::string &host_port, pudimnetmon::Metric &metric) 
         int host_ok = X509_check_host(cert, host.c_str(), host.size(), 0, nullptr);
         (*attrs)["tls_cert_hostname_match"] = (host_ok == 1) ? "true" : "false";
 
-        // Validity = chain OK + hostname match.
         if (verify_result != X509_V_OK) {
             metric.set_success(false);
             metric.set_detail(std::string("certificate chain invalid: ") +
@@ -871,8 +835,6 @@ void RunHttpProbeVersioned(const std::string &url, const std::string &protocol,
                            long curl_version, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_HTTP_REQUEST);
     metric.set_monotonic_us(platform::MonotonicUs());
-    // Append the protocol to the target so the dashboard can group by it
-    // (e.g. "https://example.com;http2").
     metric.set_target(protocol.empty() ? url : url + ";" + protocol);
 
     CURL *curl = GetCurlHandle();
@@ -881,8 +843,7 @@ void RunHttpProbeVersioned(const std::string &url, const std::string &protocol,
                                metric.target(), "curl init failed");
         return;
     }
-    // Reset per-request options while keeping the handle (and its connection
-    // pool + DNS cache) for reuse.
+
     curl_easy_reset(curl);
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -971,7 +932,6 @@ void ProbeIcmp(const std::string &host, int count, int gap_ms,
 
 void RunAllProbes(const ProbeConfig &config,
                   std::vector<pudimnetmon::Metric> &out_metrics) {
-    // Kernel clock offset (always emitted when enabled).
     if (config.ntp_check) {
         pudimnetmon::Metric ntp;
         ProbeNtpOffset(ntp);
@@ -981,7 +941,6 @@ void RunAllProbes(const ProbeConfig &config,
         pudimnetmon::Metric m;
         RunDnsProbe(t, m);
         out_metrics.push_back(std::move(m));
-        // DNS record lookup + optional expected-value validation.
         auto it = config.dns_expected.find(t);
         std::vector<std::string> expected =
             (it != config.dns_expected.end()) ? it->second

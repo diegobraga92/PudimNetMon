@@ -8,12 +8,9 @@
 
 namespace pudimagent {
 
-// Runs all configured probes and appends metrics to out_metrics.
-// Each probe failure produces a Metric with success=false + detail.
 void RunAllProbes(const ProbeConfig &config,
                   std::vector<pudimnetmon::Metric> &out_metrics);
 
-// Individual probes (mostly for unit testing).
 void ProbeDns(const std::string &host, pudimnetmon::Metric &metric);
 void ProbeDnsRecord(const std::string &host,
                     const std::vector<std::string> &expected,

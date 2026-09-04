@@ -256,7 +256,6 @@ int RunAgent(int argc, char **argv) {
             }
         }
 
-        // Send when new batches arrived, or retry a failed send.
         bool should_send = false;
         if (!buffer.empty()) {
             if (!fresh.empty()) {
@@ -296,7 +295,7 @@ int RunAgent(int argc, char **argv) {
                                                                 pb.metrics(),
                                                                 traceparent)
                                 : clients.second->SendBatch(pb, traceparent);
-                        if (!d_ok) break;  // stop draining; retry next pass
+                        if (!d_ok) break;
                     }
                     disk_buffer.Pop(1);
                     disk_drained_total++;

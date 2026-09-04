@@ -1,6 +1,3 @@
-// TCP handshake capture probe using libpcap. Measures per-segment timings of
-// the TCP three-way handshake (SYN -> SYN-ACK -> ACK). When libpcap is not
-// available in the build, the probe degrades to a failure metric.
 #include <chrono>
 #include <cstring>
 #include <string>
@@ -27,10 +24,6 @@ namespace pudimagent {
 
 namespace {
 
-// The capture device rarely changes; enumerating all interfaces via
-// pcap_findalldevs() on every probe is comparatively expensive. Cache the
-// chosen device and refresh it periodically so interface changes are still
-// picked up.
 std::string GetCaptureDevice() {
     static std::mutex dev_mu;
     static std::string device;
@@ -75,7 +68,6 @@ void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric
         metric.set_detail(detail);
     };
 
-    // Parse host:port
     auto colon = host_port.rfind(':');
     if (colon == std::string::npos) { fail("invalid host:port"); return; }
     std::string host = host_port.substr(0, colon);
@@ -84,8 +76,6 @@ void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric
         port = std::stoi(host_port.substr(colon + 1));
     } catch (...) { fail("invalid port"); return; }
 
-    // Resolve target as IPv4 (keeps the pcap parsing simple). Uses the shared
-    // time-bounded resolver so a slow DNS answer cannot stall the probe loop.
     struct addrinfo hints {};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -99,7 +89,6 @@ void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric
     auto *sin = reinterpret_cast<struct sockaddr_in *>(lr.addrs->ai_addr);
     uint32_t target_ip = sin->sin_addr.s_addr;
 
-    // Pick a non-loopback capture device (cached; refreshed periodically).
     std::string dev = GetCaptureDevice();
     if (dev.empty()) { fail("no non-loopback capture device"); return; }
 
@@ -117,7 +106,6 @@ void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric
     }
     pcap_freecode(&fp);
 
-    // Non-blocking connect.
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) { pcap_close(handle); fail("socket failed"); return; }
     int flags = fcntl(fd, F_GETFL, 0);
@@ -131,14 +119,12 @@ void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric
         close(fd); pcap_close(handle); fail("connect failed"); return;
     }
 
-    // Local IP + ephemeral source port (for matching our own packets).
     struct sockaddr_in local {};
     socklen_t llen = sizeof(local);
     getsockname(fd, reinterpret_cast<struct sockaddr *>(&local), &llen);
     uint32_t local_ip = local.sin_addr.s_addr;
     uint16_t local_port = ntohs(local.sin_port);
 
-    // Capture SYN, SYN-ACK, ACK with timestamps.
     double t_syn = -1.0, t_synack = -1.0, t_ack = -1.0;
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
     while (std::chrono::steady_clock::now() < deadline) {

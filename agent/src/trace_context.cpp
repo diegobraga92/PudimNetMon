@@ -10,9 +10,6 @@ namespace pudimagent {
 
 namespace {
 
-// Reads `n` random bytes into `out`. Returns false on failure. Delegates to
-// the platform layer, which prefers getrandom() on Linux (single syscall, no
-// per-call file open) and falls back to /dev/urandom on other POSIX systems.
 bool RandomBytes(unsigned char *out, size_t n) {
     return pudimagent::platform::RandomBytes(out, n);
 }
