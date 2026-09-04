@@ -29,7 +29,6 @@ void NotifyStatus(const std::string &status) {
 
 void StartWatchdogThread(bool *stop) {
     std::thread t([stop]() {
-        // Ping roughly every 25s; systemd WatchdogSec=60 (2x margin).
         constexpr std::chrono::milliseconds kPingInterval{25000};
         while (!*stop) {
             std::this_thread::sleep_for(kPingInterval);

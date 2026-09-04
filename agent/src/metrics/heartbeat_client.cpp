@@ -46,7 +46,6 @@ bool HeartbeatClient::SendHeartbeat(int interval_ms, const std::string &version,
         ctx.AddMetadata("traceparent", traceparent);
     }
 
-    // Set a deadline for the RPC
     auto deadline =
         std::chrono::system_clock::now() + std::chrono::seconds(10);
     ctx.set_deadline(deadline);

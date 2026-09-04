@@ -140,6 +140,8 @@ int RunAgent(int argc, char **argv) {
                                 : "gRPC transport: mTLS (client cert " +
                                       cfg.tls_cert + ")");
 
+    // TODO: Check if a pair is the best approach here
+
     auto reconnect = [&]() {
         const std::string &ep = failover.CurrentEndpoint();
         LOG_INFO("Connecting to collector endpoint: " + ep);
