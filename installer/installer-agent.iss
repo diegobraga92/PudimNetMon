@@ -106,21 +106,53 @@ var
 const
   DefaultInterval = '5000';
 
-procedure InitializeWizard();
+// Stops the PudimNetMonAgent service and waits until it is fully stopped.
+// sc.exe stop only sends the stop control and returns immediately, leaving
+// the service STOP_PENDING. Inno Setup's RestartManager then finds
+// pudim-agent.exe still in use on the Preparing page and aborts an upgrade
+// with exit code 5. Poll sc.exe stop's exit code instead (locale-independent):
+//   0    = stop control accepted (service is stopping)
+//   1061 = service cannot accept control yet (still stopping)
+//   1062 = service is stopped
+//   1060 = service does not exist (fresh install)
+procedure StopAgentService();
 var
   ResultCode: Integer;
+  Attempt: Integer;
+begin
+  for Attempt := 1 to 60 do
+  begin
+    // NOTE: Exec does not expand constants in FileName; ExpandConstant is
+    // required here or sc.exe cannot be launched. sc stop returns immediately
+    // after sending the stop control, so poll its exit code: 0 = stop
+    // accepted (service stopping), 1061 = cannot accept control yet,
+    // 1062 = stopped, 1060 = not installed.
+
+    if Exec(ExpandConstant('{sys}\sc.exe'), 'stop PudimNetMonAgent', '', SW_HIDE,
+            ewWaitUntilTerminated, ResultCode) then
+    begin
+      if (ResultCode = 1060) or (ResultCode = 1062) then
+        Exit;  // not installed, or fully stopped
+    end;
+    Sleep(1000);
+  end;
+
+  MsgBox('Setup could not stop the PudimNetMonAgent service. Stop it in ' +
+         'Services, then run Setup again.', mbError, MB_OK);
+  Abort();
+end;
+
+procedure InitializeWizard();
 begin
   // A reinstall/upgrade replaces pudim-agent.exe while the running service
-  // holds it open. Stop it here, before Inno Setup's RestartManager scans for
-  // in-use files on the Preparing page (that scan waits only ~5 s for the
-  // agent to stop, then aborts the install -- exit code 5). We do this in
-  // InitializeWizard rather than InitializeSetup because InitializeSetup runs
-  // before UAC elevation, where sc.exe stop is denied. On a fresh install
-  // there is no service and sc stop fails fast (error 1060), which is ignored.
-  Exec('{sys}\sc.exe', 'stop PudimNetMonAgent', '', SW_HIDE,
-       ewWaitUntilTerminated, ResultCode);
-  if ResultCode = 0 then
-    Sleep(1500);  // let the process release its image before file replacement
+  // holds it open. Stop it (and wait until it is really stopped) before Inno
+  // Setup's RestartManager scans for in-use files on the Preparing page - that
+  // scan waits only ~5 s for the agent to stop, then aborts the install with
+  // exit code 5. We do this in InitializeWizard rather than InitializeSetup
+  // because InitializeSetup runs before UAC elevation, where stopping the
+  // service is denied.
+  StopAgentService();
+
 
   // Defaults are captured here so silent installs (which skip the wizard
   // pages) still configure the service sensibly.
@@ -252,16 +284,13 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ResultCode: Integer;
 begin
   if CurStep = ssInstall then
   begin
-    // Let an existing installation be upgraded: stop the service so the exe
-    // is not locked while it is being replaced. The result is ignored -- a
-    // fresh install has no service to stop, and net/sc both fail harmlessly.
-    Exec('{sys}\sc.exe', 'stop PudimNetMonAgent', '', SW_HIDE,
-         ewWaitUntilTerminated, ResultCode);
+    // Let an existing installation be upgraded: stop the service (and wait for
+    // it to actually stop) so the exe is not locked while it is replaced.
+    // No-op on a fresh install (sc stop returns 1060/1062 immediately).
+    StopAgentService();
   end;
 end;
 
