@@ -17,8 +17,7 @@ bool FailoverClient::OnSendFailure() {
     m_strikes++;
     if (m_strikes < kMaxStrikes) return false;
 
-    // Rotate to the next endpoint (wraps around; the first endpoint stays the
-    // primary so a recovered primary is preferred once all others are tried).
+    // Rotate to the next endpoint
     m_strikes = 0;
     m_failovers++;
     m_current = (m_current + 1) % m_endpoints.size();
