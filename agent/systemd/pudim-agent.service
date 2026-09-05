@@ -1,5 +1,5 @@
 [Unit]
-Description=PudimNetMon Agent - Network monitoring heartbeat daemon
+Description=PudimNetMon Agent
 Documentation=https://github.com/diegobraga92/PudimNetMon
 After=network-online.target
 Wants=network-online.target
@@ -8,18 +8,9 @@ Wants=network-online.target
 Type=notify
 NotifyAccess=main
 WatchdogSec=60
-# Settings are layered: built-in defaults < /etc/pudim/agent.conf < flags below.
-# scripts/install-agent.sh seeds /etc/pudim/agent.conf from
-# agent/config/agent.conf.example on first install (never overwriting an
-# existing config); edit it to configure endpoints, probe targets, mTLS,
-# buffering, etc. --node-id=%H is host-specific so it stays here; pass
-# --config-file=<path> to override the default config location (explicit paths
-# must exist).
-ExecStart=/usr/local/bin/pudim-agent \
-    --node-id=%H
+ExecStart=/usr/local/bin/pudim-agent --node-id=%H
 
-# Security hardening: run unprivileged and retain only the capabilities the
-# probes need (CAP_NET_RAW for ICMP raw sockets, CAP_NET_ADMIN for libpcap).
+# Run unprivileged and retain only the capabilities the probes need
 User=nobody
 Group=nogroup
 NoNewPrivileges=true
@@ -35,7 +26,7 @@ LimitNOFILE=65536
 MemoryMax=256M
 CPUQuota=50%
 
-# Log rotation / journald: stdout+stderr captured and rotated by journald
+# stdout+stderr captured and rotated by journald
 StandardOutput=journal
 StandardError=journal
 JournaldStreamRateIntervalSec=10
