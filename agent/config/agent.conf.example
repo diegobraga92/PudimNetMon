@@ -1,28 +1,17 @@
-# PudimNetMon agent configuration
-#
-# Layered configuration: built-in defaults < this file < CLI flags.
-# CLI flags always win over values in this file.
-#
-# Format: one `key=value` per line. '#' or ';' starts a comment; blank lines
-# are ignored. Keys are the long names of the agent's CLI flags, so every
-# --flag has an exact key=value equivalent and comma-separated lists match the
-# CLI syntax. Copy this to /etc/pudim/agent.conf (Linux) or
-# <state-dir>\agent.conf (Windows), or pass --config-file=<path>.
-
 # Collector(s)
-# Single endpoint or comma-separated failover list (same as --collector-endpoints).
+# Single endpoint or comma-separated failover list
 collector-endpoints=collector.lan:50051
 
-# Unique node identifier (systemd usually passes hostname via --node-id=%H).
+# Unique node identifier
 node-id=agent-01
 
-# Heartbeat + probe cadence in milliseconds (default: 5000).
+# Heartbeat + probe cadence in milliseconds
 interval=5000
 
-# Optional trace ID stamped on every log line (default: empty).
+# Optional trace ID stamped on every log line
 #trace-id=
 
-# Log verbosity: debug|info|warn|error (default: info).
+# Log verbosity: debug|info|warn|error
 log-level=info
 
 # Probe targets (comma-separated lists)
@@ -40,7 +29,7 @@ http-protocols=http1.1,http2
 # Expected DNS records: host=TYPE:value,host2=CNAME:x
 #dns-expected=example.com=A:1.2.3.4
 
-# Deep diagnostics (default: all enabled; set to true to disable)
+# Deep diagnostics (set to true to disable)
 #no-tls-cert=false
 #no-tcp-retransmit=false
 #no-tcp-handshake=false
@@ -52,9 +41,9 @@ diagnostic-port=50052
 diagnostic-address=agent-01.lan:50052
 
 # Delivery / buffering
-# max-buffer-size: in-memory batch cap before spilling to disk (default: 200).
+# In-memory batch cap before spilling to disk
 max-buffer-size=200
-# disk-buffer-path: SQLite file for persistent buffering.
+# SQLite file for persistent buffering
 #disk-buffer-path=/var/lib/pudim/pending.db
 #disk-buffer-max-mb=100
 
@@ -63,8 +52,8 @@ max-buffer-size=200
 #tls-cert=/etc/pudim/tls/agent.pem
 #tls-key=/etc/pudim/tls/agent.key
 
-# NTP server for the offset probe (default: pool.ntp.org).
+# NTP server for the offset probe
 ntp-server=pool.ntp.org
 
-# Client-streaming metrics RPC instead of unary (default: false).
+# Client-streaming metrics RPC instead of unary
 #stream-metrics=false

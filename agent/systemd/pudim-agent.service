@@ -9,10 +9,12 @@ Type=notify
 NotifyAccess=main
 WatchdogSec=60
 # Settings are layered: built-in defaults < /etc/pudim/agent.conf < flags below.
-# Copy agent/config/agent.conf.example to /etc/pudim/agent.conf and edit it to
-# configure endpoints, probe targets, mTLS, buffering, etc. --node-id=%H is
-# host-specific so it stays here; pass --config-file=<path> to override the
-# default config location (explicit paths must exist).
+# scripts/install-agent.sh seeds /etc/pudim/agent.conf from
+# agent/config/agent.conf.example on first install (never overwriting an
+# existing config); edit it to configure endpoints, probe targets, mTLS,
+# buffering, etc. --node-id=%H is host-specific so it stays here; pass
+# --config-file=<path> to override the default config location (explicit paths
+# must exist).
 ExecStart=/usr/local/bin/pudim-agent \
     --node-id=%H
 

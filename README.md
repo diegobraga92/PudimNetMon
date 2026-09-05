@@ -173,16 +173,18 @@ sudo apt-get install -y cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
 cmake -S agent -B build && cmake --build build -j$(nproc)
 sudo cmake --install build                      # /usr/local/bin/pudim-agent
 
-# 2. Install the shipped, pre-hardened systemd unit
-sudo cp agent/systemd/pudim-agent.service /etc/systemd/system/
+# 2. Idempotent installer: systemd unit + seed config (only if absent) + enable
+sudo scripts/install-agent.sh
 
 # 3. Point it at your collector and define probe targets in the config file
-sudo mkdir -p /etc/pudim
-sudo cp agent/config/agent.conf.example /etc/pudim/agent.conf
 sudoedit /etc/pudim/agent.conf   # collector-endpoints, node-id, probes, mTLS...
-
-sudo systemctl daemon-reload && sudo systemctl enable --now pudim-agent
+sudo systemctl restart pudim-agent
 ```
+
+The installer is safe to re-run (e.g. when upgrading the agent): it refreshes
+the systemd unit and (re)enables/starts the service, but it **never overwrites
+an existing `/etc/pudim/agent.conf`** — admin-edited settings survive. To
+regenerate the default config, move the file aside and re-run it.
 
 Unknown keys in the config file are rejected at startup (typos fail fast, so a
 misspelled setting can't silently fall back to defaults). Use
