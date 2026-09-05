@@ -35,7 +35,7 @@ std::string WriteTempConfig(const std::string &content) {
 } // namespace
 
 int main() {
-    // 1. Basic parse: comments, blank lines, whitespace trimming, comma lists.
+    // 1. Comments, blank lines, whitespace trimming, comma lists.
     {
         std::string path = WriteTempConfig(
             "# comment\n"
