@@ -318,11 +318,7 @@ jobs:
           $svc = Get-Service PudimNetMonAgent
           Write-Host "[install] Service OK ($($svc.Status))"
 
-          # ---- 2. Config model: only node-id is baked into the ImagePath; every
-          # mutable setting lives in agent.conf (single source of truth). -------
-          # Read the service ImagePath through CIM - `sc.exe qc` output is
-          # localized (e.g. pt-BR prints a translated label), so grepping for
-          # "BINARY_PATH_NAME" breaks on non-English Windows.
+          # Config only node-id. Rest lives in agent.conf
           $svcCfg = Get-CimInstance Win32_Service -Filter "Name='PudimNetMonAgent'"
           if (-not $svcCfg -or [string]::IsNullOrWhiteSpace($svcCfg.PathName)) {
             Write-ServiceDiagnostics -Label 'config model: service config unreadable'
@@ -383,9 +379,7 @@ jobs:
           }
           Write-Host 'agent.conf change OK: service restarted and running'
 
-          # ---- 5. Uninstaller --------------------------------------------------
-          # Inno registers DisplayName as AppVerName ("PudimNetMon Agent 0.1.0"),
-          # not the bare AppName - match by prefix.
+          # Uninstall
           $entry = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' |
             Where-Object { $_.DisplayName -like 'PudimNetMon Agent*' } |
             Select-Object -First 1
