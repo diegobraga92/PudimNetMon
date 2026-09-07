@@ -64,22 +64,8 @@ jobs:
     runs-on: windows-latest
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
-      # Static vcpkg libraries (x64-windows-static-md) so pudim-agent.exe is
-      # self-contained: the installer payload is a single exe and the service
-      # runs from "Program Files", where the vcpkg DLLs (grpc/protobuf/openssl/
-      # curl/sqlite3) would not be present. The MSVC build still links the
-      # dynamic CRT, which the bundled vc_redist.x64.exe installs. "-release"
-      # keeps the vcpkg ports to Release-only builds so the cache stays small.
       VCPKG_DEFAULT_TRIPLET: x64-windows-static-md-release
-      # Keep the vcpkg-tool release used below in sync with the cache key so a
-      # tool upgrade never restores a stale installed tree / binary cache.
       VCPKG_TOOL_VERSION: "2026-07-27"
-      # vcpkg removed its GitHub Actions binary-cache provider (x-gha); parsing
-      # `x-gha` now only emits a deprecation warning and registers NO provider,
-      # so the previous `clear;x-gha,readwrite` silently disabled binary caching
-      # and forced a from-source rebuild of grpc/protobuf/openssl/curl on every
-      # run. Use a files-based binary cache inside the workspace instead and let
-      # actions/cache persist it between runs.
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite
     steps:
       - uses: actions/checkout@v7
@@ -100,15 +86,6 @@ jobs:
           & "$env:VCPKG_ROOT\vcpkg.exe" version --disable-metrics
 
       # Check latest: https://github.com/actions/cache/releases
-      # Two cache layers make the Configure step fast: the installed tree
-      # (build/agent-win/vcpkg_installed) and the files-based binary cache
-      # (.vcpkg-cache). `downloads` avoids re-downloading source tarballs.
-      # buildtrees/packages are intentionally NOT cached: buildtrees alone can
-      # push the repo past the 10 GB Actions-cache budget (silently evicting
-      # every entry, so every run is a cold build) and stale intermediate build
-      # state can corrupt later builds; `packages` is only a staging dir in
-      # manifest mode. save-always keeps the caches warm even when a later step
-      # (e.g. the build) fails.
       - name: Cache vcpkg artifacts
         uses: actions/cache@v5
         with:
@@ -116,20 +93,11 @@ jobs:
             ${{ env.VCPKG_ROOT }}/downloads
             ${{ github.workspace }}/.vcpkg-cache
             build/agent-win/vcpkg_installed
-          # "v2" in the key deliberately breaks prefix-matching against stale
-          # pre-v2 entries (restore-keys would otherwise resurrect a cache that
-          # contains downloads but an empty .vcpkg-cache, forcing a full 3h
-          # rebuild every run). Bump the marker whenever the cache layout, the
-          # vcpkg baseline, or the linkage/triplet changes -- "v3" here
-          # invalidates the dynamic-linkage caches from the x64-windows-release
-          # era after switching to static vcpkg libraries.
           key: vcpkg-v3-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('agent/vcpkg.json') }}-${{ env.VCPKG_TOOL_VERSION }}
           restore-keys: |
             vcpkg-v3-${{ runner.os }}-
           save-always: true
 
-      # Makes cache behaviour visible in the log: if actions/cache restored a
-      # stale/empty entry, this shows it before vcpkg runs.
       - name: Inspect restored vcpkg cache
         shell: pwsh
         run: |
@@ -156,9 +124,6 @@ jobs:
 
       - name: Build
         shell: pwsh
-        # Bounded parallelism: MSBuild's /m (bare -j) spawns unbounded cl.exe
-        # processes which can exhaust memory while linking gRPC and interleaves
-        # output so real linker errors get lost in the log.
         run: cmake --build build/agent-win --config Release -j 2
 
       - name: Test (CTest)
@@ -175,8 +140,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path installer/payload | Out-Null
           Copy-Item build/agent-win/Release/pudim-agent.exe installer/payload/
-          # The MSVC build links the dynamic CRT, so bundle the VC++ runtime for
-          # machines that do not have the redistributable installed.
+          # Bundle VC++ runtime instead of DLLs.
           curl.exe -L --fail --retry 5 --retry-delay 5 --retry-connrefused `
             -o installer/payload/vc_redist.x64.exe `
             "https://aka.ms/vs/17/release/vc_redist.x64.exe"
@@ -196,9 +160,6 @@ jobs:
       - name: Smoke test installer (install -> config model -> upgrade -> uninstall)
         shell: pwsh
         run: |
-          # Every setup/uninstaller launch below is bounded: a wedged child of
-          # the installer (e.g. the bundled VC++ redistributable / msiexec, or a
-          # [Run] step) used to stall this step for hours with zero output.
           function Invoke-SetupProcess {
             param(
               [string]$Phase,
@@ -213,8 +174,7 @@ jobs:
               Write-Host "[$Phase] TIMEOUT after ${TimeoutSeconds}s; killing process tree"
               Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
               Start-Sleep -Seconds 2
-              # Kill leftover installer/agent children so the step fails cleanly
-              # instead of leaving orphaned processes behind.
+              # Kill leftover installer/agent children.
               Get-Process -Name 'pudim-agent', 'unins000', 'Setup*', 'Pudim*' -ErrorAction SilentlyContinue |
                 ForEach-Object { Write-Host "  killing leftover $($_.ProcessName) pid=$($_.Id)"; Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
               Write-Host '---- service state ----'
@@ -242,11 +202,7 @@ jobs:
             }
           }
 
-          # Dumps everything needed to diagnose why PudimNetMonAgent is not
-          # running after an install/upgrade: the exact ImagePath sc stored
-          # (validates the Inno-side quoting), the service state/exit codes, any
-          # live agent processes, and the Windows event log entries the SCM or a
-          # crash would have written in the last 15 minutes.
+          # Dumps everything needed to diagnose issues
           function Write-ServiceDiagnostics {
             param([string]$Label)
             Write-Host "---- service diagnostics: $Label ----"
@@ -280,10 +236,7 @@ jobs:
             Write-Host '---- end service diagnostics ----'
           }
 
-          # Waits (and retries) for the service to reach Running. The installer
-          # defers the initial start to a detached helper that fires after Setup
-          # exits, so right after install the service may legitimately still be
-          # Stopped for a few seconds.
+          # Waits and retries for the service to reach Running.
           function Wait-AgentServiceRunning {
             param([string]$Label)
             for ($i = 1; $i -le 8; $i++) {
@@ -304,14 +257,7 @@ jobs:
           $upgradeLog = Join-Path $env:TEMP 'pudim-setup-upgrade.log'
           $uninstallLog = Join-Path $env:TEMP 'pudim-setup-uninstall.log'
 
-          # ---- 0. Agent startup probe (diagnostics only): launch the freshly
-          # built binary in the console for a few seconds and capture its stdout.
-          # This shows whether the exe loads, initializes and runs on this exact
-          # runner image BEFORE the Service Control Manager is involved, so a
-          # later service-start failure can be attributed to service plumbing
-          # rather than the binary itself. Bound and killed like every other
-          # child below. Purely diagnostic: any probe failure must never fail
-          # the step, so the whole block is guarded.
+          # Launch the freshly binary in the console for a few seconds and capture its stdout.
           try {
             $payloadAgent = Join-Path $PWD 'installer\payload\pudim-agent.exe'
             if (Test-Path $payloadAgent) {
@@ -349,7 +295,7 @@ jobs:
               }
           }
 
-          # ---- 1. Silent install -----------------------------------------------
+          # Silent install
           Invoke-SetupProcess -Phase 'install' -FilePath $setup.FullName `
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$installLog" `
             -LogFile $installLog
@@ -372,8 +318,7 @@ jobs:
           $svc = Get-Service PudimNetMonAgent
           Write-Host "[install] Service OK ($($svc.Status))"
 
-          # ---- 2. Config model: only node-id is baked into the ImagePath; every
-          # mutable setting lives in agent.conf (single source of truth). -------
+          # Config only node-id rest lives in agent.conf
           $binPath = ((sc.exe qc PudimNetMonAgent) |
             Select-String 'BINARY_PATH_NAME' | Select-Object -First 1).Line
           Write-Host $binPath
@@ -395,9 +340,7 @@ jobs:
             throw 'agent.conf must not contain node-id (it lives on the service command line)'
           }
 
-          # ---- 3. Upgrade path: re-run the installer over the existing install.
-          # Exercises the service-exists -> ChangeServiceConfig branch and rewrites
-          # agent.conf before the service is restarted. -------------------------
+          # Re-run the installer over the existing install to test upgrade
           Invoke-SetupProcess -Phase 'upgrade' -FilePath $setup.FullName `
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$upgradeLog" `
             -LogFile $upgradeLog
@@ -420,9 +363,7 @@ jobs:
           $svc = Get-Service PudimNetMonAgent
           Write-Host '[upgrade] OK: service running after reinstall'
 
-          # ---- 4. agent.conf is authoritative: change the interval, restart, and
-          # confirm the agent still comes up (no stale ImagePath flag overrides
-          # the file). ----------------------------------------------------------
+          # Confirm the agent still comes up after config change and restart
           (Get-Content $confPath) -replace 'interval=\d+', 'interval=4321' |
             Set-Content $confPath
           Restart-Service PudimNetMonAgent
@@ -434,7 +375,7 @@ jobs:
           }
           Write-Host 'agent.conf change OK: service restarted and running'
 
-          # ---- 5. Uninstaller --------------------------------------------------
+          # Uninstall test
           $entry = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' |
             Where-Object { $_.DisplayName -eq 'PudimNetMon Agent' } |
             Select-Object -First 1
