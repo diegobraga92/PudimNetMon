@@ -101,6 +101,10 @@ target_link_libraries(pudim_proto
 add_executable(pudim-collector
   src/main.cpp
   src/agent_dist.cpp
+  src/agent_registry.cpp
+  src/agent_rpc.cpp
+  src/agent_service.cpp
+  src/http_server.cpp
   src/storage/timescale_storage.cpp
   src/metrics_service.cpp
   src/alerting/alert_rule.cpp

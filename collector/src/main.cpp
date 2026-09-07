@@ -1,74 +1,31 @@
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
-#include <unordered_map>
-#include <vector>
-#include <shared_mutex>
-#include <chrono>
 #include <thread>
-#include <csignal>
-#include <atomic>
-#include <cstdlib>
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/server_builder.h>
-#include <httplib.h>
 
-#include "heartbeat.grpc.pb.h"
-#include "metrics.grpc.pb.h"
-#include "diagnostic.grpc.pb.h"
+#include "agent_dist.h"
+#include "agent_registry.h"
+#include "agent_rpc.h"
+#include "agent_service.h"
+#include "alerting/alert_manager.h"
+#include "http_server.h"
+#include "kafka/producer.h"
+#include "logging.h"
 #include "metrics_service.h"
 #include "storage/timescale_storage.h"
-#include "alerting/alert_manager.h"
 #include "tls_credentials.h"
-#include "agent_dist.h"
-#include <nlohmann/json.hpp>
 
 using grpc::Server;
 using grpc::ServerBuilder;
-using grpc::ServerContext;
-using grpc::Status;
-using pudimnetmon::AgentService;
-using pudimnetmon::HeartbeatRequest;
-using pudimnetmon::HeartbeatResponse;
 
-// JSON-structured logging to stdout.
-namespace logger {
-
-static inline std::string escape(const std::string &s) {
-    std::string out;
-    for (char c : s) {
-        if (c == '"') out += "\\\"";
-        else if (c == '\\') out += "\\\\";
-        else if (c == '\n') out += "\\n";
-        else if (c == '\t') out += "\\t";
-        else out += c;
-    }
-    return out;
-}
-
-static inline void emit(const std::string &level, const std::string &message,
-                        const std::string &agent_id = "",
-                        const std::string &trace_id = "") {
-    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::system_clock::now().time_since_epoch())
-                   .count();
-    std::cout << "{"
-              << "\"timestamp\":" << now << ","
-              << "\"level\":\"" << level << "\","
-              << "\"component\":\"collector\","
-              << "\"message\":\"" << escape(message) << "\"";
-    if (!agent_id.empty()) {
-        std::cout << ",\"agent_id\":\"" << escape(agent_id) << "\"";
-    }
-    if (!trace_id.empty()) {
-        std::cout << ",\"trace_id\":\"" << escape(trace_id) << "\"";
-    }
-    std::cout << "}" << std::endl;
-}
-
-} // namespace logger
-
+// True until SIGTERM/SIGINT asks for a graceful shutdown.
 static std::atomic<bool> s_running{true};
 
 static void handle_signal(int sig) {
@@ -76,237 +33,6 @@ static void handle_signal(int sig) {
                            (sig == SIGINT)  ? "SIGINT" : "UNKNOWN";
     logger::emit("info", std::string("Received ") + sig_name + ", shutting down...");
     s_running = false;
-}
-
-struct AgentEntry {
-    std::string agent_id;
-    int64_t last_seen_unix_ms;
-    int32_t interval_ms;
-    std::string version;
-    int64_t first_seen_unix_ms;
-    std::string diagnostic_endpoint;  // host:port of the agent's diagnostic server
-};
-
-class AgentRegistry {
-public:
-    void RecordHeartbeat(const HeartbeatRequest &req) {
-        std::unique_lock lock(m_mutex);
-        auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::system_clock::now().time_since_epoch())
-                       .count();
-        auto it = m_agents.find(req.agent_id());
-        if (it == m_agents.end()) {
-            AgentEntry entry;
-            entry.agent_id = req.agent_id();
-            entry.last_seen_unix_ms = now;
-            entry.interval_ms = req.interval_ms();
-            entry.version = req.version();
-            entry.first_seen_unix_ms = now;
-            entry.diagnostic_endpoint = req.diagnostic_endpoint();
-            m_agents[req.agent_id()] = entry;
-            logger::emit("info", "New agent registered", req.agent_id());
-        } else {
-            it->second.last_seen_unix_ms = now;
-            it->second.interval_ms = req.interval_ms();
-            it->second.version = req.version();
-            it->second.diagnostic_endpoint = req.diagnostic_endpoint();
-        }
-        m_heartbeat_count++;
-    }
-
-    size_t ActiveAgentCount(int64_t timeout_ms = 30000) const {
-        std::shared_lock lock(m_mutex);
-        auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::system_clock::now().time_since_epoch())
-                       .count();
-        size_t count = 0;
-        for (const auto &[id, entry] : m_agents) {
-            if ((now - entry.last_seen_unix_ms) < timeout_ms) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    // Returns the agent's advertised diagnostic endpoint, or "" if unknown.
-    std::string GetDiagnosticEndpoint(const std::string &agent_id) const {
-        std::shared_lock lock(m_mutex);
-        auto it = m_agents.find(agent_id);
-        return (it != m_agents.end()) ? it->second.diagnostic_endpoint : "";
-    }
-
-    size_t TotalAgentCount() const {
-        std::shared_lock lock(m_mutex);
-        return m_agents.size();
-    }
-
-    uint64_t HeartbeatCount() const {
-        std::shared_lock lock(m_mutex);
-        return m_heartbeat_count;
-    }
-
-    std::string DumpAgents() const {
-        std::shared_lock lock(m_mutex);
-        auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::system_clock::now().time_since_epoch())
-                       .count();
-        std::string json = "{\"agents\":[";
-        bool first = true;
-        for (const auto &[id, entry] : m_agents) {
-            if (!first) json += ",";
-            first = false;
-            bool alive = (now - entry.last_seen_unix_ms) < 30000;
-            json += "{";
-            json += "\"agent_id\":\"" + escape(entry.agent_id) + "\",";
-            json += "\"last_seen_unix_ms\":" + std::to_string(entry.last_seen_unix_ms) + ",";
-            json += "\"interval_ms\":" + std::to_string(entry.interval_ms) + ",";
-            json += "\"version\":\"" + escape(entry.version) + "\",";
-            json += "\"diagnostic_endpoint\":\"" + escape(entry.diagnostic_endpoint) + "\",";
-            json += "\"first_seen_unix_ms\":" + std::to_string(entry.first_seen_unix_ms) + ",";
-            json += "\"alive\":" + std::string(alive ? "true" : "false");
-            json += "}";
-        }
-        json += "]}";
-        return json;
-    }
-
-private:
-    mutable std::shared_mutex m_mutex;
-    std::unordered_map<std::string, AgentEntry> m_agents;
-    std::atomic<uint64_t> m_heartbeat_count{0};
-
-    static std::string escape(const std::string &s) {
-        return logger::escape(s);
-    }
-};
-
-static AgentRegistry s_registry;
-
-// Storage + metrics service (initialized in main)
-static std::shared_ptr<pudimcollector::TimescaleStorage> s_storage;
-static std::shared_ptr<pudimcollector::MetricsServiceImpl> s_metrics_service;
-static std::shared_ptr<pudimcollector::alerting::AlertManager> s_alert_manager;
-static std::shared_ptr<pudimcollector::kafka::KafkaProducer> s_kafka_producer;
-
-// gRPC service implementation.
-class AgentServiceImpl final : public AgentService::Service {
-public:
-    Status SendHeartbeat([[maybe_unused]] ServerContext *ctx,
-                         const HeartbeatRequest *req,
-                         HeartbeatResponse *resp) override {
-        // Record the heartbeat
-        s_registry.RecordHeartbeat(*req);
-
-        logger::emit("info",
-                  "Heartbeat received from " + req->agent_id(),
-                  req->agent_id());
-
-        auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::system_clock::now().time_since_epoch())
-                       .count();
-
-        resp->set_ack(true);
-        resp->set_collector_time_unix_ms(now);
-        resp->set_status_message("ok");
-
-        return Status::OK;
-    }
-};
-
-// Prometheus /metrics helper.
-static std::string format_prometheus_metrics() {
-    auto hb_count = s_registry.HeartbeatCount();
-    auto active_count = s_registry.ActiveAgentCount();
-    auto total_count = s_registry.TotalAgentCount();
-
-    std::string out;
-    out += "# HELP pudim_heartbeats_received_total Total heartbeats received\n";
-    out += "# TYPE pudim_heartbeats_received_total counter\n";
-    out += "pudim_heartbeats_received_total " + std::to_string(hb_count) + "\n";
-    out += "# HELP pudim_agents_active Current number of active agents\n";
-    out += "# TYPE pudim_agents_active gauge\n";
-    out += "pudim_agents_active " + std::to_string(active_count) + "\n";
-    out += "# HELP pudim_agents_registered Total registered agents\n";
-    out += "# TYPE pudim_agents_registered gauge\n";
-    out += "pudim_agents_registered " + std::to_string(total_count) + "\n";
-
-    if (s_metrics_service) {
-        out += "# HELP pudim_metrics_received_total Total metrics received\n";
-        out += "# TYPE pudim_metrics_received_total counter\n";
-        out += "pudim_metrics_received_total " +
-               std::to_string(s_metrics_service->ReceivedMetrics()) + "\n";
-        out += "# HELP pudim_metrics_batches_received_total Total metric batches received\n";
-        out += "# TYPE pudim_metrics_batches_received_total counter\n";
-        out += "pudim_metrics_batches_received_total " +
-               std::to_string(s_metrics_service->BatchesReceived()) + "\n";
-        out += "# HELP pudim_metrics_rejected_total Total metrics rejected\n";
-        out += "# TYPE pudim_metrics_rejected_total counter\n";
-        out += "pudim_metrics_rejected_total " +
-               std::to_string(s_metrics_service->RejectedMetrics()) + "\n";
-    }
-
-    if (s_alert_manager) {
-        out += "# HELP pudim_alerts_firing Currently firing alerts\n";
-        out += "# TYPE pudim_alerts_firing gauge\n";
-        out += "pudim_alerts_firing " +
-               std::to_string(s_alert_manager->ActiveAlertCount()) + "\n";
-        out += "# HELP pudim_alert_notifications_total Total alert notifications sent\n";
-        out += "# TYPE pudim_alert_notifications_total counter\n";
-        out += "pudim_alert_notifications_total " +
-               std::to_string(s_alert_manager->TotalAlertsFired()) + "\n";
-        out += "# HELP pudim_alert_rules_loaded Number of loaded alert rules\n";
-        out += "# TYPE pudim_alert_rules_loaded gauge\n";
-        out += "pudim_alert_rules_loaded " +
-               std::to_string(s_alert_manager->RuleCount()) + "\n";
-    }
-
-    if (s_kafka_producer) {
-        out += "# HELP pudim_kafka_produced_total Metrics batches produced to Kafka\n";
-        out += "# TYPE pudim_kafka_produced_total counter\n";
-        out += "pudim_kafka_produced_total " +
-               std::to_string(s_kafka_producer->ProducedTotal()) + "\n";
-        out += "# HELP pudim_kafka_delivery_failures_total Kafka delivery failures\n";
-        out += "# TYPE pudim_kafka_delivery_failures_total counter\n";
-        out += "pudim_kafka_delivery_failures_total " +
-               std::to_string(s_kafka_producer->DeliveryFailures()) + "\n";
-    }
-
-    if (s_metrics_service) {
-        out += "# HELP pudim_clock_skew_warnings_total Clock-skew warnings\n";
-        out += "# TYPE pudim_clock_skew_warnings_total counter\n";
-        out += "pudim_clock_skew_warnings_total " +
-               std::to_string(s_metrics_service->SkewWarnings()) + "\n";
-        out += "# HELP pudim_backpressure_signals_sent_total x-overloaded signals sent to agents\n";
-        out += "# TYPE pudim_backpressure_signals_sent_total counter\n";
-        out += "pudim_backpressure_signals_sent_total " +
-               std::to_string(s_metrics_service->BackpressureSignalsSent()) + "\n";
-    }
-
-    if (s_storage) {
-        auto stats = s_storage->GetStats();
-        out += "# HELP pudim_storage_metrics_written_total Metrics written to storage\n";
-        out += "# TYPE pudim_storage_metrics_written_total counter\n";
-        out += "pudim_storage_metrics_written_total " +
-               std::to_string(stats.metrics_written) + "\n";
-        out += "# HELP pudim_storage_batches_written_total Batches written to storage\n";
-        out += "# TYPE pudim_storage_batches_written_total counter\n";
-        out += "pudim_storage_batches_written_total " +
-               std::to_string(stats.batches_written) + "\n";
-        out += "# HELP pudim_storage_errors_total Storage errors\n";
-        out += "# TYPE pudim_storage_errors_total counter\n";
-        out += "pudim_storage_errors_total " +
-               std::to_string(stats.errors) + "\n";
-        out += "# HELP pudim_storage_insert_latency_total_ms Cumulative storage insert latency\n";
-        out += "# TYPE pudim_storage_insert_latency_total_ms counter\n";
-        out += "pudim_storage_insert_latency_total_ms " +
-               std::to_string(stats.insert_latency_total_ms) + "\n";
-        out += "# HELP pudim_storage_healthy Storage health (1=ok, 0=unhealthy)\n";
-        out += "# TYPE pudim_storage_healthy gauge\n";
-        out += "pudim_storage_healthy " +
-               std::string(s_storage->IsHealthy() ? "1" : "0") + "\n";
-    }
-
-    return out;
 }
 
 int main(int argc, char **argv) {
@@ -422,6 +148,10 @@ int main(int argc, char **argv) {
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
 
+    // Agent heartbeat registry. Shared by the heartbeat gRPC service and every
+    // dashboard endpoint that looks an agent up by id.
+    pudimcollector::AgentRegistry registry;
+
     // Initialize storage
     pudimcollector::StorageConfig storage_cfg;
     storage_cfg.host = db_host;
@@ -430,22 +160,22 @@ int main(int argc, char **argv) {
     storage_cfg.user = db_user;
     storage_cfg.password = db_password;
 
-    s_storage = std::make_shared<pudimcollector::TimescaleStorage>(storage_cfg);
-    if (!s_storage->Connect()) {
+    auto storage = std::make_shared<pudimcollector::TimescaleStorage>(storage_cfg);
+    if (!storage->Connect()) {
         logger::emit("warn", "Storage connection failed; collector will run "
                      "without persistent storage (metrics will be rejected)");
     } else {
         logger::emit("info", "Storage connected (TimescaleDB)");
     }
-
     // Determine ingestion mode (ADR 004). Kafka mode is enabled by passing
     // --kafka-brokers; consumers then own storage + alerting.
     pudimcollector::StorageMode storage_mode = pudimcollector::StorageMode::Direct;
+    std::shared_ptr<pudimcollector::kafka::KafkaProducer> kafka_producer;
     if (!kafka_brokers.empty()) {
         storage_mode = pudimcollector::StorageMode::Kafka;
-        s_kafka_producer = std::make_shared<pudimcollector::kafka::KafkaProducer>();
+        kafka_producer = std::make_shared<pudimcollector::kafka::KafkaProducer>();
         std::string err;
-        if (!s_kafka_producer->Connect(kafka_brokers, kafka_topic, err)) {
+        if (!kafka_producer->Connect(kafka_brokers, kafka_topic, err)) {
             logger::emit("error", "Kafka producer connection failed: " + err);
             return 1;
         }
@@ -454,13 +184,13 @@ int main(int argc, char **argv) {
 
     // Initialize alert manager (optional; only used in Direct mode. In Kafka
     // mode the alert consumer owns alerting.)
-    s_alert_manager = std::make_shared<pudimcollector::alerting::AlertManager>();
+    auto alert_manager = std::make_shared<pudimcollector::alerting::AlertManager>();
     if (storage_mode == pudimcollector::StorageMode::Direct &&
         !alert_rules_path.empty()) {
         std::string err;
-        if (s_alert_manager->LoadRulesFromFile(alert_rules_path, err)) {
+        if (alert_manager->LoadRulesFromFile(alert_rules_path, err)) {
             logger::emit("info",
-                         "Loaded " + std::to_string(s_alert_manager->RuleCount()) +
+                         "Loaded " + std::to_string(alert_manager->RuleCount()) +
                          " alert rules from " + alert_rules_path);
         } else {
             logger::emit("warn", "Failed to load alert rules: " + err);
@@ -470,10 +200,10 @@ int main(int argc, char **argv) {
                      "No alert rules configured (--alert-rules-path unset); alerting disabled");
     }
 
-    s_metrics_service =
-        std::make_shared<pudimcollector::MetricsServiceImpl>(s_storage,
-                                                             s_alert_manager,
-                                                             s_kafka_producer,
+    auto metrics_service =
+        std::make_shared<pudimcollector::MetricsServiceImpl>(storage,
+                                                             alert_manager,
+                                                             kafka_producer,
                                                              storage_mode,
                                                              skew_threshold_ms,
                                                              backpressure_threshold_ms);
@@ -482,11 +212,11 @@ int main(int argc, char **argv) {
     auto server_creds = pudimagent::MakeServerCredentials(tls_ca, tls_cert, tls_key);
     logger::emit("info", tls_ca.empty() ? "gRPC transport: insecure (no --tls-*)"
                                         : "gRPC transport: mTLS (server cert " + tls_cert + ")");
-    AgentServiceImpl agent_service;
+    pudimcollector::AgentServiceImpl agent_service(registry);
     ServerBuilder builder;
     builder.AddListeningPort(grpc_addr, server_creds);
     builder.RegisterService(&agent_service);
-    builder.RegisterService(s_metrics_service.get());
+    builder.RegisterService(metrics_service.get());
     builder.SetMaxReceiveMessageSize(4 * 1024 * 1024); // 4MB
 
     std::unique_ptr<Server> grpc_server = builder.BuildAndStart();
@@ -495,16 +225,6 @@ int main(int argc, char **argv) {
         return 1;
     }
     logger::emit("info", "gRPC server listening on " + grpc_addr);
-
-    // Start HTTP server (health + metrics)
-    httplib::Server http_server;
-    // Serve requests on a small thread pool. httplib is single-threaded by
-    // default: one slow handler (e.g. a DB query waiting on a dead connection)
-    // would otherwise stall every dashboard endpoint, including /health and
-    // /agents which never touch the database.
-    http_server.new_task_queue = [] {
-        return new httplib::ThreadPool(4);
-    };
 
     // Self-hosted agent download: staged binaries served to the
     // dashboard. When the dist dir has no binaries the manifest is empty and
@@ -520,494 +240,11 @@ int main(int argc, char **argv) {
                      "' (version " + agent_dist.Version() + ")");
     }
 
-    // Every dashboard-facing endpoint is served at BOTH /path and /api/path so
-    // it works through reverse proxies that strip the /api prefix (legacy) and
-    // those that pass it through. Prometheus scraping uses /metrics directly.
-
-    auto health_handler = [](const httplib::Request &, httplib::Response &resp) {
-        bool db_ok = s_storage ? s_storage->IsHealthy() : false;
-        std::string status = db_ok ? "ok" : "degraded";
-        resp.set_content("{\"status\":\"" + status +
-                         "\",\"component\":\"collector\",\"storage\":" +
-                         std::string(db_ok ? "true" : "false") + "}",
-                         "application/json");
-    };
-    http_server.Get("/health", health_handler);
-    http_server.Get("/api/health", health_handler);
-
-    auto agents_handler = [](const httplib::Request &, httplib::Response &resp) {
-        resp.set_content(s_registry.DumpAgents(), "application/json");
-    };
-    http_server.Get("/agents", agents_handler);
-    http_server.Get("/api/agents", agents_handler);
-
-    // Prometheus scrape endpoint (text format, no /api alias).
-    http_server.Get("/metrics", [](const httplib::Request &, httplib::Response &resp) {
-        resp.set_content(format_prometheus_metrics(), "text/plain; version=0.0.4");
-    });
-
-    // Dashboard JSON metrics endpoint: /api/metrics?agent_id=X&check_type=Y&window_seconds=300
-    http_server.Get("/api/metrics", [](const httplib::Request &req, httplib::Response &resp) {
-        if (!s_storage) {
-            resp.status = 503;
-            resp.set_content("{\"error\":\"storage not available\"}", "application/json");
-            return;
-        }
-
-        std::string agent_id;
-        std::string check_type;
-        int64_t window_seconds = 300;
-
-        if (req.has_param("agent_id")) agent_id = req.get_param_value("agent_id");
-        if (req.has_param("check_type")) check_type = req.get_param_value("check_type");
-        if (req.has_param("window_seconds")) {
-            try {
-                window_seconds = std::stoll(req.get_param_value("window_seconds"));
-            } catch (...) {
-                window_seconds = 300;
-            }
-        }
-
-        resp.set_content(s_storage->QueryMetricsJson(agent_id, check_type, window_seconds),
-                         "application/json");
-    });
-
-    // Alerting endpoints for the dashboard.
-    auto alerts_handler = [](const httplib::Request &, httplib::Response &resp) {
-        if (!s_alert_manager || !s_alert_manager->Enabled()) {
-            resp.status = 200;
-            resp.set_content("[]", "application/json");
-            return;
-        }
-        resp.set_content(s_alert_manager->ActiveAlertsJson(), "application/json");
-    };
-    http_server.Get("/alerts", alerts_handler);
-    http_server.Get("/api/alerts", alerts_handler);
-
-    auto alert_history_handler = [](const httplib::Request &req, httplib::Response &resp) {
-        if (!s_alert_manager) {
-            resp.set_content("[]", "application/json");
-            return;
-        }
-        size_t max_events = 200;
-        if (req.has_param("limit")) {
-            try {
-                max_events = static_cast<size_t>(std::stoll(req.get_param_value("limit")));
-            } catch (...) {
-                max_events = 200;
-            }
-        }
-        resp.set_content(s_alert_manager->AlertHistoryJson(max_events),
-                         "application/json");
-    };
-    http_server.Get("/alert-history", alert_history_handler);
-    http_server.Get("/api/alert-history", alert_history_handler);
-
-    auto alert_rules_handler = [](const httplib::Request &, httplib::Response &resp) {
-        if (!s_alert_manager) {
-            resp.set_content("{\"rules\":[]}", "application/json");
-            return;
-        }
-        resp.set_content(s_alert_manager->RulesJson(), "application/json");
-    };
-    http_server.Get("/alert-rules", alert_rules_handler);
-    http_server.Get("/api/alert-rules", alert_rules_handler);
-
-    // Diagnostic endpoint: forwards a diagnostic request to the target agent's
-    // DiagnosticService (traceroute + pcap). Requires the agent to have
-    // advertised a diagnostic endpoint in its heartbeat.
-    auto diagnostic_handler = [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
-                                                            httplib::Response &resp) {
-        std::string agent_id = req.get_param_value("agent_id");
-        std::string trace_target = req.get_param_value("trace_target");
-        int pcap_duration_s = 0;
-        if (req.has_param("pcap_duration_s")) {
-            try {
-                pcap_duration_s = std::stoi(req.get_param_value("pcap_duration_s"));
-            } catch (...) { pcap_duration_s = 0; }
-        }
-        std::string pcap_filter = req.get_param_value("pcap_filter");
-
-        if (agent_id.empty()) {
-            resp.status = 400;
-            resp.set_content("{\"error\":\"agent_id is required\"}", "application/json");
-            return;
-        }
-        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
-        if (diag_endpoint.empty()) {
-            resp.status = 404;
-            resp.set_content("{\"error\":\"agent has no advertised diagnostic "
-                             "endpoint\"}", "application/json");
-            return;
-        }
-
-        // mTLS channel to the agent's diagnostic server (reuses the collector's
-        // cert/key as the client identity when --tls-* is set).
-        auto channel = grpc::CreateChannel(
-            diag_endpoint, pudimagent::MakeChannelCredentials(
-                               tls_ca, tls_cert, tls_key));
-        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
-        grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
-        pudimnetmon::DiagnosticRequest dreq;
-        dreq.set_agent_id(agent_id);
-        dreq.set_trace_target(trace_target);
-        dreq.set_pcap_duration_s(pcap_duration_s);
-        dreq.set_pcap_filter(pcap_filter);
-        pudimnetmon::DiagnosticResponse dresp;
-        grpc::Status status = stub->RunDiagnostic(&ctx, dreq, &dresp);
-        if (!status.ok()) {
-            resp.status = 502;
-            resp.set_content("{\"error\":\"" + logger::escape(status.error_message()) +
-                                 "\"}", "application/json");
-            return;
-        }
-        std::string json = "{\"success\":" +
-                           std::string(dresp.success() ? "true" : "false") +
-                           ",\"timestamp_unix_ms\":" +
-                           std::to_string(dresp.timestamp_unix_ms()) +
-                           ",\"result\":\"" + logger::escape(dresp.result()) +
-                           "\"}";
-        resp.set_content(json, "application/json");
-    };
-    http_server.Post("/diagnostic", diagnostic_handler);
-    http_server.Post("/api/diagnostic", diagnostic_handler);
-
-    // Alert acknowledge: POST JSON
-    // {"rule_id","agent_id","target"} → marks the active alert acknowledged.
-    http_server.Post("/api/alerts/ack",
-                     [](const httplib::Request &req, httplib::Response &resp) {
-        if (!s_alert_manager) {
-            resp.status = 503;
-            resp.set_content("{\"error\":\"alerting disabled\"}", "application/json");
-            return;
-        }
-        std::string rule_id, agent_id, target;
-        try {
-            auto body = nlohmann::json::parse(req.body);
-            rule_id = body.value("rule_id", "");
-            agent_id = body.value("agent_id", "");
-            target = body.value("target", "");
-        } catch (...) {
-            resp.status = 400;
-            resp.set_content("{\"error\":\"invalid JSON body\"}", "application/json");
-            return;
-        }
-        if (rule_id.empty() || agent_id.empty()) {
-            resp.status = 400;
-            resp.set_content("{\"error\":\"rule_id and agent_id are required\"}",
-                             "application/json");
-            return;
-        }
-        bool acked = s_alert_manager->Ack(rule_id, agent_id, target);
-        resp.set_content("{\"acknowledged\":" + std::string(acked ? "true" : "false") +
-                             ",\"alerts\":" + s_alert_manager->ActiveAlertsJson() + "}",
-                         "application/json");
-    });
-
-    // Agent config endpoint: POST JSON AgentConfigRequest →
-    // forwards the Reconfigure RPC to the agent's diagnostic service.
-    // {"agent_id","dns_targets":[...],"tcp_targets":[...],"tls_targets":[...],
-    //  "http_targets":[...],"ping_targets":[...],"ping_count":N,"ping_gap_ms":N,
-    //  "tls_cert_check":bool,"tcp_retransmit_check":bool,
-    //  "tcp_handshake_capture":bool,"http_protocols":[...]}
-    http_server.Post("/api/agents/config",
-                     [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
-                                                    httplib::Response &resp) {
-        nlohmann::json body;
-        try {
-            body = nlohmann::json::parse(req.body);
-        } catch (...) {
-            resp.status = 400;
-            resp.set_content("{\"error\":\"invalid JSON body\"}", "application/json");
-            return;
-        }
-        std::string agent_id = body.value("agent_id", "");
-        if (agent_id.empty()) {
-            resp.status = 400;
-            resp.set_content("{\"error\":\"agent_id is required\"}", "application/json");
-            return;
-        }
-        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
-        if (diag_endpoint.empty()) {
-            resp.status = 404;
-            resp.set_content("{\"error\":\"agent has no advertised diagnostic "
-                             "endpoint\"}", "application/json");
-            return;
-        }
-
-        auto channel = grpc::CreateChannel(
-            diag_endpoint, pudimagent::MakeChannelCredentials(
-                               tls_ca, tls_cert, tls_key));
-        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
-        grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(15));
-
-        pudimnetmon::AgentConfigRequest creq;
-        creq.set_agent_id(agent_id);
-        auto put = [&body](const char *key,
-                           google::protobuf::RepeatedPtrField<std::string> *field) {
-            if (body.contains(key) && body[key].is_array()) {
-                for (const auto &v : body[key]) field->Add(v.get<std::string>());
-            }
-        };
-        put("dns_targets", creq.mutable_dns_targets());
-        put("tcp_targets", creq.mutable_tcp_targets());
-        put("tls_targets", creq.mutable_tls_targets());
-        put("http_targets", creq.mutable_http_targets());
-        put("ping_targets", creq.mutable_ping_targets());
-        if (body.contains("ping_count")) creq.set_ping_count(body["ping_count"].get<int32_t>());
-        if (body.contains("ping_gap_ms")) creq.set_ping_gap_ms(body["ping_gap_ms"].get<int32_t>());
-        if (body.contains("tls_cert_check")) creq.set_tls_cert_check(body["tls_cert_check"].get<bool>());
-        if (body.contains("tcp_retransmit_check")) creq.set_tcp_retransmit_check(body["tcp_retransmit_check"].get<bool>());
-        if (body.contains("tcp_handshake_capture")) creq.set_tcp_handshake_capture(body["tcp_handshake_capture"].get<bool>());
-        put("http_protocols", creq.mutable_http_protocols());
-
-        pudimnetmon::AgentConfigResponse cresp;
-        grpc::Status status = stub->Reconfigure(&ctx, creq, &cresp);
-        if (!status.ok()) {
-            resp.status = 502;
-            resp.set_content("{\"error\":\"" + logger::escape(status.error_message()) +
-                                 "\"}", "application/json");
-            return;
-        }
-        std::string json = "{\"success\":" +
-                           std::string(cresp.success() ? "true" : "false") +
-                           ",\"applied\":\"" + logger::escape(cresp.applied()) +
-                           "\",\"error\":\"" + logger::escape(cresp.error()) + "\"}";
-        resp.set_content(json, "application/json");
-    });
-
-    // Current agent config (dashboard form population): forwards the
-    // GetConfig RPC to the agent. Query param: ?agent_id=...
-    http_server.Get("/api/agents/config",
-                    [&tls_ca, &tls_cert, &tls_key](const httplib::Request &req,
-                                                   httplib::Response &resp) {
-        std::string agent_id = req.get_param_value("agent_id");
-        if (agent_id.empty()) {
-            resp.status = 400;
-            resp.set_content("{\"error\":\"agent_id is required\"}", "application/json");
-            return;
-        }
-        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
-        if (diag_endpoint.empty()) {
-            resp.status = 404;
-            resp.set_content("{\"error\":\"agent has no advertised diagnostic "
-                             "endpoint\"}", "application/json");
-            return;
-        }
-        auto channel = grpc::CreateChannel(
-            diag_endpoint, pudimagent::MakeChannelCredentials(
-                               tls_ca, tls_cert, tls_key));
-        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
-        grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
-        pudimnetmon::GetConfigRequest greq;
-        greq.set_agent_id(agent_id);
-        pudimnetmon::AgentConfigResponse gresp;
-        grpc::Status status = stub->GetConfig(&ctx, greq, &gresp);
-        if (!status.ok()) {
-            resp.status = 502;
-            resp.set_content("{\"error\":\"" + logger::escape(status.error_message()) +
-                                 "\"}", "application/json");
-            return;
-        }
-        std::string json = "{\"success\":" +
-                           std::string(gresp.success() ? "true" : "false") +
-                           ",\"applied\":\"" + logger::escape(gresp.applied()) +
-                           "\",\"error\":\"" + logger::escape(gresp.error()) + "\"}";
-        resp.set_content(json, "application/json");
-    });
-
-    // Pre-set agent commands: ListCommands + RunCommand forwarded to
-    // the agent's DiagnosticService. Commands are a FIXED, whitelisted catalog
-    // — the agent never executes arbitrary shell/terminal input.
-    auto agent_commands_handler = [&tls_ca, &tls_cert, &tls_key](
-                                      const httplib::Request &req,
-                                      httplib::Response &resp) {
-        std::string agent_id = req.get_param_value("agent_id");
-        if (agent_id.empty()) {
-            resp.status = 400;
-            resp.set_content("{\"error\":\"agent_id is required\"}",
-                             "application/json");
-            return;
-        }
-        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
-        if (diag_endpoint.empty()) {
-            resp.status = 404;
-            resp.set_content(
-                "{\"error\":\"agent has no advertised diagnostic endpoint\"}",
-                "application/json");
-            return;
-        }
-        auto channel = grpc::CreateChannel(
-            diag_endpoint,
-            pudimagent::MakeChannelCredentials(tls_ca, tls_cert, tls_key));
-        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
-        grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() +
-                         std::chrono::seconds(10));
-        pudimnetmon::ListCommandsRequest lreq;
-        lreq.set_agent_id(agent_id);
-        pudimnetmon::ListCommandsResponse lresp;
-        grpc::Status status = stub->ListCommands(&ctx, lreq, &lresp);
-        if (!status.ok()) {
-            resp.status = 502;
-            resp.set_content(
-                "{\"error\":\"" + logger::escape(status.error_message()) +
-                "\"}",
-                "application/json");
-            return;
-        }
-        std::string json = "{\"success\":" +
-                           std::string(lresp.success() ? "true" : "false") +
-                           ",\"commands\":[";
-        for (int i = 0; i < lresp.commands_size(); ++i) {
-            const auto &c = lresp.commands(i);
-            if (i > 0) json += ",";
-            json += "{\"command_id\":\"" + logger::escape(c.command_id()) +
-                    "\",\"description\":\"" + logger::escape(c.description()) +
-                    "\",\"param_names\":[";
-            for (int j = 0; j < c.param_names_size(); ++j) {
-                if (j > 0) json += ",";
-                json += "\"" + logger::escape(c.param_names(j)) + "\"";
-            }
-            json += "]}";
-        }
-        json += "]}";
-        resp.set_content(json, "application/json");
-    };
-    http_server.Get("/api/agents/commands", agent_commands_handler);
-
-    auto run_command_handler = [&tls_ca, &tls_cert, &tls_key](
-                                   const httplib::Request &req,
-                                   httplib::Response &resp) {
-        nlohmann::json body;
-        try {
-            body = nlohmann::json::parse(req.body);
-        } catch (...) {
-            resp.status = 400;
-            resp.set_content("{\"error\":\"invalid JSON body\"}",
-                             "application/json");
-            return;
-        }
-        std::string agent_id = body.value("agent_id", "");
-        std::string command_id = body.value("command_id", "");
-        if (agent_id.empty() || command_id.empty()) {
-            resp.status = 400;
-            resp.set_content(
-                "{\"error\":\"agent_id and command_id are required\"}",
-                "application/json");
-            return;
-        }
-        std::string diag_endpoint = s_registry.GetDiagnosticEndpoint(agent_id);
-        if (diag_endpoint.empty()) {
-            resp.status = 404;
-            resp.set_content(
-                "{\"error\":\"agent has no advertised diagnostic endpoint\"}",
-                "application/json");
-            return;
-        }
-        auto channel = grpc::CreateChannel(
-            diag_endpoint,
-            pudimagent::MakeChannelCredentials(tls_ca, tls_cert, tls_key));
-        auto stub = pudimnetmon::DiagnosticService::NewStub(channel);
-        grpc::ClientContext ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() +
-                         std::chrono::seconds(30));
-        pudimnetmon::RunCommandRequest creq;
-        creq.set_agent_id(agent_id);
-        creq.set_command_id(command_id);
-        if (body.contains("params") && body["params"].is_object()) {
-            for (auto it = body["params"].begin(); it != body["params"].end();
-                 ++it) {
-                if (it.value().is_string()) {
-                    (*creq.mutable_params())[it.key()] =
-                        it.value().get<std::string>();
-                }
-            }
-        }
-        pudimnetmon::CommandResponse cresp;
-        grpc::Status status = stub->RunCommand(&ctx, creq, &cresp);
-        if (!status.ok()) {
-            resp.status = 502;
-            resp.set_content(
-                "{\"error\":\"" + logger::escape(status.error_message()) +
-                "\"}",
-                "application/json");
-            return;
-        }
-        std::string json = "{\"success\":" +
-                           std::string(cresp.success() ? "true" : "false") +
-                           ",\"command_id\":\"" +
-                           logger::escape(cresp.command_id()) +
-                           "\",\"error\":\"" + logger::escape(cresp.error()) +
-                           "\",\"timestamp_unix_ms\":" +
-                           std::to_string(cresp.timestamp_unix_ms()) +
-                           ",\"summary\":\"" + logger::escape(cresp.summary()) +
-                           "\",\"fields\":{";
-        bool first_field = true;
-        for (const auto &kv : cresp.fields()) {
-            if (!first_field) json += ",";
-            first_field = false;
-            json += "\"" + logger::escape(kv.first) + "\":\"" +
-                    logger::escape(kv.second) + "\"";
-        }
-        json += "},\"issues\":[";
-        for (int i = 0; i < cresp.issues_size(); ++i) {
-            if (i > 0) json += ",";
-            json += "\"" + logger::escape(cresp.issues(i)) + "\"";
-        }
-        json += "],\"detail\":\"" + logger::escape(cresp.detail()) + "\"}";
-        resp.set_content(json, "application/json");
-    };
-    http_server.Post("/api/agents/command", run_command_handler);
-
-    // Self-hosted agent download: manifest + binary download.
-    auto agent_versions_handler = [&agent_dist](const httplib::Request &,
-                                                httplib::Response &resp) {
-        resp.set_content(agent_dist.ManifestJson(), "application/json");
-    };
-    http_server.Get("/api/agent/versions", agent_versions_handler);
-    http_server.Get("/agent/versions", agent_versions_handler);
-
-    auto agent_download_handler = [&agent_dist](const httplib::Request &req,
-                                                httplib::Response &resp) {
-        std::string platform = req.get_param_value("platform");
-        const pudimcollector::AgentPlatform *p = agent_dist.Find(platform);
-        if (!p) {
-            resp.status = 404;
-            resp.set_content(
-                "{\"error\":\"no agent binary staged for platform '" +
-                    logger::escape(platform) + "'\"}",
-                "application/json");
-            return;
-        }
-        std::vector<char> bytes;
-        if (!agent_dist.LoadBinary(platform, bytes)) {
-            resp.status = 500;
-            resp.set_content("{\"error\":\"failed to read agent binary\"}",
-                             "application/json");
-            return;
-        }
-        resp.set_header("Content-Disposition",
-                        "attachment; filename=\"" + p->filename + "\"");
-        resp.set_content(bytes.data(), bytes.size(), "application/octet-stream");
-    };
-    http_server.Get("/api/agent/download", agent_download_handler);
-    http_server.Get("/agent/download", agent_download_handler);
-
-    // Run HTTP server in a separate thread
-    std::thread http_thread([&http_server, http_addr]() {
-        logger::emit("info", "HTTP server starting on " + http_addr);
-        // Parse host and port from "host:port" string
-        auto colon = http_addr.find_last_of(':');
-        std::string host = http_addr.substr(0, colon);
-        int port = std::stoi(http_addr.substr(colon + 1));
-        if (!http_server.listen(host.c_str(), port)) {
-            logger::emit("error", "Failed to start HTTP server on " + http_addr);
-        }
-    });
+    // Every dashboard + Prometheus route lives in the HTTP server (http_server.h).
+    pudimcollector::HttpServer http_server(
+        registry, storage, metrics_service, alert_manager, kafka_producer,
+        agent_dist, pudimcollector::TlsOptions{tls_ca, tls_cert, tls_key});
+    http_server.Start(http_addr);
 
     // Wait for shutdown signal
     while (s_running) {
@@ -1019,10 +256,7 @@ int main(int argc, char **argv) {
     grpc_server->Wait();
 
     logger::emit("info", "Shutting down HTTP server...");
-    http_server.stop();
-    if (http_thread.joinable()) {
-        http_thread.join();
-    }
+    http_server.Stop();
 
     logger::emit("info", "Collector shut down gracefully");
     return 0;
