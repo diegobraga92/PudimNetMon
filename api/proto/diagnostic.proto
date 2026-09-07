@@ -4,21 +4,12 @@ package pudimnetmon;
 
 option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
 
-// Diagnostic service: the collector triggers one-off deep diagnostics on an
-// agent (traceroute, packet capture) and receives a human-readable report.
-// It also supports runtime probe reconfiguration (Reconfigure) so the
-// dashboard can add/edit checks without restarting the agent.
-//
-// Pre-set commands (ListCommands/RunCommand): the dashboard can ask an agent
-// to run a maintenance task (e.g. a disk health check) selected by id from a
-// FIXED, whitelisted catalog. The agent never executes arbitrary shell /
-// terminal input — each command_id maps to a compiled, vetted handler.
+// Diagnostic service is used for one-off data collection
 service DiagnosticService {
   rpc RunDiagnostic(DiagnosticRequest) returns (DiagnosticResponse);
   rpc Reconfigure(AgentConfigRequest) returns (AgentConfigResponse);
   rpc GetConfig(GetConfigRequest) returns (AgentConfigResponse);
 
-  // Pre-set command execution.
   rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse);
   rpc RunCommand(RunCommandRequest) returns (CommandResponse);
 }
@@ -37,9 +28,8 @@ message DiagnosticResponse {
   string error = 4;              // error message when success=false
 }
 
-// Runtime probe configuration. Reconfigure applies the request as
-// the COMPLETE new config: empty repeated fields clear the corresponding
-// target list, absent bools default to their proto defaults (true).
+// Reconfigure applies the request a new config. 
+// Empty fields clear the corresponding field, absent bools set to defaults.
 message AgentConfigRequest {
   string agent_id = 1;
   repeated string dns_targets = 2;
@@ -59,26 +49,27 @@ message GetConfigRequest {
   string agent_id = 1;
 }
 
-// Carries the current config; `applied` holds the same string summary used by
-// Reconfigure so the dashboard can display/parse it.
+// Carries the current config.
+// `applied` holds the same string summary used by Reconfigure.
 message AgentConfigResponse {
   bool success = 1;
   string error = 2;             // when success=false
   string applied = 3;           // human-readable summary of the applied config
 }
 
-// Request to run one of the agent's pre-set, whitelisted commands. The command
-// is selected by command_id from the catalog exposed by ListCommands; `params`
-// holds only command-specific, schema-fixed keys — never a shell command line.
+// Request to run one of the agent's pre-set, whitelisted commands. 
+// The command is selected by command_id from the catalog exposed by ListCommands. 
+// `params` holds only command-specific, schema-fixed keys.
 message RunCommandRequest {
   string agent_id = 1;
   string command_id = 2;                 // catalog id, e.g. "hdd_check"
   map<string, string> params = 3;        // command-specific parameters
 }
 
-// Structured result of a pre-set command run. `fields` is machine-readable
-// key/value output for the dashboard to render; `issues` lists any problems
-// found (empty = healthy); `detail` is the full human-readable output.
+// Structured result of a pre-set command run. 
+// `fields` is a machine-readable key/value output. 
+// `issues` lists any problems found (empty = healthy); 
+// `detail` is the full human-readable output.
 message CommandResponse {
   bool success = 1;
   string command_id = 2;

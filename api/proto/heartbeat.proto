@@ -4,9 +4,9 @@ package pudimnetmon;
 
 option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
 
-// Heartbeat service: agent reports alive status to collector.
+// Agent reports alive status to collector.
 service AgentService {
-  // Unary heartbeat: agent sends its ID and timestamp, collector responds.
+  // Agent sends its ID and timestamp, collector responds.
   rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
 

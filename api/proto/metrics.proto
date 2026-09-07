@@ -4,7 +4,7 @@ package pudimnetmon;
 
 option go_package = "github.com/diegobraga92/PudimNetMon/api/proto";
 
-// Metrics service: agent reports network measurement results to collector.
+// Agent reports network measurement results to collector.
 service MetricsService {
   // Unary send of a batch of metrics.
   rpc SendMetrics(MetricsBatch) returns (MetricsResponse);
@@ -35,7 +35,7 @@ message Metric {
   // Free-form detail message (e.g. error string when success=false).
   string detail = 15;
 
-  // The measured value(s). Exactly one of these is set depending on check_type.
+  // The measured values. Exactly one of these is set depending on check_type.
   oneof value {
     double latency_ms = 10;      // For DNS, TCP, TLS, HTTP, RTT etc.
     double packet_loss_pct = 11; // For packet loss checks
@@ -63,10 +63,10 @@ enum CheckType {
   CHECK_TYPE_HTTP_REQUEST = 4;
   CHECK_TYPE_ICMP_PING = 5;
   CHECK_TYPE_JITTER = 6;
-  CHECK_TYPE_TLS_CERTIFICATE = 7;   // attributes: tls_cert_expiry_days, tls_cert_subject, tls_cert_issuer, tls_cert_valid
+  CHECK_TYPE_TLS_CERTIFICATE = 7;   // tls_cert_expiry_days, tls_cert_subject, tls_cert_issuer, tls_cert_valid
   CHECK_TYPE_TCP_RETRANSMIT = 8;    // status_code = tcpi_total_retrans
-  CHECK_TYPE_DNS_RECORD = 9;        // attributes: A, AAAA, CNAME
-  CHECK_TYPE_TCP_HANDSHAKE = 10;    // latency_ms = SYN->SYN-ACK; attributes: syn_synack_ms, synack_ack_ms
+  CHECK_TYPE_DNS_RECORD = 9;        // A, AAAA, CNAME
+  CHECK_TYPE_TCP_HANDSHAKE = 10;    // latency_ms = SYN->SYN-ACK. syn_synack_ms, synack_ack_ms
   CHECK_TYPE_NTP_OFFSET = 11;       // latency_ms = kernel clock offset (ms), signed
 }
 
