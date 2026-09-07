@@ -35,19 +35,17 @@ public:
     explicit TimescaleStorage(StorageConfig config);
     ~TimescaleStorage();
 
-    // Connects to the database and applies schema (idempotent CREATE TABLE IF NOT EXISTS).
+    // Connects to the database and applies the schema.
     bool Connect();
 
-    // Inserts a batch of metrics. Returns true on success, false on error.
-    // Metrics are batched internally into transactions of `config.batch_size`.
+    // Inserts a batch of metrics. Returns true on success.
+    // Metrics are batched internally into transactions of config.batch_size.
     bool InsertMetrics(const std::string &agent_id,
                        int64_t batch_timestamp_unix_ms,
                        const google::protobuf::RepeatedPtrField<pudimnetmon::Metric> &metrics);
 
-    // Queries recent metrics for the dashboard. `agent_id` and `check_type`
-    // filter results; empty string means "all". Returns a JSON array string:
-    //   [{"time_ms":..., "agent_id":"...", "check_type":"...",
-    //     "target":"...", "value":..., "success":true}, ...]
+    // Queries recent metrics for the dashboard. Empty agent_id and check_type
+    // match everything. Returns a JSON array of metric rows.
     std::string QueryMetricsJson(const std::string &agent_id,
                                  const std::string &check_type,
                                  int64_t window_seconds) const;
@@ -57,8 +55,8 @@ public:
     StorageStats GetStats() const;
 
 private:
-    // Re-establishes the DB connection if it is missing or dead (e.g. after a
-    // TimescaleDB restart). Called at the top of every method that runs SQL.
+    // Reconnects when the connection is missing or stale. Called before every
+    // method that runs SQL.
     void EnsureConnected() const;
 
     struct Impl;

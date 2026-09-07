@@ -1,7 +1,6 @@
-// pudim-consumer-storage: reads MetricsBatch messages from Kafka and writes
-// them to TimescaleDB using the same TimescaleStorage class as the collector's
-// direct path. At-least-once: offsets are committed only after a successful
-// insert; idempotent writes (ON CONFLICT DO NOTHING) make redelivery harmless.
+// pudim-consumer-storage reads MetricsBatch messages from Kafka and writes
+// them to TimescaleDB. Offsets are committed only after a successful insert.
+// Redelivery is harmless because writes are idempotent.
 #include <chrono>
 #include <iostream>
 #include <memory>

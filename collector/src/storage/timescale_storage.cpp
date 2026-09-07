@@ -22,8 +22,7 @@ std::string EscapeLiteral(PGconn *conn, const std::string &s) {
     return out;
 }
 
-// JSON string escape (not SQL literal escape). Produces a JSON-ready string
-// WITHOUT surrounding quotes, so callers embed as: "\"..." + JsonEscape(...) + "\"".
+// JSON string escape without surrounding quotes.
 std::string JsonEscape(const std::string &s) {
     std::string out;
     for (char c : s) {
@@ -39,8 +38,7 @@ std::string JsonEscape(const std::string &s) {
     return out;
 }
 
-// Serializes a Metric's attributes map as a JSONB SQL literal
-// ("'{\"k\":\"v\"}'::jsonb"). Empty maps yield '{}'::jsonb.
+// Serializes a metric's attributes map as a JSONB SQL literal.
 std::string AttributesJsonLiteral(PGconn *conn, const pudimnetmon::Metric &m) {
     std::string body = "{";
     bool first = true;
@@ -57,7 +55,7 @@ std::string AttributesJsonLiteral(PGconn *conn, const pudimnetmon::Metric &m) {
     return out + "::jsonb";
 }
 
-// PostgreSQL boolean column returns "t"/"f"; map to JSON true/false.
+// Maps a PostgreSQL boolean column ("t"/"f") to JSON true or false.
 const char *PgBoolToJson(const char *v) {
     return (v && v[0] == 't') ? "true" : "false";
 }
@@ -84,10 +82,8 @@ const char *CheckTypeToString(pudimnetmon::CheckType type) {
 
 namespace {
 
-// Builds a libpq conninfo string. The timeouts and keepalives are critical:
-// libpq blocks indefinitely by default on connect, and PQstatus alone cannot
-// detect a connection dropped by the server (e.g. a DB container restart), so
-// PQexec would otherwise block at the TCP layer for minutes.
+// Builds a libpq conninfo string with a connect timeout, a statement timeout
+// and TCP keepalives so a dropped database cannot block a request indefinitely.
 std::string BuildConnInfo(const StorageConfig &cfg) {
     std::ostringstream conninfo;
     conninfo << "host=" << cfg.host
@@ -95,14 +91,11 @@ std::string BuildConnInfo(const StorageConfig &cfg) {
              << " dbname=" << cfg.dbname
              << " user=" << cfg.user
              << " password=" << cfg.password
-             // Fail fast when TimescaleDB is unreachable instead of blocking
-             // indefinitely (libpq blocks by default).
+             // Fail fast when the database is unreachable.
              << " connect_timeout=5"
-             // Cap every statement at 5s so a slow query can't hold an HTTP
-             // handler forever (enforced server-side once the query arrives).
+             // Cap every statement at 5s.
              << " options='-c statement_timeout=5000'"
-             // TCP keepalives: detect a dead connection within ~25s
-             // (idle 10s + 3 probes at 5s) instead of kernel-timeout minutes.
+             // TCP keepalives detect a dead connection within ~25s.
              << " keepalives=1 keepalives_idle=10 keepalives_interval=5 keepalives_count=3";
     return conninfo.str();
 }
@@ -116,9 +109,8 @@ struct TimescaleStorage::Impl {
     std::atomic<uint64_t> batches_written{0};
     std::atomic<uint64_t> errors{0};
     std::atomic<uint64_t> insert_latency_total_ms{0};
-    // recursive so EnsureConnected() can be called from methods that also hold
-    // the lock; serialises every PQexec on the shared PGconn (libpq is not
-    // safe for concurrent use of a single connection).
+    // Recursive so EnsureConnected() can run under methods that already hold
+    // it. Serialises every PQexec on the shared connection.
     std::recursive_mutex write_mutex;
 
     explicit Impl(StorageConfig cfg) : config(std::move(cfg)) {}
@@ -161,7 +153,7 @@ bool TimescaleStorage::Connect() {
         return false;
     }
 
-    // Schema: hypertable for network metrics
+    // Network metrics hypertable schema.
     std::string schema = R"SQL(
 CREATE TABLE IF NOT EXISTS network_metrics (
     time           TIMESTAMPTZ NOT NULL,
@@ -215,7 +207,7 @@ END $$;
         // Non-fatal if already set or not supported
     }
 
-    // Retention: drop chunks older than 30 days.
+    // Retention policy drops chunks older than 30 days.
     if (!m_impl->ExecSimple(
             "SELECT add_retention_policy('network_metrics', INTERVAL '30 days');")) {
         // Non-fatal if policy already exists
@@ -224,9 +216,8 @@ END $$;
     return true;
 }
 
-// Re-establishes the connection if it is missing or dead. Called at the top of
-// every method that runs SQL so a DB restart (or any connection drop) self-
-// heals on the next request instead of blocking forever on PQexec.
+// Reconnects when the connection is missing or stale. Called before every SQL
+// method so a database restart self-heals on the next request.
 void TimescaleStorage::EnsureConnected() const {
     std::lock_guard lock(m_impl->write_mutex);
     if (m_impl->conn && PQstatus(m_impl->conn) == CONNECTION_OK) return;
@@ -269,9 +260,7 @@ bool TimescaleStorage::InsertMetrics(
 
     auto flush = [&]() -> bool {
         if (batch_rows == 0) return true;
-        // Idempotent writes: redelivered metrics (same time, agent, check,
-        // target, seq) are silently skipped. This is the at-least-once
-        // companion to Kafka mode (ADR 004).
+        // Redelivered metrics are skipped via ON CONFLICT DO NOTHING.
         sql += " ON CONFLICT DO NOTHING;";
         PGresult *res = PQexec(m_impl->conn, sql.c_str());
         bool ok = (PQresultStatus(res) == PGRES_COMMAND_OK);
@@ -298,9 +287,8 @@ bool TimescaleStorage::InsertMetrics(
         }
         first_value = false;
 
-        // Use agent-reported timestamp (metric itself carries no dedicated
-        // time; use batch timestamp + a 1ms increment per metric to preserve
-        // ordering within a batch).
+        // No per-metric time field exists, so each metric gets a 1ms offset
+        // from the batch timestamp to preserve ordering.
         int64_t ts_ms = batch_timestamp_unix_ms + static_cast<int64_t>(total_inserted + batch_rows);
 
         auto tmp = m;
@@ -394,7 +382,7 @@ std::string TimescaleStorage::QueryMetricsJson(
         std::string value = PQgetvalue(res, i, 5);
         if (value.empty()) value = "0";
         json += "\"value\":" + value + ",";
-        // Attributes column is JSONB; PostgreSQL renders it as JSON text.
+        // The JSONB column arrives from PostgreSQL as JSON text.
         std::string attrs = PQgetvalue(res, i, 6);
         if (attrs.empty() || attrs == "{}") {
             json += "\"attributes\":{}";
@@ -417,7 +405,6 @@ bool TimescaleStorage::IsHealthy() const {
 
     PGresult *res = PQexec(m_impl->conn, "SELECT 1;");
     bool ok = (PQresultStatus(res) == PGRES_TUPLES_OK);
-    // PQclear was called implicitly via ExecSimple? No: use PQclear directly.
     PQclear(res);
     return ok;
 }
