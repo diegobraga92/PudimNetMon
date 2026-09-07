@@ -51,7 +51,7 @@ static bool TestInsertAndQuery() {
     m2.set_monotonic_us(2000);
     *batch.add_metrics() = m2;
 
-    // Storage writes by timestamp, not by explicit time field, so use now
+    // Insert with the current time so the recent query window matches.
     int64_t now_ms = static_cast<int64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
@@ -80,7 +80,7 @@ static bool TestInsertAndQuery() {
 }
 
 int main() {
-    // Always run this test; it will skip gracefully if no DB available.
+    // Runs the DB test and skips when no database is available.
     assert(TestInsertAndQuery());
     std::cout << "ALL COLLECTOR STORAGE TESTS PASSED\n";
     return 0;

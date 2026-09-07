@@ -1,7 +1,6 @@
-// Kafka round-trip integration test: produces a MetricsBatch via KafkaProducer
-// and consumes it back with a KafkaConsumer (consumer_common), verifying the
-// serialized batch arrives intact. Skips gracefully when no broker is reachable
-// (defaults to localhost:9092, override with PUDIM_TEST_KAFKA_BROKERS).
+// Kafka round-trip test. Produces a MetricsBatch and consumes it back,
+// verifying the serialized batch arrives intact. Skips when no broker is
+// reachable (PUDIM_TEST_KAFKA_BROKERS, defaults to localhost port 9092).
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -28,11 +27,10 @@ using pudimcollector::kafka::KafkaProducer;
 
 namespace {
 
-// Fast pre-check: can we open a TCP connection to the bootstrap broker? This
-// makes the "no Kafka in CI" case skip in ~0s instead of waiting for
-// message.timeout.ms. The delivery-report guard below remains the backstop.
+// Opens a TCP connection to the bootstrap broker so a brokerless CI skips
+// quickly. The delivery-report guard below is the backstop.
 bool BrokerReachable(const std::string &brokers, int timeout_ms = 2000) {
-    // Use the first host:port of the bootstrap list.
+    // Use the first broker address in the list.
     std::string hostport = brokers.substr(0, brokers.find(','));
     auto colon = hostport.rfind(':');
     if (colon == std::string::npos) return false;
@@ -119,14 +117,11 @@ int main() {
 
     bool ok = producer.Produce(batch);
     assert(ok);
-    // Block long enough for message.timeout.ms (15s) to fire delivery reports
-    // for an unreachable broker, so the SKIP guard below is reliable.
+    // Wait long enough for delivery reports on an unreachable broker.
     producer.Flush(20000);
 
-    // RdKafka::Producer::create() succeeds even with no reachable broker, so
-    // detect an unreachable cluster via the delivery report: if the batch was
-    // enqueued but never delivered successfully, skip gracefully (e.g. CI has
-    // no Kafka broker).
+    // Producer creation succeeds without a reachable broker, so treat zero
+    // deliveries as an unreachable cluster and skip.
     if (producer.ProducedTotal() > 0 && producer.DeliverySuccesses() == 0) {
         std::cout << "SKIP: Kafka broker unreachable at " << brokers
                   << " (delivery failures=" << producer.DeliveryFailures() << ")\n";

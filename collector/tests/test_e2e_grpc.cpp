@@ -1,8 +1,6 @@
-// End-to-end gRPC integration test:
-//   in-process collector (MetricsServiceImpl) + real agent MetricsClient,
-//   backed by TimescaleStorage. Exercises both the unary SendMetrics path and
-//   the client-streaming StreamMetrics path (with the "x-agent-id" metadata
-//   header). Skips gracefully when no TimescaleDB is reachable.
+// End-to-end gRPC test. An in-process MetricsServiceImpl talks to the agent's
+// MetricsClient over the unary and client-streaming paths. Skips when no
+// TimescaleDB is reachable.
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -69,8 +67,8 @@ StorageConfig ConfigFromEnv() {
     return cfg;
 }
 
-// Picks an ephemeral free port by binding a socket to port 0. (gRPC <1.60
-// does not expose Server::GetPort(), so we reserve the port ourselves.)
+// Reserves an ephemeral free port. gRPC versions before 1.60 do not expose
+// Server::GetPort().
 int PickFreePort() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;

@@ -76,14 +76,13 @@ void TestFiringRepeatResolved() {
     MetricsBatch batch;
     batch.set_agent_id("agent-a");
 
-    // OK -> FIRING
     *batch.add_metrics() = LatencyMetric(CheckType::CHECK_TYPE_TCP_CONNECT, "example.com:443", 600.0);
     mgr.Evaluate(batch.agent_id(), batch.metrics());
     assert(mgr.ActiveAlertCount() == 1);
     assert(mgr.TotalAlertsFired() == 1);
     std::cout << "PASS: violation fired alert\n";
 
-    // Still firing with repeat_interval_sec=0 -> repeat notification.
+    // A repeat notification is expected while still firing.
     batch.clear_metrics();
     *batch.add_metrics() = LatencyMetric(CheckType::CHECK_TYPE_TCP_CONNECT, "example.com:443", 700.0);
     mgr.Evaluate(batch.agent_id(), batch.metrics());
@@ -91,7 +90,7 @@ void TestFiringRepeatResolved() {
     assert(mgr.TotalAlertsFired() == 2);
     std::cout << "PASS: repeat notification sent while still firing\n";
 
-    // Back within bounds -> FIRING -> RESOLVED.
+    // Back within bounds, so the alert resolves.
     batch.clear_metrics();
     *batch.add_metrics() = LatencyMetric(CheckType::CHECK_TYPE_TCP_CONNECT, "example.com:443", 100.0);
     mgr.Evaluate(batch.agent_id(), batch.metrics());
@@ -187,14 +186,14 @@ void TestAck() {
     mgr.Evaluate(b.agent_id(), b.metrics());
     assert(mgr.ActiveAlertCount() == 1);
 
-    // Ack a non-existent alert → no-op.
+    // Unknown alert is a no-op.
     assert(!mgr.Ack("nope", "agent-a", "1.1.1.1"));
 
-    // Ack the real one.
+    // Acknowledge the firing alert.
     assert(mgr.Ack("high-loss", "agent-a", "1.1.1.1"));
     assert(mgr.ActiveAlertsJson().find("\"acknowledged\":true") != std::string::npos);
 
-    // Acking twice is a no-op.
+    // A second ack is a no-op.
     assert(!mgr.Ack("high-loss", "agent-a", "1.1.1.1"));
     std::cout << "PASS: alert ack marks firing alert acknowledged\n";
 }
