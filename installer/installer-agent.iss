@@ -89,11 +89,12 @@ Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceConfigParams}; StatusMsg: 
 Filename: "{sys}\sc.exe"; Parameters: "description PudimNetMonAgent ""PudimNetMon network monitoring agent"""; Flags: waituntilterminated runhidden; AfterInstall: StartAgentService
 
 [UninstallRun]
-; Stop and delete the auto-start service before files are removed (the running
-; service locks pudim-agent.exe). [UninstallRun] runs as the first step of the
-; uninstaller; the commands are idempotent and non-zero exits are ignored.
-Filename: "{sys}\sc.exe"; Parameters: "stop PudimNetMonAgent"; Flags: waituntilterminated runhidden
-Filename: "{sys}\sc.exe"; Parameters: "delete PudimNetMonAgent"; Flags: waituntilterminated runhidden
+; Stopping and deleting the auto-start service is handled in [Code]
+; (CurUninstallStepChanged -> RemoveAgentService): sc stop returns before the
+; service has stopped, and sc delete on a STOP_PENDING service only marks it
+; for deletion, so declarative [UninstallRun] entries left the service
+; registered with the agent process still running after the uninstaller
+; exited (CI: 'Service still registered after uninstall').
 
 [Code]
 
@@ -106,21 +107,88 @@ var
 const
   DefaultInterval = '5000';
 
-procedure InitializeWizard();
+// Waits for the PudimNetMonAgent service to be fully stopped. sc.exe stop only
+// sends the stop control and returns immediately, leaving the service
+// STOP_PENDING; a follow-up delete then only marks the service for deletion
+// while pudim-agent.exe is still mapped. Poll sc.exe stop's exit code instead
+// (locale-independent):
+//   0    = stop control accepted (service is stopping)
+//   1061 = service cannot accept control yet (still stopping)
+//   1062 = service is stopped
+//   1060 = service does not exist (fresh install)
+function WaitAgentStopped(): Boolean;
+var
+  ResultCode: Integer;
+  Attempt: Integer;
+begin
+  Result := False;
+  for Attempt := 1 to 60 do
+  begin
+    // NOTE: Exec does not expand constants in FileName; ExpandConstant is
+    // required here or sc.exe cannot be launched.
+    if Exec(ExpandConstant('{sys}\sc.exe'), 'stop PudimNetMonAgent', '', SW_HIDE,
+            ewWaitUntilTerminated, ResultCode) then
+    begin
+      if (ResultCode = 1060) or (ResultCode = 1062) then
+      begin
+        Result := True;  // not installed, or fully stopped
+        Exit;
+      end;
+    end;
+    Sleep(1000);
+  end;
+end;
+
+// Installer path: stop the running service (and wait until it is really
+// stopped) before Inno Setup's RestartManager scans for in-use files on the
+// Preparing page - that scan waits only ~5 s for the agent to stop, then
+// aborts an upgrade with exit code 5. No-op on a fresh install (1060).
+procedure StopAgentService();
+begin
+  if not WaitAgentStopped() then
+  begin
+    MsgBox('Setup could not stop the PudimNetMonAgent service. Stop it in ' +
+           'Services, then run Setup again.', mbError, MB_OK);
+    Abort();
+  end;
+end;
+
+// Uninstaller path: wait for the service to fully stop, then delete it. This
+// cannot be done from [UninstallRun]: sc stop returns before the service has
+// stopped and sc delete on a STOP_PENDING service only marks it for deletion,
+// so the uninstaller used to exit 0 with PudimNetMonAgent still registered and
+// the agent process still shutting down (CI: 'Service still registered after
+// uninstall'). Delete exit codes are ignored (1060 = already gone, 1072 =
+// already marked for deletion).
+procedure RemoveAgentService();
 var
   ResultCode: Integer;
 begin
-  // A reinstall/upgrade replaces pudim-agent.exe while the running service
-  // holds it open. Stop it here, before Inno Setup's RestartManager scans for
-  // in-use files on the Preparing page (that scan waits only ~5 s for the
-  // agent to stop, then aborts the install -- exit code 5). We do this in
-  // InitializeWizard rather than InitializeSetup because InitializeSetup runs
-  // before UAC elevation, where sc.exe stop is denied. On a fresh install
-  // there is no service and sc stop fails fast (error 1060), which is ignored.
-  Exec('{sys}\sc.exe', 'stop PudimNetMonAgent', '', SW_HIDE,
+  WaitAgentStopped();
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete PudimNetMonAgent', '', SW_HIDE,
        ewWaitUntilTerminated, ResultCode);
-  if ResultCode = 0 then
-    Sleep(1500);  // let the process release its image before file replacement
+end;
+
+// Runs in the uninstaller. usAppMutexCheck is the first uninstall step, before
+// any file is removed, so stopping the agent here guarantees pudim-agent.exe
+// is unlocked by the time the uninstaller deletes it.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usAppMutexCheck then
+    RemoveAgentService();
+end;
+
+procedure InitializeWizard();
+begin
+  // A reinstall/upgrade replaces pudim-agent.exe while the running service
+  // holds it open. Stop it (and wait until it is really stopped) before Inno
+  // Setup's RestartManager scans for in-use files on the Preparing page - that
+  // scan waits only ~5 s for the agent to stop, then aborts the install with
+  // exit code 5. We do this in InitializeWizard rather than InitializeSetup
+  // because InitializeSetup runs before UAC elevation, where stopping the
+  // service is denied.
+  StopAgentService();
+
 
   // Defaults are captured here so silent installs (which skip the wizard
   // pages) still configure the service sensibly.
@@ -252,16 +320,13 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ResultCode: Integer;
 begin
   if CurStep = ssInstall then
   begin
-    // Let an existing installation be upgraded: stop the service so the exe
-    // is not locked while it is being replaced. The result is ignored -- a
-    // fresh install has no service to stop, and net/sc both fail harmlessly.
-    Exec('{sys}\sc.exe', 'stop PudimNetMonAgent', '', SW_HIDE,
-         ewWaitUntilTerminated, ResultCode);
+    // Let an existing installation be upgraded: stop the service (and wait for
+    // it to actually stop) so the exe is not locked while it is replaced.
+    // No-op on a fresh install (sc stop returns 1060/1062 immediately).
+    StopAgentService();
   end;
 end;
 
