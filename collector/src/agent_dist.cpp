@@ -14,8 +14,7 @@ namespace pudimcollector {
 
 namespace {
 
-// Detects whether a filename is a staged agent binary and fills the platform
-// metadata (including reading size + sha256 from disk).
+// Parses a staged agent binary filename into platform metadata.
 bool ParseAgentFilename(const std::filesystem::path &path,
                         AgentPlatform &out) {
     std::string name = path.filename().string();
@@ -36,7 +35,7 @@ bool ParseAgentFilename(const std::filesystem::path &path,
     }
     std::string os = rest.substr(0, dash);
     std::string arch = rest.substr(dash + 1);
-    // Guard against platforms we don't recognize (ignore anything else).
+    // Skip platforms outside the known list.
     static const char *kKnownOs[] = {"linux", "windows", "darwin", "freebsd"};
     if (std::find(std::begin(kKnownOs), std::end(kKnownOs), os) ==
         std::end(kKnownOs)) {

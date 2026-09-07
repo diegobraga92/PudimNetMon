@@ -6,8 +6,7 @@
 
 namespace pudimcollector {
 
-// A staged agent binary that the collector can serve to the dashboard
-// (self-hosted "Download the agent" flow).
+// One staged agent binary served to the dashboard.
 struct AgentPlatform {
     std::string id;        // e.g. "linux-amd64"
     std::string os;        // "linux" | "windows" | ...
@@ -18,17 +17,16 @@ struct AgentPlatform {
     uint64_t size_bytes = 0;
 };
 
-// Scans a directory for staged pudim-agent binaries and serves them through
-// the collector HTTP API. The directory layout (see scripts/package-agents.sh
-// and infra/docker/Dockerfile.collector) is:
+// Scans a directory of staged pudim-agent binaries and serves them through the
+// collector HTTP API. Expected layout
 //
-//   <dir>/pudim-agent-linux-amd64
-//   <dir>/pudim-agent-linux-arm64
-//   <dir>/pudim-agent-windows-amd64.exe
-//   <dir>/version.txt            (optional; falls back to a constant)
+//   pudim-agent-linux-amd64
+//   pudim-agent-linux-arm64
+//   pudim-agent-windows-amd64.exe
+//   version.txt            optional version override
 class AgentDist {
 public:
-    // dir empty or unreadable => no platforms available (download disabled).
+    // Returns false when the directory is empty or unreadable.
     bool Scan(const std::string &dir);
 
     bool Has(const std::string &platform_id) const { return Find(platform_id) != nullptr; }
@@ -41,7 +39,7 @@ public:
     // platform is unknown or the file cannot be read.
     bool LoadBinary(const std::string &platform_id, std::vector<char> &out) const;
 
-    // JSON manifest: {"version":"...","platforms":[{...}]}.
+    // JSON manifest with the version and the platform list.
     std::string ManifestJson() const;
 
 private:
