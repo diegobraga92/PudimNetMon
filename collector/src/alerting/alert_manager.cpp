@@ -11,7 +11,7 @@ namespace pudimcollector::alerting {
 namespace {
 
 constexpr size_t kMaxHistory = 1000;
-constexpr char kKeySep = '\x1f';  // unit separator; safe within rule ids/targets
+constexpr char kKeySep = '\x1f';  // never occurs in rule ids or targets
 
 int64_t NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -44,7 +44,7 @@ std::string FormatDouble(double v) {
     return s;
 }
 
-// Helper factories (used by AlertManager::Evaluate).
+// Factories for records and notifications.
 AlertRecord MakeRecordFor(const AlertRule &rule,
                           const std::string &agent_id,
                           const pudimnetmon::Metric &m, double value,
@@ -171,7 +171,7 @@ bool AlertManager::LoadRulesFromJson(const std::string &json, std::string &error
     {
         std::lock_guard lock(m_mutex);
         m_rules = std::move(new_rules);
-        m_states.clear();  // state is tied to rules; reset on reload
+        m_states.clear();  // reset per-rule state for the new rule set
         m_notifiers.clear();
         m_notifiers.push_back(std::make_unique<LogNotifier>());
         if (!webhook_url.empty() && webhook_url != "log") {
@@ -226,12 +226,11 @@ void AlertManager::Evaluate(
                                    ? (value > rule.threshold)
                                    : (value < rule.threshold);
                 }
-                // NOTE: for field-based rules, a failed probe (success=false)
-                // carries no value → it neither fires nor resolves the alert.
+                // A failed field-based probe has no value, so it cannot fire
+                // or resolve the alert.
 
                 if (violated) {
                     if (!st.firing) {
-                        // OK -> FIRING
                         st.firing = true;
                         st.first_fired_ms = now;
                         st.last_notified_ms = now;
@@ -245,7 +244,7 @@ void AlertManager::Evaluate(
                         TrimHistory();
                         notifications.push_back(MakeNotification(rec));
                     } else {
-                        // Still firing: re-notify after repeat_interval_sec.
+                        // Re-notify once the repeat interval has elapsed.
                         int64_t interval_ms =
                             static_cast<int64_t>(rule.repeat_interval_sec) * 1000;
                         if (now - st.last_notified_ms >= interval_ms) {
@@ -262,10 +261,9 @@ void AlertManager::Evaluate(
                         }
                     }
                 } else if (st.firing) {
-                    // FIRING -> RESOLVED
                     double last_value = st.last_value;
                     std::string last_detail = st.last_detail;
-                    st = FiringState{};  // reset to OK
+                    st = FiringState{};
 
                     AlertRecord rec = MakeRecordFor(rule, agent_id, m, last_value,
                                                     "resolved", now);
@@ -278,8 +276,7 @@ void AlertManager::Evaluate(
         }
     }
 
-    // Dispatch outside the lock so notifiers (potentially blocking network
-    // calls) never stall evaluation.
+    // Notify outside the lock so blocking network calls cannot stall evaluation.
     for (const auto &alert : notifications) {
         for (Notifier *n : notifiers) {
             n->Notify(alert);

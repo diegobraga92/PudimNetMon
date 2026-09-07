@@ -11,8 +11,7 @@
 
 namespace pudimcollector::alerting {
 
-// A record of an alert state transition (firing or resolved), used for the
-// dashboard history and the /alert-history endpoint.
+// One alert state transition shown in the dashboard alert history.
 struct AlertRecord {
     std::string rule_id;
     std::string rule_name;
@@ -29,38 +28,34 @@ struct AlertRecord {
     std::string ToJson() const;
 };
 
-// In-memory alert state machine. Evaluates metric batches against loaded rules
-// and pushes state transitions to notifiers. Thread-safe.
-//
-// State per (rule, agent, target):
-//   OK → FIRING (threshold breached or probe failed)
-//   FIRING → repeat notification after rule.repeat_interval_sec
-//   FIRING → RESOLVED (metric back within bounds)
+// Thread-safe in-memory alert state machine.
+// State is tracked per (rule, agent, target). A threshold breach or a failed
+// probe moves OK to FIRING. FIRING moves back to RESOLVED when the metric
+// recovers and repeats notifications every rule.repeat_interval_sec.
 class AlertManager {
 public:
     AlertManager() = default;
 
-    // Clears rules, loads from JSON file. Returns false and fills `error` on
-    // parse failure (previous rules are preserved).
+    // Loads rules from a JSON file. Existing rules are kept on parse failure.
     bool LoadRulesFromFile(const std::string &path, std::string &error);
 
-    // Parses a JSON document (rules file format). Returns false on error.
+    // Parses rules from a JSON document.
     bool LoadRulesFromJson(const std::string &json, std::string &error);
 
-    // Takes ownership of a notifier channel (e.g. LogNotifier).
+    // Registers a notifier.
     void AddNotifier(std::unique_ptr<Notifier> notifier);
 
-    // Evaluates a batch of metrics (after a successful storage write).
+    // Evaluates a metric batch against the loaded rules.
     void Evaluate(const std::string &agent_id,
                   const google::protobuf::RepeatedPtrField<pudimnetmon::Metric> &metrics);
 
-    // Snapshot accessors (JSON for the HTTP endpoints).
+    // JSON snapshots for the HTTP endpoints.
     std::string ActiveAlertsJson() const;
     std::string AlertHistoryJson(size_t max_events = 200) const;
     std::string RulesJson() const;
 
-    // Marks a firing alert acknowledged (dashboard "Acknowledge" action).
-    // No-op if the alert is not currently firing. Returns true if changed.
+    // Marks a firing alert as acknowledged. Returns false when the alert is
+    // not firing or is already acknowledged.
     bool Ack(const std::string &rule_id, const std::string &agent_id,
              const std::string &target);
 
@@ -89,7 +84,7 @@ private:
     std::vector<AlertRule> m_rules;
     std::unordered_map<std::string, FiringState> m_states;
     std::vector<std::unique_ptr<Notifier>> m_notifiers;
-    // History is a bounded list; newest appended at the end.
+    // Bounded history with the newest record at the end.
     std::vector<AlertRecord> m_history;
     mutable std::mutex m_mutex;
     uint64_t m_alerts_fired_total = 0;

@@ -68,8 +68,7 @@ void LogNotifier::Notify(const AlertNotification &alert) {
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                    std::chrono::system_clock::now().time_since_epoch())
                    .count();
-    // Structured log line with an "alert" level so it stands out from
-    // info/warn/error in log pipelines.
+    // Emits the alert with level "alert".
     std::cout << "{\"timestamp\":" << now
               << ",\"level\":\"alert\""
               << ",\"component\":\"collector\""
@@ -83,7 +82,7 @@ WebhookNotifier::WebhookNotifier(std::string url, int timeout_sec)
 void WebhookNotifier::Notify(const AlertNotification &alert) {
     std::string body = alert.ToJson();
 
-    // Split scheme://host[:port]/path so we can use httplib's client.
+    // Split the URL into scheme, host and path for httplib.
     std::string scheme = "http";
     std::string host_and_path = m_url;
     auto scheme_pos = m_url.find("://");

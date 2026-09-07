@@ -19,8 +19,7 @@ struct AlertNotification {
     std::string detail;
     int64_t time_ms = 0;
 
-    // Serializes this notification as JSON (no surrounding braces removed; a
-    // complete JSON object string).
+    // Serializes the notification as a JSON object.
     std::string ToJson() const;
 };
 
@@ -32,15 +31,14 @@ public:
     virtual const char *Name() const = 0;
 };
 
-// Writes alerts as structured JSON log lines to stdout (always enabled).
+// Writes alerts to stdout as structured JSON log lines.
 class LogNotifier final : public Notifier {
 public:
     void Notify(const AlertNotification &alert) override;
     const char *Name() const override { return "log"; }
 };
 
-// POSTs alert JSON to a webhook URL (Slack/Discord/mock incident service).
-// Uses httplib::Client, which is already a collector dependency.
+// Posts alert JSON to a webhook URL.
 class WebhookNotifier final : public Notifier {
 public:
     explicit WebhookNotifier(std::string url, int timeout_sec = 5);
@@ -52,7 +50,7 @@ private:
     int m_timeout_sec;
 };
 
-// Creates the appropriate notifier from a URL ("" or "log" → LogNotifier).
+// Creates a notifier. An empty string or "log" selects LogNotifier.
 std::unique_ptr<Notifier> MakeNotifier(const std::string &url);
 
 } // namespace pudimcollector::alerting

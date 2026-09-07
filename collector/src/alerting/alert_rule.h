@@ -6,8 +6,8 @@
 
 namespace pudimcollector::alerting {
 
-// A single alert rule: fires when a metric violates a threshold (or when a
-// probe fails, if on_failure is set).
+// Fires when a metric violates a threshold, or when a probe fails if
+// on_failure is set.
 struct AlertRule {
     std::string id;             // unique rule identifier
     std::string name;           // human-readable name
@@ -16,7 +16,7 @@ struct AlertRule {
     std::string target;         // empty = matches all targets
     std::string metric_field;   // "latency_ms" | "packet_loss_pct" | "jitter_ms" |
                                 // "rtt_ms" | "status_code" (unused when on_failure)
-    bool greater_than = true;   // comparison operator: > (true) or < (false)
+    bool greater_than = true;   // true selects >, false selects <
     double threshold = 0.0;     // threshold for comparison
     int repeat_interval_sec = 300;  // min seconds between repeat notifications
     std::string severity = "warning";  // info | warning | critical
