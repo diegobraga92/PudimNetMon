@@ -19,21 +19,18 @@ struct AgentEntry {
     int32_t interval_ms;
     std::string version;
     int64_t first_seen_unix_ms;
-    std::string diagnostic_endpoint;  // host:port of the agent's diagnostic server
+    std::string diagnostic_endpoint;  // agent diagnostic server address
 };
 
-// Live registry of agents that have sent heartbeats. Heartbeats arrive on
-// gRPC server threads while the dashboard reads this from the HTTP thread
-// pool, so every accessor is synchronized.
+// Registry of agents seen through heartbeats. Thread-safe.
 class AgentRegistry {
 public:
     AgentRegistry() = default;
 
-    // Records a heartbeat, registering the agent on first sight and bumping
-    // the heartbeat counter.
+    // Records a heartbeat and registers the agent on first sight.
     void RecordHeartbeat(const pudimnetmon::HeartbeatRequest &req);
 
-    // Agents whose most recent heartbeat is within `timeout_ms`.
+    // Agents that heartbeated within timeout_ms.
     size_t ActiveAgentCount(int64_t timeout_ms = 30000) const;
 
     // The agent's advertised diagnostic endpoint, or "" when unknown.
@@ -43,9 +40,7 @@ public:
 
     uint64_t HeartbeatCount() const;
 
-    // JSON snapshot for the dashboard:
-    //   {"agents":[{agent_id, last_seen_unix_ms, interval_ms, version,
-    //               diagnostic_endpoint, first_seen_unix_ms, alive}, ...]}
+    // JSON snapshot of all agents for the dashboard.
     std::string DumpAgents() const;
 
 private:

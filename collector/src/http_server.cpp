@@ -17,6 +17,8 @@
 #include "metrics_service.h"
 #include "storage/timescale_storage.h"
 
+// TODO: Check Prometheus usage
+
 namespace pudimcollector {
 
 HttpServer::HttpServer(
@@ -32,10 +34,7 @@ HttpServer::HttpServer(
       m_kafka_producer(std::move(kafka_producer)),
       m_agent_dist(agent_dist),
       m_tls(std::move(tls)) {
-    // Serve requests on a small thread pool. httplib is single-threaded by
-    // default: one slow handler (e.g. a DB query waiting on a dead connection)
-    // would otherwise stall every dashboard endpoint, including /health and
-    // /agents which never touch the database.
+    // Run handlers on a pool so one slow request cannot stall other endpoints.
     m_server.new_task_queue = [] {
         return new httplib::ThreadPool(4);
     };
@@ -68,8 +67,7 @@ HttpServer::HttpServer(
                          "text/plain; version=0.0.4");
     });
 
-    // Dashboard JSON metrics endpoint:
-    // /api/metrics?agent_id=X&check_type=Y&window_seconds=300
+    // Dashboard metrics query.
     m_server.Get("/api/metrics",
                  [this](const httplib::Request &req, httplib::Response &resp) {
         if (!m_storage) {
@@ -141,9 +139,7 @@ HttpServer::HttpServer(
     m_server.Get("/alert-rules", alert_rules_handler);
     m_server.Get("/api/alert-rules", alert_rules_handler);
 
-    // Diagnostic endpoint: forwards a diagnostic request to the target agent's
-    // DiagnosticService (traceroute + pcap). Requires the agent to have
-    // advertised a diagnostic endpoint in its heartbeat.
+    // Runs an on-demand diagnostic (traceroute or pcap) on the target agent.
     auto diagnostic_handler = [this](const httplib::Request &req,
                                      httplib::Response &resp) {
         std::string agent_id = req.get_param_value("agent_id");
@@ -163,8 +159,7 @@ HttpServer::HttpServer(
             return;
         }
 
-        // mTLS channel to the agent's diagnostic server (reuses the
-        // collector's cert/key as the client identity when --tls-* is set).
+        // Dials the agent diagnostic service over mTLS when configured.
         auto stub = PrepareAgentCall(agent_id, resp);
         if (!stub) {
             return;
@@ -194,8 +189,7 @@ HttpServer::HttpServer(
     };
     m_server.Post("/diagnostic", diagnostic_handler);
     m_server.Post("/api/diagnostic", diagnostic_handler);
-    // Alert acknowledge: POST JSON
-    // {"rule_id","agent_id","target"} → marks the active alert acknowledged.
+    // Marks an active alert as acknowledged.
     m_server.Post("/api/alerts/ack",
                   [this](const httplib::Request &req, httplib::Response &resp) {
         if (!m_alert_manager) {
@@ -229,12 +223,7 @@ HttpServer::HttpServer(
                          "application/json");
     });
 
-    // Agent config endpoint: POST JSON AgentConfigRequest → forwards the
-    // Reconfigure RPC to the agent's diagnostic service.
-    // {"agent_id","dns_targets":[...],"tcp_targets":[...],"tls_targets":[...],
-    //  "http_targets":[...],"ping_targets":[...],"ping_count":N,"ping_gap_ms":N,
-    //  "tls_cert_check":bool,"tcp_retransmit_check":bool,
-    //  "tcp_handshake_capture":bool,"http_protocols":[...]}
+    // Applies a new probe configuration on the target agent.
     m_server.Post("/api/agents/config",
                   [this](const httplib::Request &req, httplib::Response &resp) {
         nlohmann::json body;
@@ -296,8 +285,7 @@ HttpServer::HttpServer(
         resp.set_content(json, "application/json");
     });
 
-    // Current agent config (dashboard form population): forwards the
-    // GetConfig RPC to the agent. Query param: ?agent_id=...
+    // Returns the agent's current probe configuration.
     m_server.Get("/api/agents/config",
                  [this](const httplib::Request &req, httplib::Response &resp) {
         std::string agent_id = req.get_param_value("agent_id");
@@ -330,9 +318,7 @@ HttpServer::HttpServer(
                            "\",\"error\":\"" + logger::escape(gresp.error()) + "\"}";
         resp.set_content(json, "application/json");
     });
-    // Pre-set agent commands: ListCommands + RunCommand forwarded to the
-    // agent's DiagnosticService. Commands are a FIXED, whitelisted catalog —
-    // the agent never executes arbitrary shell/terminal input.
+    // Runs the agent's built-in diagnostic commands.
     auto agent_commands_handler = [this](const httplib::Request &req,
                                          httplib::Response &resp) {
         std::string agent_id = req.get_param_value("agent_id");
@@ -452,7 +438,7 @@ HttpServer::HttpServer(
     };
     m_server.Post("/api/agents/command", run_command_handler);
 
-    // Self-hosted agent download: manifest + binary download.
+    // Agent binary manifest and download.
     auto agent_versions_handler = [this](const httplib::Request &,
                                          httplib::Response &resp) {
         resp.set_content(m_agent_dist.ManifestJson(), "application/json");
@@ -494,7 +480,7 @@ HttpServer::~HttpServer() {
 void HttpServer::Start(const std::string &addr) {
     m_thread = std::thread([this, addr]() {
         logger::emit("info", "HTTP server starting on " + addr);
-        // Parse host and port from "host:port" string.
+        // Split addr into host and port.
         auto colon = addr.find_last_of(':');
         std::string host = addr.substr(0, colon);
         int port = std::stoi(addr.substr(colon + 1));
@@ -608,7 +594,7 @@ std::string HttpServer::FormatPrometheusMetrics() const {
 std::unique_ptr<pudimnetmon::DiagnosticService::Stub>
 HttpServer::PrepareAgentCall(const std::string &agent_id,
                              httplib::Response &resp) const {
-    // The agent must have advertised a diagnostic endpoint in its heartbeat.
+    // The agent must advertise a diagnostic endpoint in its heartbeat.
     std::string diag_endpoint = m_registry.GetDiagnosticEndpoint(agent_id);
     if (diag_endpoint.empty()) {
         resp.status = 404;
@@ -617,8 +603,7 @@ HttpServer::PrepareAgentCall(const std::string &agent_id,
                          "application/json");
         return nullptr;
     }
-    // mTLS channel to the agent's diagnostic server (reuses the collector's
-    // cert/key as the client identity when --tls-* is set).
+    // Dials over mTLS when configured.
     return DialAgentDiagnostic(diag_endpoint, m_tls);
 }
 

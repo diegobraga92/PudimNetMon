@@ -8,9 +8,7 @@ namespace pudimcollector {
 
 class AgentRegistry;
 
-// gRPC service implementation for the heartbeat AgentService. Heartbeats are
-// recorded into the shared AgentRegistry, which feeds the dashboard's agent
-// liveness views and the agent-proxy HTTP endpoints.
+// Heartbeat gRPC service. Records heartbeats into the shared AgentRegistry.
 class AgentServiceImpl final : public pudimnetmon::AgentService::Service {
 public:
     explicit AgentServiceImpl(AgentRegistry &registry);

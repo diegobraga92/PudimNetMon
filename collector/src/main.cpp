@@ -25,7 +25,7 @@
 using grpc::Server;
 using grpc::ServerBuilder;
 
-// True until SIGTERM/SIGINT asks for a graceful shutdown.
+// Cleared by the signal handler to request shutdown.
 static std::atomic<bool> s_running{true};
 
 static void handle_signal(int sig) {
@@ -44,14 +44,14 @@ int main(int argc, char **argv) {
     std::string db_user = "pudim";
     std::string db_password = "pudim";
     std::string alert_rules_path;
-    std::string kafka_brokers;   // empty → Direct mode (Phases 1-2 behaviour)
+    std::string kafka_brokers;   // empty selects Direct mode
     std::string kafka_topic = "network.metrics";
     int64_t skew_threshold_ms = 5000;  // clock-skew warning threshold
     int64_t backpressure_threshold_ms = 1000;  // ingest latency that triggers x-overloaded
     std::string tls_ca;    // PEM CA used to verify agent client certs (mTLS)
     std::string tls_cert;  // PEM server certificate
     std::string tls_key;   // PEM server private key
-    std::string agent_dist_dir = "/usr/share/pudim/agents";  // staged binaries for the dashboard download flow
+    std::string agent_dist_dir = "/usr/share/pudim/agents";  // staged agent binaries for download
 
     auto get_env = [](const char *name, const std::string &def) {
         const char *v = std::getenv(name);
@@ -64,6 +64,8 @@ int main(int argc, char **argv) {
     db_name = get_env("PUDIM_DB_NAME", db_name);
     db_user = get_env("PUDIM_DB_USER", db_user);
     db_password = get_env("PUDIM_DB_PASSWORD", db_password);
+
+    // TODO: Check about replacing CLI settings
 
     // Simple CLI parsing. Supports both "--flag value" and "--flag=value".
     auto opt = [&](const std::string &arg, const std::string &flag,
@@ -148,8 +150,7 @@ int main(int argc, char **argv) {
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
 
-    // Agent heartbeat registry. Shared by the heartbeat gRPC service and every
-    // dashboard endpoint that looks an agent up by id.
+    // Heartbeat registry shared by the gRPC service and the HTTP endpoints.
     pudimcollector::AgentRegistry registry;
 
     // Initialize storage
@@ -167,8 +168,11 @@ int main(int argc, char **argv) {
     } else {
         logger::emit("info", "Storage connected (TimescaleDB)");
     }
-    // Determine ingestion mode (ADR 004). Kafka mode is enabled by passing
-    // --kafka-brokers; consumers then own storage + alerting.
+
+    // TODO: Check Kafka usage
+    
+    // Kafka mode is enabled by passing --kafka-brokers. Consumers then own
+    // storage and alerting.
     pudimcollector::StorageMode storage_mode = pudimcollector::StorageMode::Direct;
     std::shared_ptr<pudimcollector::kafka::KafkaProducer> kafka_producer;
     if (!kafka_brokers.empty()) {
@@ -182,8 +186,7 @@ int main(int argc, char **argv) {
         logger::emit("info", "Kafka mode enabled (topic=" + kafka_topic + ")");
     }
 
-    // Initialize alert manager (optional; only used in Direct mode. In Kafka
-    // mode the alert consumer owns alerting.)
+    // Alert manager used in Direct mode.
     auto alert_manager = std::make_shared<pudimcollector::alerting::AlertManager>();
     if (storage_mode == pudimcollector::StorageMode::Direct &&
         !alert_rules_path.empty()) {
@@ -226,9 +229,7 @@ int main(int argc, char **argv) {
     }
     logger::emit("info", "gRPC server listening on " + grpc_addr);
 
-    // Self-hosted agent download: staged binaries served to the
-    // dashboard. When the dist dir has no binaries the manifest is empty and
-    // the download endpoints return 404.
+    // Serves staged agent binaries for self-hosted download.
     pudimcollector::AgentDist agent_dist;
     if (!agent_dist.Scan(agent_dist_dir)) {
         logger::emit("info", "No staged agent binaries in '" + agent_dist_dir +
@@ -240,7 +241,7 @@ int main(int argc, char **argv) {
                      "' (version " + agent_dist.Version() + ")");
     }
 
-    // Every dashboard + Prometheus route lives in the HTTP server (http_server.h).
+    // HTTP routes live in HttpServer.
     pudimcollector::HttpServer http_server(
         registry, storage, metrics_service, alert_manager, kafka_producer,
         agent_dist, pudimcollector::TlsOptions{tls_ca, tls_cert, tls_key});

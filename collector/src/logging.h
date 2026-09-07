@@ -4,10 +4,7 @@
 #include <iostream>
 #include <string>
 
-// JSON-structured logging to stdout. Shared by every collector component
-// (agent registry, gRPC services, HTTP server). One JSON object per line:
-//   {"timestamp":<ms>,"level":"info","component":"collector",
-//    "message":"...",["agent_id":"...","trace_id":"..."]}
+// Structured JSON logging to stdout, one object per line.
 namespace logger {
 
 inline std::string escape(const std::string &s) {

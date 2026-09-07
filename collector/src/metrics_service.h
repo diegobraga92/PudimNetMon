@@ -13,15 +13,14 @@
 
 namespace pudimcollector {
 
-// Where ingested metrics go after validation (ADR 004).
+// Where validated metrics go next.
 enum class StorageMode {
-    Direct,  // write to TimescaleDB + in-process alerting (default, Phases 1-2)
-    Kafka,   // produce to Kafka; consumers own storage + alerting
+    Direct,  // write to TimescaleDB and run alerting in-process
+    Kafka,   // produce to Kafka and leave storage and alerting to consumers
 };
 
-// gRPC service implementation for MetricsService. In Direct mode it writes to
-// TimescaleStorage and evaluates alerts in-process; in Kafka mode it produces
-// every batch to Kafka via KafkaProducer instead.
+// gRPC service for MetricsService. Direct mode writes to TimescaleStorage and
+// evaluates alerts in-process. Kafka mode produces every batch to Kafka.
 class MetricsServiceImpl final : public pudimnetmon::MetricsService::Service {
 public:
     explicit MetricsServiceImpl(
@@ -42,20 +41,20 @@ public:
         grpc::ServerReader<pudimnetmon::Metric> *reader,
         pudimnetmon::MetricsResponse *response) override;
 
-    // True when Kafka mode is active.
+    // True in Kafka mode.
     bool KafkaEnabled() const { return m_mode == StorageMode::Kafka; }
 
-    // Number of clock-skew warnings observed on the unary ingest path.
+    // Clock-skew warnings observed on the unary ingest path.
     uint64_t SkewWarnings() const { return m_skew_warnings.load(); }
 
-    // Number of times the collector signalled "x-overloaded" backpressure.
+    // "x-overloaded" backpressure signals sent to agents.
     uint64_t BackpressureSignalsSent() const {
         return m_backpressure_signals_sent.load();
     }
 
 private:
-    // Ingests a batch; `traceparent` (optional W3C header) is forwarded to
-    // Kafka. On return, `elapsed_ms` holds the ingest duration.
+    // Ingests one batch. Forwards traceparent to Kafka and fills elapsed_ms
+    // with the ingest duration.
     bool IngestBatch(const pudimnetmon::MetricsBatch &batch,
                      const std::string &traceparent,
                      int64_t &elapsed_ms);

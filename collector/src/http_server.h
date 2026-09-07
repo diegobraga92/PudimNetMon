@@ -20,13 +20,11 @@ namespace alerting { class AlertManager; }
 namespace kafka { class KafkaProducer; }
 
 // HTTP API for the dashboard, the Prometheus /metrics scrape endpoint and the
-// self-hosted agent download. Every route is registered in the constructor;
-// dependencies are injected instead of read from process globals so the
-// handlers stay testable.
+// self-hosted agent download. Every route is registered in the constructor
+// and dependencies are injected.
 //
-// Every dashboard-facing route is served at BOTH /path and /api/path so it
-// works through reverse proxies that strip the /api prefix (legacy) and those
-// that pass it through. Prometheus scraping uses /metrics directly.
+// Every dashboard route is served at both /path and /api/path to support
+// proxies that strip or keep the /api prefix. Prometheus scrapes /metrics.
 class HttpServer {
 public:
     HttpServer(const AgentRegistry &registry,
@@ -42,8 +40,7 @@ public:
     HttpServer(const HttpServer &) = delete;
     HttpServer &operator=(const HttpServer &) = delete;
 
-    // Binds and serves on `addr` ("host:port") in a background thread until
-    // Stop() is called.
+    // Serves on `addr` in a background thread until Stop() is called.
     void Start(const std::string &addr);
 
     // Stops the listener and joins the serving thread.
@@ -53,9 +50,8 @@ private:
     // Prometheus /metrics text payload for this process.
     std::string FormatPrometheusMetrics() const;
 
-    // Looks up the agent's advertised diagnostic endpoint and dials it.
-    // Returns nullptr (after writing a 404 JSON body) when the agent has not
-    // advertised one.
+    // Dials the agent's diagnostic endpoint. Writes a 404 body and returns
+    // nullptr when the agent has not advertised one.
     std::unique_ptr<pudimnetmon::DiagnosticService::Stub> PrepareAgentCall(
         const std::string &agent_id, httplib::Response &resp) const;
 

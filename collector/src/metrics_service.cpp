@@ -36,12 +36,11 @@ bool MetricsServiceImpl::IngestBatch(const MetricsBatch &batch,
 
     bool ok = false;
     if (m_mode == StorageMode::Kafka) {
-        // Produce to Kafka; storage + alerting are handled by consumers.
+        // Produce to Kafka and leave storage and alerting to consumers.
         ok = m_producer ? m_producer->Produce(batch, traceparent) : false;
     } else {
-        // Direct mode (Phases 1-2): write to TimescaleDB, then evaluate alerts.
-        // ADR 006: the collector-assigned timestamp is the source of truth for
-        // storage (the agent's timestamp is preserved in logs/metadata only).
+        // Direct mode writes to TimescaleDB and then evaluates alerts.
+        // The collector-assigned timestamp is the storage source of truth.
         auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::system_clock::now().time_since_epoch())
                           .count();
@@ -87,8 +86,7 @@ Status MetricsServiceImpl::SendMetrics(
 
     m_received_metrics += request->metrics_size();
 
-    // Extract the W3C trace context so the whole ingest path
-    // (storage + Kafka) can be correlated with the agent's trace.
+    // W3C trace context from the request metadata.
     std::string traceparent;
     auto md = ctx->client_metadata();
     auto tp = md.find("traceparent");
@@ -96,9 +94,7 @@ Status MetricsServiceImpl::SendMetrics(
         traceparent.assign(tp->second.data(), tp->second.size());
     }
 
-    // Clock hygiene (ADR 006): the collector's wall clock is the source
-    // of truth for storage. Detect large skew between the agent's reported
-    // timestamp and the collector's own clock and surface it as a warning.
+    // Warn when the agent timestamp skews too far from the collector clock.
     auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::system_clock::now().time_since_epoch())
                       .count();
@@ -126,8 +122,7 @@ Status MetricsServiceImpl::SendMetrics(
         return Status::OK;
     }
 
-    // Overload handling: if ingest took too long, signal the agent to
-    // back off via gRPC trailing metadata ("x-overloaded").
+    // Signal "x-overloaded" in trailing metadata when ingest is too slow.
     if (elapsed_ms > m_backpressure_threshold_ms) {
         m_backpressure_signals_sent++;
         ctx->AddTrailingMetadata("x-overloaded", "true");
@@ -157,8 +152,7 @@ Status MetricsServiceImpl::StreamMetrics(
                       "response must not be null");
     }
 
-    // The agent_id travels in the gRPC metadata header "x-agent-id"
-    // (standard gRPC pattern: metadata for identity/routing, payload for data).
+    // The agent_id arrives in the "x-agent-id" metadata header.
     std::string agent_id;
     const auto &md = ctx->client_metadata();
     auto it = md.find("x-agent-id");
@@ -174,7 +168,7 @@ Status MetricsServiceImpl::StreamMetrics(
     }
 
     if (agent_id.empty()) {
-        // Drain the stream so the client completes cleanly before we error out.
+        // Drain the stream so the client does not hang.
         Metric m;
         int64_t drained = 0;
         while (reader->Read(&m)) {
@@ -190,8 +184,7 @@ Status MetricsServiceImpl::StreamMetrics(
                       "missing 'x-agent-id' metadata header");
     }
 
-    // Collector-assigned receive timestamp is the source of truth for storage
-    // (agent wall clock is preserved in metric.monotonic_us for debugging).
+    // Collector receive time is the storage timestamp.
     int64_t batch_timestamp_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch())
@@ -206,8 +199,7 @@ Status MetricsServiceImpl::StreamMetrics(
     int64_t accepted = 0;
     int64_t rejected = 0;
 
-    // Flushes accumulated metrics (to storage in Direct mode, to Kafka in
-    // Kafka mode); returns false on failure.
+    // Sends the buffered batch. Returns false on failure.
     auto flush = [&]() -> bool {
         if (batch.metrics_size() == 0) return true;
         int64_t elapsed_ms = 0;
@@ -227,8 +219,7 @@ Status MetricsServiceImpl::StreamMetrics(
         *batch.add_metrics() = metric;
 
         if (batch.metrics_size() >= kFlushThreshold && !flush()) {
-            // Drain the remaining stream so the client doesn't hang, then
-            // surface the storage failure in the response.
+            // Drain the stream so the client does not hang.
             while (reader->Read(&metric)) {
                 m_received_metrics++;
                 rejected++;
@@ -242,7 +233,7 @@ Status MetricsServiceImpl::StreamMetrics(
         }
     }
 
-    // Flush any trailing metrics at end of stream.
+    // Flush the trailing metrics at end of stream.
     if (batch.metrics_size() > 0 && !flush()) {
         m_rejected_metrics += rejected;
         response->set_ack(false);
