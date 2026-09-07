@@ -1,7 +1,6 @@
-// pudim-consumer-alert: reads MetricsBatch messages from Kafka and evaluates
-// them against alert rules using the same AlertManager class the collector used
-// in-process (Phases 1-2). At-least-once applies, but evaluation is in-memory
-// and non-failing, so offsets are always committed.
+// pudim-consumer-alert reads MetricsBatch messages from Kafka and evaluates
+// them against alert rules. Evaluation is in-memory and non-failing, so every
+// message offset is committed.
 #include <chrono>
 #include <iostream>
 #include <memory>

@@ -8,10 +8,9 @@
 
 namespace pudimcollector::kafka {
 
-// Thin wrapper around librdkafka's producer. Serializes MetricsBatch as
-// protobuf binary and keys each message by agent_id so per-agent ordering is
-// preserved within a partition. Delivery is asynchronous; Produce() returns
-// true when the message is accepted into librdkafka's queue.
+// Wrapper around librdkafka's producer. Serializes MetricsBatch as protobuf and
+// keys each message by agent_id so per-agent ordering is preserved within a
+// partition. Produce() accepts the message into the librdkafka queue.
 class KafkaProducer {
 public:
     KafkaProducer();
@@ -24,8 +23,8 @@ public:
     bool Connect(const std::string &brokers, const std::string &topic,
                  std::string &error);
 
-    // Enqueues a batch for delivery. Returns true if accepted into the queue.
-    // `traceparent` (optional W3C header) is attached as a Kafka message header.
+    // Enqueues a batch for delivery and attaches traceparent as a message
+    // header. Returns true when accepted.
     bool Produce(const pudimnetmon::MetricsBatch &batch,
                  const std::string &traceparent = "");
 

@@ -48,11 +48,11 @@ std::unique_ptr<RdKafka::KafkaConsumer> CreateConsumer(
 
     if (!set_conf("bootstrap.servers", brokers)) return nullptr;
     if (!set_conf("group.id", group)) return nullptr;
-    // At-least-once: we commit offsets manually only after successful handling.
+    // Offsets are committed manually after successful handling.
     if (!set_conf("enable.auto.commit", "false")) return nullptr;
     if (!set_conf("enable.auto.offset.store", "false")) return nullptr;
     if (!set_conf("auto.offset.reset", earliest ? "earliest" : "largest")) return nullptr;
-    // Limit message size to our batch limit (matches collector 4MB cap).
+    // Matches the collector's 4MB receive cap.
     if (!set_conf("max.partition.fetch.bytes", "4194304")) return nullptr;
 
     std::unique_ptr<RdKafka::KafkaConsumer> consumer(
@@ -95,9 +95,7 @@ void ConsumeLoop(RdKafka::KafkaConsumer *consumer, const BatchHandler &handler,
                     continue;
                 }
 
-                // Forward the W3C trace context (Kafka header) to the
-                // handler log so the consumer's work can be correlated with the
-                // agent→collector trace.
+                // Read the traceparent header for the consumer trace log.
                 std::string traceparent;
                 if (const RdKafka::Headers *hdrs = msg->headers()) {
                     for (const auto &h : hdrs->get_all()) {
@@ -119,11 +117,10 @@ void ConsumeLoop(RdKafka::KafkaConsumer *consumer, const BatchHandler &handler,
                 bool ok = handler(batch);
                 if (ok) {
                     stats->batches_processed++;
-                    consumer->commitSync(msg.get());  // at-least-once: commit
-                                                      // only after success
+                    consumer->commitSync(msg.get());
                 } else {
                     stats->handler_errors++;
-                    // Do NOT commit → redelivered after rebalance/restart.
+                    // Leave uncommitted so the message is redelivered.
                 }
                 break;
             }

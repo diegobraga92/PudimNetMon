@@ -8,7 +8,7 @@
 namespace pudimcollector::kafka {
 
 struct KafkaProducer::Impl {
-    // Delivery report callback; increments the owning producer's counters.
+    // Delivery report callback that updates the owning producer's counters.
     class DeliveryCb : public RdKafka::DeliveryReportCb {
     public:
         explicit DeliveryCb(KafkaProducer *owner) : m_owner(owner) {}
@@ -65,7 +65,6 @@ bool KafkaProducer::Connect(const std::string &brokers, const std::string &topic
 
     if (!set_conf("bootstrap.servers", brokers)) return false;
     if (!set_conf("message.timeout.ms", "15000")) return false;
-    // Reconnect on broker loss (helps the collector survive broker restarts).
     if (!set_conf("enable.idempotence", "true")) return false;
 
     {
@@ -97,11 +96,10 @@ bool KafkaProducer::Produce(const pudimnetmon::MetricsBatch &batch,
         return false;
     }
 
-    // Key by agent_id → consistent partition → per-agent ordering.
+    // Key by agent_id for stable partitioning and per-agent ordering.
     const std::string &key = batch.agent_id();
 
-    // Forward the W3C trace context as a Kafka header so consumers can
-    // correlate the message with the agent/collector trace.
+    // Forward the W3C trace context as a Kafka message header.
     RdKafka::Headers *headers = nullptr;
     if (!traceparent.empty()) {
         headers = RdKafka::Headers::create();
@@ -122,7 +120,7 @@ bool KafkaProducer::Produce(const pudimnetmon::MetricsBatch &batch,
     }
 
     m_produced_total++;
-    // Poll delivery reports promptly so dr_cb updates the counters.
+    // Poll so dr_cb updates the delivery counters.
     m_impl->producer->poll(0);
     return true;
 }

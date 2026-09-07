@@ -12,17 +12,15 @@
 
 namespace pudimcollector::kafka {
 
-// Shared atomic "keep running" flag. Cleared by InstallSignalHandlers() on
-// SIGINT/SIGTERM; consumed by ConsumeLoop().
+// Shared "keep running" flag. Cleared by InstallSignalHandlers() on SIGINT or
+// SIGTERM and read by ConsumeLoop().
 extern std::atomic<bool> g_keep_running;
 
 // Registers SIGINT/SIGTERM handlers that set g_keep_running = false.
 void InstallSignalHandlers();
 
-// Creates a subscribed KafkaConsumer with at-least-once settings
-// (enable.auto.commit=false, enable.auto.offset.store=false). When `earliest`
-// is true, auto.offset.reset=earliest (used by tests/fresh replays).
-// Returns nullptr and sets `error` on failure.
+// Creates a subscribed consumer with at-least-once settings. When earliest is
+// true, auto.offset.reset is set to earliest. Returns nullptr on failure.
 std::unique_ptr<RdKafka::KafkaConsumer> CreateConsumer(
     const std::string &brokers, const std::string &topic,
     const std::string &group, bool earliest, std::string &error);
@@ -36,23 +34,21 @@ struct ConsumerStats {
     std::atomic<uint64_t> consumer_errors{0};
 };
 
-// Callback for each deserialized MetricsBatch. Return false to skip committing
-// the offset (message will be redelivered → at-least-once).
+// Handles one deserialized batch. Returning false leaves the offset
+// uncommitted so the message is redelivered.
 using BatchHandler =
     std::function<bool(const pudimnetmon::MetricsBatch &batch)>;
 
-// Blocks consuming from `consumer`, deserializing each message and invoking
-// `handler`. Commits the offset only on successful handler results. Stops when
-// g_keep_running becomes false. `stats` is updated throughout.
+// Consumes from `consumer` and invokes `handler` per message. Commits the
+// offset only on success and stops when g_keep_running turns false.
 void ConsumeLoop(RdKafka::KafkaConsumer *consumer, const BatchHandler &handler,
                  ConsumerStats *stats);
 
-// Total consumer lag across all assigned partitions
-// (sum of high-watermark − current position).
+// Total consumer lag across all assigned partitions.
 uint64_t ComputeTotalLag(RdKafka::KafkaConsumer *consumer);
 
-// Serves a minimal Prometheus /metrics endpoint on `addr` in a background
-// thread. `metrics_fn` returns the exposition text. Caller joins the thread.
+// Serves Prometheus /metrics on `addr` in a background thread. Returns the
+// thread to join.
 std::thread StartPrometheusEndpoint(
     const std::string &addr,
     const std::function<std::string()> &metrics_fn);
