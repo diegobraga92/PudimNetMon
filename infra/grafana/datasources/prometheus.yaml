@@ -1,5 +1,5 @@
-# Grafana provisioning: Prometheus datasource pointing at the PudimNetMon
-# metrics endpoints (collector, storage consumer, alert consumer).
+# Grafana provisioning. Prometheus datasources for the collector and the two
+# consumers.
 apiVersion: 1
 
 datasources:

@@ -1,13 +1,12 @@
-# Prometheus alerting rules based on PudimNetMon SLOs (docs/slo.md).
-# Intended for a Prometheus server scraping the collector's /metrics endpoint,
-# paired with Alertmanager. Example burn-rate rules (100x for immediate page,
-# 5x for warning).
+# Prometheus alerting rules for the PudimNetMon SLOs in docs/slo.md.
+# Load these on a Prometheus that scrapes the collector /metrics endpoint.
+# Burn rates are 100x for paging and 5x for warning.
 
 groups:
   - name: pudimnetmon-slo
     rules:
       - alert: HeartbeatDeliveryBelowSLO
-        # Error budget burn: ~0.1% failure per 5m window == 100x burn rate.
+        # A 0.1% failure rate per 5m window is a 100x burn rate.
         expr: |
           (1 - (increase(pudim_heartbeats_received_total[5m])
                 / max(60, increase(pudim_heartbeats_received_total[5m]) + 1)))

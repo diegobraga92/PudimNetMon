@@ -1,4 +1,4 @@
-# Grafana provisioning: auto-load dashboards from this directory.
+# Grafana provisioning. Auto-load dashboards from this directory.
 apiVersion: 1
 
 providers:
