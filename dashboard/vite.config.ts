@@ -7,13 +7,12 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // Split vendor libs so react and recharts (the heavy dependency) are
-        // cached independently and the main bundle stays small. Function form
-        // avoids the empty-chunk issue the object form hits when recharts
-        // re-exports react modules.
+        // Separate vendor chunks so react and recharts cache independently
+        // and the main bundle stays small. The function form avoids the
+        // empty-chunk issue when recharts re-exports react.
         manualChunks(id: string) {
           if (!id.includes('node_modules')) return undefined
-          // Recharts + its visualization dependencies
+          // Recharts and its visualization dependencies
           if (
             id.includes('recharts') ||
             id.includes('d3-') ||
@@ -47,8 +46,7 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     proxy: {
-      // Pass /api/* through unchanged — the collector serves the dashboard
-      // REST API under the /api namespace (see collector/src/main.cpp).
+      // Proxy /api/* requests to the collector.
       '/api': {
         target: 'http://collector:8080',
         changeOrigin: true,
