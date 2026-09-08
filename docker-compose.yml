@@ -1,6 +1,7 @@
 services:
   timescaledb:
-    image: timescale/timescaledb:latest-pg16
+    # Check https://hub.docker.com/r/timescale/timescaledb/tags
+    image: timescale/timescaledb:latest-pg17
     environment:
       POSTGRES_DB: pudimnetmon
       POSTGRES_USER: pudim
@@ -17,7 +18,8 @@ services:
     restart: unless-stopped
 
   kafka:
-    image: apache/kafka:3.8.0
+    # Check https://hub.docker.com/r/apache/kafka/tags
+    image: apache/kafka:4.3.1
     ports:
       - "${PUDIM_KAFKA_PORT:-9092}:9092"
     environment:
@@ -56,7 +58,7 @@ services:
       PUDIM_DB_USER: pudim
       PUDIM_DB_PASSWORD: pudim
     command:
-      - "--kafka-brokers=kafka:9092"  # Kafka mode: consumers own storage + alerting
+      - "--kafka-brokers=kafka:9092"  # Kafka mode. Consumers own storage and alerting.
     depends_on:
       kafka:
         condition: service_healthy
@@ -90,9 +92,7 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.consumers
     ports:
-      # Prometheus /metrics for the alert consumer. Default is 9093: the
-      # original 9092 collided with Kafka's host port. Configure via
-      # PUDIM_CONSUMER_ALERT_PROMETHEUS_PORT in .env if needed.
+      # Exposed on 9093 because 9092 collides with the Kafka host port.
       - "${PUDIM_CONSUMER_ALERT_PROMETHEUS_PORT:-9093}:9092"  # Prometheus
     command:
       - "/usr/local/bin/pudim-consumer-alert"
@@ -103,10 +103,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # DR standby: a secondary collector standing in for a second region. In a real
-  # multi-region deployment each region runs its own collector + Kafka + DB;
-  # here both collectors share the local stack so the failover drill is easy to
-  # run (see docs/dr-test.md).
+  # DR standby collector that shares the local stack so the failover drill can
+  # run on one host. Each region would run its own collector, Kafka and DB.
   collector-secondary:
     build:
       context: .
@@ -159,7 +157,8 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:11.3.0
+    # Check https://hub.docker.com/r/grafana/grafana/tags
+    image: grafana/grafana:13.0.8
     ports:
       - "${PUDIM_GRAFANA_PORT:-3100}:3000"
     environment:
