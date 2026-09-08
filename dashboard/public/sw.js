@@ -1,11 +1,6 @@
-/* PudimNetMon service worker — app-shell caching for offline/PWA support.
- *
- * Strategy:
- *  - Navigation requests: network-first, fall back to the cached index.html.
- *  - /assets/* (content-hashed, immutable): cache-first.
- *  - Everything else (/api/*, /manifest.webmanifest, etc.): network only.
- */
-const CACHE_NAME = 'pudim-shell-v1'
+/* PudimNetMon service worker. The app shell and hashed assets are cached so
+   the dashboard works offline. API requests always go to the network. */
+const CACHE_NAME = 'pudim-shell-v2'
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/icon-192.png', '/icon-512.png']
 
 self.addEventListener('install', (event) => {
@@ -37,7 +32,7 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) return
 
   if (url.pathname.startsWith('/assets/')) {
-    // Hashed, immutable assets — cache-first.
+    // Serve hashed, immutable assets from the cache first.
     event.respondWith(
       caches.match(request).then((cached) => cached || fetch(request).then((resp) => {
         const clone = resp.clone()
@@ -48,7 +43,7 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Navigation / app shell — network-first with offline fallback.
+  // Network-first for navigation, with the cached app shell as fallback.
   if (request.mode === 'navigate' || url.pathname === '/') {
     event.respondWith(
       fetch(request)
