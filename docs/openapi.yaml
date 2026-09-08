@@ -11,7 +11,7 @@ info:
     Prometheus scraping.
 
     Two actions go through the collector to the agent's gRPC
-    DiagnosticService: agent reconfiguration (`POST /api/agents/config`) and
+    DiagnosticService. Agent reconfiguration (`POST /api/agents/config`) and
     reading the current config (`GET /api/agents/config`). Both require the
     agent to have advertised a diagnostic endpoint in its heartbeat.
 servers:
@@ -299,8 +299,8 @@ paths:
       summary: Reconfigure an agent's probes at runtime
       description: |
         Forwarded to the agent's DiagnosticService.Reconfigure. The request is
-        the COMPLETE new config: empty arrays clear the corresponding target
-        list. Applies on the next probe cycle (no agent restart).
+        the complete new config. Empty arrays clear the corresponding target
+        list. Applies on the next probe cycle, with no agent restart.
       requestBody:
         required: true
         content:
@@ -342,8 +342,8 @@ paths:
       summary: List an agent's pre-set (whitelisted) command catalog
       description: |
         Forwarded to the agent's DiagnosticService.ListCommands. Commands are
-        fixed, compiled handlers — the agent never executes arbitrary
-        shell/terminal input.
+        fixed, compiled handlers. The agent never executes arbitrary shell or
+        terminal input.
       parameters:
         - name: agent_id
           in: query
@@ -368,7 +368,7 @@ paths:
       summary: Run a pre-set command on an agent
       description: |
         Forwarded to the agent's DiagnosticService.RunCommand. The command_id
-        must be one of the ids returned by /api/agents/commands; params are
+        must be one of the ids returned by /api/agents/commands. Params are
         command-specific schema-fixed keys, never a shell command line.
       requestBody:
         required: true
@@ -402,7 +402,7 @@ paths:
       summary: Agent download manifest (self-hosted binaries)
       description: |
         Lists the pudim-agent binaries staged on this collector. Platforms
-        without a staged binary are simply absent from the list.
+        without a staged binary are omitted from the list.
       responses:
         '200':
           description: Manifest of downloadable agent binaries
