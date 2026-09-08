@@ -1,3 +1,4 @@
+# Check https://hub.docker.com/_/ubuntu/tags
 FROM ubuntu:24.04 AS builder
 
 RUN apt-get update && apt-get install -y -qq \
@@ -12,7 +13,7 @@ COPY collector/ ./collector/
 COPY agent/ ./agent/
 COPY api/ ./api/
 
-# Build the collector AND a full-featured agent. The agent binary is staged
+# Build the collector and a full-featured agent. The agent binary is staged
 # into /agents so the runtime image can serve it to the dashboard
 # (self-hosted agent download, --agent-dist-dir).
 RUN cmake -S collector -B build && \

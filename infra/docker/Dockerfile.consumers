@@ -1,5 +1,5 @@
-# Builds the Kafka consumers (pudim-consumer-storage,
-# pudim-consumer-alert) from a single CMake invocation.
+# Builds the Kafka consumers (pudim-consumer-storage, pudim-consumer-alert)
+# Check https://hub.docker.com/_/ubuntu/tags
 FROM ubuntu:24.04 AS builder
 
 RUN apt-get update && apt-get install -y -qq \
