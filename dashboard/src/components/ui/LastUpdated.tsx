@@ -12,7 +12,7 @@ interface LastUpdatedProps {
   staleAfterMs?: number
 }
 
-/** Live "Updated X ago" pill; turns amber when data is stale and red when old. */
+/** Pill showing when data was last updated, amber when stale and red when old. */
 export function LastUpdated({ timestamp, loading, staleAfterMs = POLL_INTERVAL_MS + 3000 }: LastUpdatedProps) {
   const [, setTick] = useState(0)
 

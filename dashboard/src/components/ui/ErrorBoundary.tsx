@@ -12,7 +12,7 @@ interface ErrorBoundaryProps {
   fallback?: ReactNode
 }
 
-/** Catches render errors in its subtree so one bad widget can't blank the app. */
+/** Catches render errors thrown by its subtree. */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { hasError: false, message: '' }
 

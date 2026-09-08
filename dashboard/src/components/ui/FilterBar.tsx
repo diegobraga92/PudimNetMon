@@ -6,11 +6,7 @@ import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Select } from '../ui/Select'
 
-/**
- * Shared agent / check-type / time-window filter toolbar.
- * Reads and writes the dashboard-level filter state so the chart, table and
- * overview stay in sync.
- */
+/** Shared filter toolbar backed by dashboard state so all views stay in sync. */
 export function FilterBar({ className }: { className?: string }) {
   const {
     selectedAgent,

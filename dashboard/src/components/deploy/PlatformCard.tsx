@@ -25,8 +25,8 @@ export function installCommand(platform: AgentPlatform): string {
   return [
     `curl -fL -o ${platform.filename} "${url}"`,
     `chmod +x ${platform.filename}`,
-    // The staged binary is built on Ubuntu 24.04 (the collector image base);
-    // install the matching runtime libs so it links on Debian/Ubuntu hosts.
+    // Built on Ubuntu 24.04, so install the matching runtime libs for
+    // Debian and Ubuntu hosts.
     'sudo apt-get update',
     'sudo apt-get install -y libgrpc++1.51t64 libprotobuf32t64 libcurl4t64 \\',
     '  libpcap0.8t64 libsystemd0 libsqlite3-0',
@@ -41,7 +41,7 @@ async function copyText(text: string): Promise<boolean> {
       return true
     }
   } catch {
-    // fall through to the execCommand fallback
+    // Fall back to the execCommand copy.
   }
   try {
     const ta = document.createElement('textarea')

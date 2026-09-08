@@ -29,7 +29,7 @@ export function AppShell() {
         : 'PudimNetMon — Network Monitoring'
   }, [alerts.data])
 
-  /** Latest successful fetch across the live queries — drives the "Updated Xs ago" pill. */
+  /** Timestamp of the latest successful fetch across the live queries. */
   const lastUpdated = useMemo(() => {
     const ts = Math.max(
       health.dataUpdatedAt,
