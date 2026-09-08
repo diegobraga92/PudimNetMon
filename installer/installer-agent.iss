@@ -20,7 +20,7 @@
 ; upgrade or reinstall from leaving stale CLI arguments in the service
 ; registration that override the config file.
 ;
-; Build (see docs/windows.md)
+; Build
 ;   ISCC.exe /DMyAppVersion=0.1.0 installer\installer-agent.iss
 ;
 ; Compile-time inputs

@@ -37,8 +37,6 @@ export const SEVERITY_COLORS: Record<string, string> = {
   critical: '#ff6b6b',
 }
 
-export const SEVERITY_ORDER = ['critical', 'warning', 'info'] as const
-
 export const TIME_WINDOWS = [
   { value: 60, label: '1 min' },
   { value: 300, label: '5 min' },

@@ -17,7 +17,7 @@
 #   agent:     --tls-ca certs/ca.crt --tls-cert certs/agent.crt --tls-key certs/agent.key
 #
 # NOTE. certs/*.key are plaintext private keys. In production, provision them
-# via a secret manager or cert-manager instead. See docs/certificate-rotation.md.
+# via a secret manager or cert-manager instead.
 set -euo pipefail
 
 OUT="${1:-certs}"

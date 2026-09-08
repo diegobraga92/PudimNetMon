@@ -39,7 +39,7 @@ export function DeployPage() {
               <EmptyState
                 icon={<DownloadCloud className="size-8" aria-hidden="true" />}
                 title="No prebuilt agent binaries on this collector"
-                description="The collector has no staged binaries to serve. Use the Docker image below, or build the agent from source (see docs/deployment.md and docs/windows.md)."
+                description="The collector has no staged binaries to serve. Use the Docker image below, or build the agent from source."
               />
             </div>
           )}

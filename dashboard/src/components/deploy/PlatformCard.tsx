@@ -128,7 +128,7 @@ export function PlatformCard({ platform }: { platform: AgentPlatform }) {
       {platform.os === 'linux' && (
         <p className="text-[11px] text-fg-subtle">
           Built on Ubuntu 24.04 (the collector image base). On other distros, build from
-          source instead — see <span className="font-mono">docs/deployment.md</span>.
+          source instead.
         </p>
       )}
     </div>
