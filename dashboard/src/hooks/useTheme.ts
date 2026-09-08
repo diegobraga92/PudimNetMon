@@ -26,7 +26,7 @@ export function useTheme() {
     try {
       window.localStorage?.setItem(STORAGE_KEY, theme)
     } catch {
-      // Storage unavailable — the theme still applies for this session.
+      // The theme still applies for this session when storage is unavailable.
     }
   }, [theme])
 

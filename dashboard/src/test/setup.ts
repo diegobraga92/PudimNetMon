@@ -30,9 +30,8 @@ if (typeof window !== 'undefined') {
     }) as DOMRect
   }
 
-  // localStorage/sessionStorage are not reliably present on the jsdom window
-  // across every Node version (they can be undefined on newer Node), so install
-  // deterministic in-memory polyfills instead of depending on jsdom internals.
+  // jsdom localStorage and sessionStorage are unreliable across Node versions,
+  // so install deterministic in-memory polyfills.
   const createStorage = (): Storage => {
     const store = new Map<string, string>()
     return {
