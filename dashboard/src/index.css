@@ -4,12 +4,8 @@
 /* Class-based dark mode (toggled via `.dark` on <html>). */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/*
- * Semantic design tokens.
- * `@theme inline` makes Tailwind utilities (bg-surface, text-fg-muted, ...)
- * reference the runtime CSS variables below, so the values can swap between
- * light and dark mode by toggling `.dark` on <html>.
- */
+/* Semantic design tokens. @theme inline maps Tailwind utilities to the runtime
+   CSS variables below, which swap between light and dark mode via `.dark`. */
 @theme inline {
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
     Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
@@ -84,7 +80,7 @@ body {
   font-size: 11px;
 }
 
-/* Gentle pulse for unacknowledged critical alerts */
+/* Pulse animation for unacknowledged critical alerts */
 @keyframes alert-pulse {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--critical) 30%, transparent); }
   50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--critical) 0%, transparent); }
@@ -93,7 +89,7 @@ body {
   animation: alert-pulse 2s ease-in-out infinite;
 }
 
-/* Subtle fade + slide used when switching views */
+/* Fade and slide when switching views */
 @keyframes fade-slide-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

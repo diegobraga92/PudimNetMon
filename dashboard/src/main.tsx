@@ -31,7 +31,7 @@ document.documentElement.classList.toggle('dark', storedTheme === 'dark' || (sto
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {
-      // SW registration is best-effort — never block the app on it.
+      // Service worker registration is best effort and never blocks the app.
     })
   })
 }

@@ -20,7 +20,7 @@ describe('PudimNetMon dashboard', () => {
   it('renders the app shell with sidebar navigation', async () => {
     renderWithProviders(<App />)
 
-    // Brand renders in both desktop + mobile sidebars
+    // Brand renders in desktop and mobile sidebars
     expect(screen.getAllByText('PudimNetMon').length).toBeGreaterThan(0)
     const nav = screen.getByRole('navigation', { name: 'Main navigation' })
     expect(nav).toBeInTheDocument()
@@ -40,7 +40,7 @@ describe('PudimNetMon dashboard', () => {
 
     expect(await screen.findByText('High Latency')).toBeInTheDocument()
     expect(screen.getByText('Packet Loss')).toBeInTheDocument()
-    // Unacknowledged critical alert shows an ack button; acknowledged shows a badge
+    // Unacknowledged alerts show an ack button and acknowledged alerts show a badge
     expect(screen.getByRole('button', { name: 'Ack' })).toBeInTheDocument()
     expect(screen.getByText('Acknowledged')).toBeInTheDocument()
   })
@@ -62,7 +62,7 @@ describe('PudimNetMon dashboard', () => {
     renderWithProviders(<App />)
 
     await user.click(screen.getByRole('button', { name: /Agent Config/ }))
-    // Page heading + panel heading both contain the text
+    // Page and panel headings contain the text
     expect((await screen.findAllByText('Agent Configuration')).length).toBeGreaterThan(0)
 
     await user.click(screen.getByRole('button', { name: /Agents/ }))
@@ -99,7 +99,7 @@ describe('PudimNetMon dashboard', () => {
     // Mocked metric rows render in the table (agent-1 appears in several rows)
     expect((await screen.findAllByText('agent-1')).length).toBeGreaterThan(0)
     expect((await screen.findAllByText('example.com')).length).toBeGreaterThan(0)
-    // Success + failure status pills
+    // Success and failure status pills
     expect(screen.getAllByText('OK').length).toBeGreaterThan(0)
     expect(screen.getAllByText('FAIL').length).toBeGreaterThan(0)
   })
@@ -118,9 +118,8 @@ describe('PudimNetMon dashboard', () => {
   })
 
   it('shows a reset button when filters are active and clears them', async () => {
-    // Drive the shared filter state through the dashboard context (Radix Select
-    // popovers don't reliably open in jsdom, so we test FilterBar's response
-    // to state changes instead of simulating a full pick interaction).
+    // Radix Select popovers are unreliable in jsdom, so filters are driven
+    // through the dashboard context instead of simulated picks.
     function FilterHarness() {
       const { setSelectedAgent } = useDashboard()
       return (
@@ -151,7 +150,7 @@ describe('PudimNetMon dashboard', () => {
     await user.click(screen.getByRole('button', { name: /Deploy Agent/ }))
 
     expect(await screen.findByRole('heading', { name: 'Deploy Agent' })).toBeInTheDocument()
-    // Platform cards from the manifest (Linux + Windows) and the Docker card.
+    // Platform cards from the manifest (Linux and Windows) and the Docker card.
     // The filename appears both in the card metadata and the command block.
     expect((await screen.findAllByText(/pudim-agent-linux-amd64/)).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/pudim-agent-windows-amd64\.exe/).length).toBeGreaterThan(0)
