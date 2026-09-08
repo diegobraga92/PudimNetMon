@@ -38,7 +38,7 @@ export function DiagnosticDialog({ agent, open, onOpenChange, onResult }: Diagno
     try {
       await navigator.clipboard.writeText(run.data.result || run.data.error || '')
     } catch {
-      // clipboard unavailable — ignore
+      // Ignore when the clipboard is unavailable.
     }
   }
 

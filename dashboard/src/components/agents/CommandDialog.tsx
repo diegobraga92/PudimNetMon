@@ -19,10 +19,7 @@ interface CommandDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-/**
- * Lists the agent's pre-set (whitelisted) commands and runs one on demand.
- * Commands come from the agent's fixed catalog — never arbitrary shell input.
- */
+/** Lists the agent's whitelisted commands and runs one on demand. */
 export function CommandDialog({ agent, open, onOpenChange }: CommandDialogProps) {
   const commands = useAgentCommands(agent)
   const run = useRunAgentCommand()
@@ -111,7 +108,7 @@ function CommandResultView({
     try {
       await navigator.clipboard.writeText(result.detail || result.summary || '')
     } catch {
-      // clipboard unavailable — ignore
+      // Ignore when the clipboard is unavailable.
     }
   }
 
