@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Simulate a Kafka slowdown: pause and resume the broker, then observe
+# Simulates a Kafka slowdown by pausing and resuming the broker, then checks
 # backpressure propagation (consumer lag, agent buffer drops).
 # Usage: ./scripts/overload-kafka.sh [pause_seconds]
 set -euo pipefail

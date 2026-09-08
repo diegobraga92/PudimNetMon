@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Mirrors the GitHub Actions workflow (.github/workflows/ci.yml) locally so you
-# can run the same checks on your machine before pushing.
+# Runs the GitHub Actions workflow (.github/workflows/ci.yml) locally so the
+# same checks run on your machine before pushing.
 #
-# Jobs (in the same order as CI):
+# Jobs (in the same order as CI)
 #   1. C++ Agent (build)          cmake configure + build + ctest  (Debug)
 #   2. C++ Collector (build)      cmake configure + build + ctest  (Debug)
 #   3. C++ Agent (Windows build)  MSVC + vcpkg + ctest + Inno Setup installer
 #                                 (only on a Windows host under Git Bash/MSYS)
 #   4. Dashboard (lint + build)   npm ci + lint + test + build
 #
-# Usage: scripts/run-ci-locally.sh [options]
+# Usage. scripts/run-ci-locally.sh [options]
 #
-# Options:
+# Options
 #   -h, --help           Show this help and exit.
 #   -j, --jobs N         Parallel build jobs (default: number of CPUs).
 #   -k, --keep-going     Run every job even if an earlier one fails.
@@ -29,7 +29,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
-# vcpkg pins copied verbatim from ci.yml.
+# vcpkg pins from ci.yml.
 VCPKG_PIN="e90cc0982b7cfae62447f1f3bed1fbca0bc8f6be"
 VCPKG_TOOL_RELEASE="2026-07-27"
 
@@ -134,7 +134,7 @@ job_cpp_collector() {
 }
 
 # ---- job: C++ Agent (Windows build) ----------------------------------------
-# Only meaningful on Windows. On any other host it reports as skipped.
+# Windows only. On other hosts it reports as skipped.
 job_cpp_agent_windows() {
     if [ "$IS_WINDOWS" -ne 1 ]; then
         warn "Skipped: needs a Windows host (MSVC + vcpkg + Inno Setup)."
@@ -161,8 +161,8 @@ job_cpp_agent_windows() {
         -DVCPKG_TARGET_TRIPLET=x64-windows-static-md-release
 
     section "C++ Agent (Windows build) - Build (MSVC)"
-    # Bounded parallelism, same as CI (unbounded MSBuild /m can OOM while
-    # linking gRPC and obscures linker errors).
+    # Bounded parallelism, same as CI. Unbounded MSBuild /m can OOM while
+    # linking gRPC and obscures linker errors.
     run cmake --build "$ROOT/build/agent-win" --config Release -j 2
 
     section "C++ Agent (Windows build) - Test (CTest)"
@@ -189,8 +189,8 @@ job_cpp_agent_windows() {
         ( cd "$ROOT/installer" && run "$iscc" "/DMyAppVersion=$version" installer-agent.iss )
         log "  Installer output: $ROOT/dist/installer/PudimNetMon-Agent-Setup-$version.exe"
     fi
-    # The CI smoke test (silent install -> service -> uninstall) registers a
-    # Windows service and needs an elevated shell; left to CI on purpose.
+    # The CI smoke test registers a Windows service and needs an elevated
+    # shell, so it is left to CI.
     warn "Smoke test skipped: service registration requires an elevated shell."
 }
 

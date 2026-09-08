@@ -1,32 +1,31 @@
 ; PudimNetMon Agent - Windows install wizard (Inno Setup)
 ;
-; CI (".github/workflows/ci.yml", job cpp-agent-windows) compiles this into a
-; self-contained setup EXE that:
-;   * collects the agent identity + collector settings on a wizard page,
-;   * installs pudim-agent.exe under Program Files,
-;   * registers the "PudimNetMonAgent" auto-start Windows service directly with
-;     the Service Control Manager (via sc.exe, which ships with Windows - the
-;     agent binary has no --install-service verb and only ever runs under the
-;     SCM or in the console),
-;   * writes %ProgramData%\PudimNetMon\agent.conf so settings are easy to
-;     review/adjust later, and
-;   * stops and removes the service again on uninstall (sc.exe stop/delete).
+; Compiled by CI (".github/workflows/ci.yml", job cpp-agent-windows) into a
+; self-contained setup EXE that does the following.
+;   * Collects the node ID and collector settings on a wizard page.
+;   * Installs pudim-agent.exe under Program Files.
+;   * Registers the "PudimNetMonAgent" auto-start service with the Service
+;     Control Manager through sc.exe, which ships with Windows. The agent
+;     binary has no --install-service flag and only runs under the SCM or in
+;     the console.
+;   * Writes %ProgramData%\PudimNetMon\agent.conf for later edits.
+;   * Stops and removes the service on uninstall.
 ;
-; Configuration model (single source of truth per setting):
-;   * node-id is baked into the service command line (like the Linux unit's
-;     --node-id=%H) and is immutable for the lifetime of the service, and
-;   * every mutable setting (collector-endpoints, interval, ...) lives in
-;     %ProgramData%\PudimNetMon\agent.conf, read by the agent at startup
-;     (precedence: built-in defaults < agent.conf < service command line).
-; This avoids the classic pitfall where an upgrade/reinstall leaves stale CLI
-; arguments in the service registration that override the config file.
+; Configuration model. One authoritative source per setting. The node-id is
+; baked into the service command line (like the Linux unit's --node-id=%H) and
+; stays immutable for the service lifetime. Every mutable setting
+; (collector-endpoints, interval) lives in %ProgramData%\PudimNetMon\agent.conf,
+; which the agent reads at startup. Precedence is
+; built-in defaults < agent.conf < service command line. This prevents an
+; upgrade or reinstall from leaving stale CLI arguments in the service
+; registration that override the config file.
 ;
-; Build (see docs/windows.md):
+; Build (see docs/windows.md)
 ;   ISCC.exe /DMyAppVersion=0.1.0 installer\installer-agent.iss
 ;
-; Compile-time inputs:
+; Compile-time inputs
 ;   installer\payload\pudim-agent.exe    (Release build, staged by CI)
-;   installer\payload\vc_redist.x64.exe  (optional; bundled when present)
+;   installer\payload\vc_redist.x64.exe  (optional, bundled when present)
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
@@ -65,8 +64,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "payload\pudim-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
-; VC++ runtime for machines without the redistributable (the MSVC build links
-; the dynamic CRT). CI always bundles it; local builds work without it.
+; VC++ runtime for machines without the redistributable. The MSVC build links
+; the dynamic CRT, so CI always bundles it. Local builds work without it.
 #if FileExists("payload\vc_redist.x64.exe")
 Source: "payload\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 #endif
@@ -75,26 +74,23 @@ Source: "payload\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 #if FileExists("payload\vc_redist.x64.exe")
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Redistributable..."; Flags: waituntilterminated
 #endif
-; Register the auto-start service directly through the Service Control Manager
-; (sc.exe ships with every supported Windows version). The create step exits
-; non-zero with "service already exists" when upgrading/reinstalling; that is
-; expected, and the sc config step that follows rewrites the ImagePath in both
-; cases so a reinstall never keeps stale command-line arguments. WriteAgentConfig
-; (BeforeInstall) guarantees agent.conf exists before the service starts.
-; sc create/config/description exit codes are only logged by Inno Setup. The
-; service start itself is deferred to a detached helper (see StartAgentService)
-; because Setup keeps the just-installed exe open until it exits.
+; Register the auto-start service with the Service Control Manager (sc.exe
+; ships with Windows). On an upgrade the create step fails with "service
+; already exists", which is expected. The sc config step below rewrites the
+; ImagePath in both cases, so a reinstall never keeps stale arguments.
+; WriteAgentConfig (BeforeInstall) writes agent.conf before the service starts.
+; Service start is deferred to a detached helper (StartAgentService) because
+; Setup keeps the installed exe open until it exits.
 Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceCreateParams}; StatusMsg: "Registering PudimNetMonAgent service..."; Flags: waituntilterminated runhidden; BeforeInstall: WriteAgentConfig
 Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceConfigParams}; StatusMsg: "Configuring PudimNetMonAgent service..."; Flags: waituntilterminated runhidden
 Filename: "{sys}\sc.exe"; Parameters: "description PudimNetMonAgent ""PudimNetMon network monitoring agent"""; Flags: waituntilterminated runhidden; AfterInstall: StartAgentService
 
 [UninstallRun]
-; Stopping and deleting the auto-start service is handled in [Code]
-; (CurUninstallStepChanged -> RemoveAgentService): sc stop returns before the
-; service has stopped, and sc delete on a STOP_PENDING service only marks it
-; for deletion, so declarative [UninstallRun] entries left the service
-; registered with the agent process still running after the uninstaller
-; exited (CI: 'Service still registered after uninstall').
+; Service stop and delete happen in [Code] (CurUninstallStepChanged ->
+; RemoveAgentService). Declarative [UninstallRun] steps ran too early, since sc
+; stop returns before the service stops and sc delete on a STOP_PENDING service
+; only marks it for deletion. That left the service registered with the agent
+; process still running after the uninstaller exited.
 
 [Code]
 
@@ -107,12 +103,11 @@ var
 const
   DefaultInterval = '5000';
 
-// Waits for the PudimNetMonAgent service to be fully stopped. sc.exe stop only
-// sends the stop control and returns immediately, leaving the service
-// STOP_PENDING; a follow-up delete then only marks the service for deletion
-// while pudim-agent.exe is still mapped. Poll sc.exe stop's exit code instead
-// (locale-independent):
-//   0    = stop control accepted (service is stopping)
+// Waits until the PudimNetMonAgent service stops. sc stop returns as soon as
+// the stop control is accepted, while the service stays STOP_PENDING and the
+// exe stays mapped, so a follow-up delete only marks it for deletion. Poll the
+// locale-independent sc stop exit codes instead.
+//   0    = stop control accepted (service stopping)
 //   1061 = service cannot accept control yet (still stopping)
 //   1062 = service is stopped
 //   1060 = service does not exist (fresh install)
@@ -124,8 +119,7 @@ begin
   Result := False;
   for Attempt := 1 to 60 do
   begin
-    // NOTE: Exec does not expand constants in FileName; ExpandConstant is
-    // required here or sc.exe cannot be launched.
+    // Exec does not expand constants in FileName, so ExpandConstant is required.
     if Exec(ExpandConstant('{sys}\sc.exe'), 'stop PudimNetMonAgent', '', SW_HIDE,
             ewWaitUntilTerminated, ResultCode) then
     begin
@@ -139,10 +133,9 @@ begin
   end;
 end;
 
-// Installer path: stop the running service (and wait until it is really
-// stopped) before Inno Setup's RestartManager scans for in-use files on the
-// Preparing page - that scan waits only ~5 s for the agent to stop, then
-// aborts an upgrade with exit code 5. No-op on a fresh install (1060).
+// Installer path. Stop the running service before the Preparing page, where
+// RestartManager scans for in-use files and only waits about 5 s before
+// aborting an upgrade with exit code 5. No-op on a fresh install (1060).
 procedure StopAgentService();
 begin
   if not WaitAgentStopped() then
@@ -153,13 +146,11 @@ begin
   end;
 end;
 
-// Uninstaller path: wait for the service to fully stop, then delete it. This
-// cannot be done from [UninstallRun]: sc stop returns before the service has
-// stopped and sc delete on a STOP_PENDING service only marks it for deletion,
-// so the uninstaller used to exit 0 with PudimNetMonAgent still registered and
-// the agent process still shutting down (CI: 'Service still registered after
-// uninstall'). Delete exit codes are ignored (1060 = already gone, 1072 =
-// already marked for deletion).
+// Uninstaller path. Wait for the service to stop, then delete it. This cannot
+// run from [UninstallRun] because sc stop returns before the service stops and
+// sc delete on a STOP_PENDING service only marks it for deletion, leaving the
+// service registered and the agent still shutting down. Delete exit codes are
+// ignored (1060 = already gone, 1072 = already marked for deletion).
 procedure RemoveAgentService();
 var
   ResultCode: Integer;
@@ -170,7 +161,7 @@ begin
 end;
 
 // Runs in the uninstaller. usAppMutexCheck is the first uninstall step, before
-// any file is removed, so stopping the agent here guarantees pudim-agent.exe
+// any file is removed, so stopping the agent there guarantees pudim-agent.exe
 // is unlocked by the time the uninstaller deletes it.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
@@ -180,18 +171,15 @@ end;
 
 procedure InitializeWizard();
 begin
-  // A reinstall/upgrade replaces pudim-agent.exe while the running service
-  // holds it open. Stop it (and wait until it is really stopped) before Inno
-  // Setup's RestartManager scans for in-use files on the Preparing page - that
-  // scan waits only ~5 s for the agent to stop, then aborts the install with
-  // exit code 5. We do this in InitializeWizard rather than InitializeSetup
-  // because InitializeSetup runs before UAC elevation, where stopping the
-  // service is denied.
+  // A reinstall replaces pudim-agent.exe while the running service holds it
+  // open, so stop the service and wait before the Preparing page. Do this in
+  // InitializeWizard instead of InitializeSetup because InitializeSetup runs
+  // before UAC elevation, where stopping the service is denied.
   StopAgentService();
 
 
-  // Defaults are captured here so silent installs (which skip the wizard
-  // pages) still configure the service sensibly.
+  // Defaults are captured here so silent installs, which skip the wizard
+  // pages, still configure the service sensibly.
   NodeIdValue := GetComputerNameString();
   CollectorValue := '';
   IntervalValue := DefaultInterval;
@@ -243,16 +231,16 @@ begin
 end;
 
 // The service ImagePath is the quoted agent exe plus the immutable node ID
-// baked in (like the Linux unit's --node-id=%H); mutable settings (interval,
-// collector-endpoints) go into agent.conf instead, so re-installs/upgrades
-// never leave stale command-line args behind. NodeIdValue is validated on the
-// wizard page to contain no spaces/tabs/quotes, so the exe path is the only
-// token that needs quoting.
+// (like the Linux unit's --node-id=%H). Mutable settings (interval,
+// collector-endpoints) go into agent.conf instead, so reinstalls and upgrades
+// never leave stale CLI arguments behind. The wizard page validates that the
+// node ID has no spaces, tabs or quotes, so the exe path is the only token
+// that needs quoting.
 //
-// sc.exe parses its own command line with the standard Windows CRT rules, so
-// the quotes that must survive verbatim into the service ImagePath are escaped
-// as \" below. sc stores binPath as-is; the SCM re-parses it when starting the
-// service, yielding the ImagePath above again.
+// sc.exe parses its command line with standard Windows CRT rules, so quotes
+// that must survive into the service ImagePath are escaped as \" below. sc
+// stores binPath as-is and the SCM re-parses it when starting the service,
+// yielding the ImagePath above again.
 function GetServiceCreateParams(Param: String): String;
 var
   ExePath: String;
@@ -263,9 +251,9 @@ begin
             ' DisplayName= "PudimNetMon Agent"';
 end;
 
-// Runs on every install (including upgrades over an existing service) to
-// refresh the ImagePath/start type, mirroring the create-or-reconfigure logic
-// that used to live in the agent binary.
+// Runs on every install, including upgrades over an existing service, to
+// refresh the ImagePath and start type. Mirrors the create-or-reconfigure
+// logic that used to live in the agent binary.
 function GetServiceConfigParams(Param: String): String;
 var
   ExePath: String;
@@ -275,14 +263,13 @@ begin
             '\" --node-id=' + NodeIdValue + '"';
 end;
 
-// Starts the service after registration. Inno Setup keeps the just-installed
-// executable open (for its rollback / RestartManager bookkeeping) until the
-// Setup process itself exits, so a synchronous `sc start` launched from here
-// fails with error 2 for the entire install. Defer the start to a detached
-// helper that outlives Setup: it waits a few seconds for Setup to exit (and
-// for any real-time AV scan of the new exe to finish), then starts the
-// service. The service is also configured AUTO_START, so a failed helper is
-// non-fatal -- it will come up on the next boot.
+// Starts the service after registration. Inno Setup keeps the installed
+// executable open for its rollback and RestartManager bookkeeping until the
+// Setup process exits, so a synchronous sc start fails with error 2 for the
+// whole install. Defer the start to a detached helper that outlives Setup,
+// waits a few seconds for Setup to exit, and then starts the service. The
+// service is AUTO_START, so a failed helper is non-fatal and the service comes
+// up on the next boot.
 procedure StartAgentService();
 var
   ResultCode: Integer;
@@ -293,12 +280,11 @@ begin
   Log('Service start deferred to a detached helper after Setup exits');
 end;
 
-// Persists the wizard settings to %ProgramData%\PudimNetMon\agent.conf.
-// Hooked as BeforeInstall of the service-registration [Run] entry so the file
-// always exists before the service starts, independent of setup-step ordering.
-// Agent precedence: built-in defaults < agent.conf < service command line.
-// node-id intentionally lives on the service command line (not here), so every
-// setting has exactly one authoritative source.
+// Persists the wizard settings to %ProgramData%\PudimNetMon\agent.conf. Runs
+// as BeforeInstall of the service-registration [Run] entry so the file always
+// exists before the service starts. Precedence is built-in defaults <
+// agent.conf < service command line. The node-id deliberately stays on the
+// service command line so each setting has one authoritative source.
 procedure WriteAgentConfig();
 var
   ConfDir, ConfPath, Conf: String;
@@ -323,8 +309,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
   begin
-    // Let an existing installation be upgraded: stop the service (and wait for
-    // it to actually stop) so the exe is not locked while it is replaced.
+    // Stop the service and wait before replacing the exe during an upgrade.
     // No-op on a fresh install (sc stop returns 1060/1062 immediately).
     StopAgentService();
   end;

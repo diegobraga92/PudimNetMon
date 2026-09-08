@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Simulate collector overload by spawning N agents at short intervals.
+# Simulates collector overload by spawning N agents at short intervals.
 # Usage: ./scripts/overload-collector.sh [N] [interval_ms]
 set -euo pipefail
 

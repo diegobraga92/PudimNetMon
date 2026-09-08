@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # PudimNetMon agent installer (Linux / systemd).
 #
-# Idempotent post-build installer for a PudimNetMon agent host:
-#   1. installs the hardened systemd unit (agent/systemd/pudim-agent.service)
-#      into the systemd unit directory -- the unit is refreshed on re-run so
-#      upgrades pick up unit changes,
-#   2. seeds /etc/pudim/agent.conf from agent/config/agent.conf.example ONLY
-#      when no config file exists yet -- an admin-edited agent.conf is never
-#      overwritten, so re-running is safe and is the upgrade path,
-#   3. reloads systemd, then enables and starts the pudim-agent service.
+# Idempotent post-build installer for a PudimNetMon agent host.
+#   1. Installs the hardened systemd unit (agent/systemd/pudim-agent.service)
+#      into the systemd unit directory. The unit is refreshed on re-run so
+#      upgrades pick up unit changes.
+#   2. Seeds /etc/pudim/agent.conf from agent/config/agent.conf.example only
+#      when no config file exists. An admin-edited agent.conf is never
+#      overwritten, so re-running is safe and is the upgrade path.
+#   3. Reloads systemd, then enables and starts the pudim-agent service.
 #
-# The script does NOT build the agent. Build and install the binary first:
+# The script does not build the agent. Build and install the binary first.
 #   cmake -S agent -B build && cmake --build build -j$(nproc)
 #   sudo cmake --install build                     # -> /usr/local/bin/pudim-agent
 #   sudo scripts/install-agent.sh
 #
-# Run from anywhere in the repo checkout. Re-running is safe: an existing
+# Run from anywhere in the repo checkout. Re-running is safe. An existing
 # /etc/pudim/agent.conf is left untouched and a running service is not
 # restarted (run 'sudo systemctl restart pudim-agent' to apply new settings).
 
@@ -24,7 +24,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # The unit's ExecStart is /usr/local/bin/pudim-agent (see agent/systemd/
-# pudim-agent.service); --agent-bin overrides it for non-default prefixes.
+# pudim-agent.service). --agent-bin overrides it for non-default prefixes.
 AGENT_BIN="/usr/local/bin/pudim-agent"
 SYSTEMD_DIR="/etc/systemd/system"
 CONF_DIR="/etc/pudim"
@@ -39,7 +39,7 @@ Idempotent Linux/systemd installer for the PudimNetMon agent. Installs the
 hardened systemd unit, seeds /etc/pudim/agent.conf from
 agent/config/agent.conf.example when no config exists yet (an existing config
 is never overwritten), then enables and starts the service. Build the binary
-first: cmake --install (see README "Agent on target hosts").
+first with cmake --install (see README "Agent on target hosts").
 
 Options:
   --agent-bin=FILE   binary the unit's ExecStart must resolve to
@@ -69,8 +69,8 @@ CONF_SRC="$ROOT/agent/config/agent.conf.example"
 UNIT_DST="$SYSTEMD_DIR/pudim-agent.service"
 CONF_DST="$CONF_DIR/agent.conf"
 
-# The unit's ExecStart must point at a real binary, or enabling the service
-# would just fail on start. Enforce the documented build-then-install order.
+# The unit's ExecStart must point at a real binary or the service fails on
+# start. Enforce the documented build-then-install order.
 if [[ ! -x "$AGENT_BIN" ]]; then
   echo "error: agent binary not found at $AGENT_BIN" >&2
   echo "Build and install it first, or pass --agent-bin=<path>:" >&2

@@ -6,14 +6,13 @@
   Runs the PudimNetMon Windows CI job ("C++ Agent (Windows build)") locally.
 
 .DESCRIPTION
-  Step-for-step local reproduction of the job `cpp-agent-windows` in
-  .github/workflows/ci.yml (the job that runs on `windows-latest` and is the
-  Windows job failing in CI). No shortcuts: the same tools, versions, commands
-  and environment variables CI uses are used here.
+  Local reproduction of the `cpp-agent-windows` job in .github/workflows/ci.yml
+  that runs on `windows-latest`. Uses the same tools, versions, commands and
+  environment variables as CI.
 
   Steps (names and order mirror the workflow):
     1. Checkout vcpkg (pinned baseline e90cc0982b7cfae62447f1f3bed1fbca0bc8f6be)
-    2. Fetch vcpkg tool (vcpkg-tool release 2026-07-27, like CI)
+    2. Fetch vcpkg tool (release 2026-07-27)
     3. Inspect restored vcpkg cache
     4. Configure (MSVC)   cmake -S agent -B build/agent-win
                             -DCMAKE_BUILD_TYPE=Release
@@ -21,67 +20,62 @@
                             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md-release
     5. Build              cmake --build build/agent-win --config Release -j 2
     6. Test (CTest)       ctest -C Release --output-on-failure
-    7. Install Inno Setup (choco install innosetup -y --no-progress, like CI)
+    7. Install Inno Setup (choco install innosetup -y --no-progress)
     8. Stage installer payload (pudim-agent.exe + vc_redist.x64.exe)
-    9. Build installer (Inno Setup)  ISCC.exe /DMyAppVersion=<version>
+    9. Build installer    ISCC.exe /DMyAppVersion=<version>
    10. Smoke test installer (install -> config model -> upgrade -> uninstall)
 
-  Environment variables set exactly like the CI job:
+  Environment variables set like the CI job:
     VCPKG_ROOT             <repo>\.vcpkg
     VCPKG_DEFAULT_TRIPLET  x64-windows-static-md-release
     VCPKG_TOOL_VERSION     2026-07-27
     VCPKG_BINARY_SOURCES   clear;files,<repo>/.vcpkg-cache,readwrite
 
-  The first Configure step makes vcpkg compile grpc/protobuf/openssl/curl/
-  sqlite3 from source for the static triplet (agent/vcpkg.json). That is the
-  long part and matches a cold CI run.
+  The first Configure compiles grpc/protobuf/openssl/curl/sqlite3 from source
+  for the static triplet (agent/vcpkg.json). This matches a cold CI run.
 
 .PARAMETER Root
   Repository root. Defaults to the parent of this script.
 
 .PARAMETER Clean
-  Delete build/agent-win, dist/installer and installer/payload before running
-  (CI uses a fresh checkout). .vcpkg sources and .vcpkg-cache are kept, like
-  the CI cache layers.
+  Delete build/agent-win, dist/installer and installer/payload before running.
+  .vcpkg and .vcpkg-cache are kept, like the CI cache layers.
 
 .PARAMETER Jobs
-  Parallel build jobs for `cmake --build`. Default 2 (the same bounded value
-  the CI job uses to avoid OOM while linking gRPC).
+  Parallel build jobs for `cmake --build`. Default 2, the value CI uses to
+  avoid OOM while linking gRPC.
 
 .PARAMETER SkipInstaller
-  Stop after Test (CTest): skip steps 7-10.
+  Stop after Test (CTest). Skip steps 7-10.
 
 .PARAMETER SkipInnoSetupInstall
-  Do not run `choco install innosetup`; use an Inno Setup 6 already installed.
+  Do not run `choco install innosetup`. Use an already installed Inno Setup 6.
 
 .PARAMETER RunSmokeTest
-  Run step 10. It registers the real auto-start PudimNetMonAgent service, so
-  it requires an ELEVATED PowerShell (CI runs it on every Windows run; locally
-  it is opt-in because it modifies this machine).
+  Run step 10. It registers the real auto-start PudimNetMonAgent service, so an
+  elevated PowerShell is required. CI runs it on every run, locally it is opt-in
+  because it modifies this machine.
 
-  This switch also implies -ResetServiceState: before the run, any leftover
-  agent state from a previous smoke-test run (service, Program Files payload,
-  %ProgramData%\PudimNetMon\agent.conf, Add/Remove entry) is removed so every
-  run starts from a CI-fresh machine. Without that reset, the stale agent.conf
-  left by the previous run's uninstall makes agent-config-tests fail when this
-  script is re-run on the same machine.
+  Implies -ResetServiceState. Leftover agent state from a previous smoke-test
+  run (service, Program Files payload, %ProgramData%\PudimNetMon\agent.conf,
+  Add/Remove entry) is removed first so every run starts CI-fresh. The stale
+  agent.conf would otherwise fail agent-config-tests on re-run.
 
 .PARAMETER ResetServiceState
-  Remove leftover PudimNetMon Agent state from a previous installer/smoke-test
-  run before starting: the PudimNetMonAgent service, C:\Program Files\PudimNetMon
-  Agent, %ProgramData%\PudimNetMon and the Add/Remove Programs entry. Requires
-  an ELEVATED PowerShell. Use this when re-running the script after a smoke
-  test (it is implied by -RunSmokeTest).
+  Remove leftover PudimNetMon Agent state before starting. The PudimNetMonAgent
+  service, C:\Program Files\PudimNetMon Agent, %ProgramData%\PudimNetMon and the
+  Add/Remove Programs entry are deleted. Requires an elevated PowerShell. Use
+  when re-running after a smoke test (implied by -RunSmokeTest).
 
 .PARAMETER KeepGoing
   Run every step even if an earlier one fails (CI stops at the first failure).
 
 .EXAMPLE
-  # Full CI parity from an admin PowerShell:
+  # Full CI parity from an admin PowerShell.
   powershell -ExecutionPolicy Bypass -File .\scripts\run-ci-windows.ps1 -Clean -RunSmokeTest
 
 .EXAMPLE
-  # Reproduce the failing configure/build/test part while iterating:
+  # Reproduce the configure/build/test part while iterating.
   .\scripts\run-ci-windows.ps1 -SkipInstaller
 #>
 [CmdletBinding()]
@@ -264,10 +258,10 @@ function Find-CTest {
     return $script:CtestExe
 }
 
-# Locates MSVC the way CMake does: VS/Build Tools install with the VC.Tools
-# component (queried via vswhere), falling back to `cl` on PATH (a VS developer
-# prompt). Also reports whether the Windows 10/11 SDK headers exist - the agent
-# needs them (SIO_TCP_INFO, _WIN32_WINNT=0x0A00).
+# Locates MSVC the way CMake does. Queries the VC.Tools component via vswhere,
+# then falls back to `cl` on PATH (a VS developer prompt). Also reports whether
+# the Windows 10/11 SDK headers exist, since the agent needs them
+# (SIO_TCP_INFO, _WIN32_WINNT=0x0A00).
 function Find-Msvc {
     $r = @{ Found = $false; Cl = $null; VsPath = $null; Sdk = $false }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -428,7 +422,7 @@ function Step-FetchVcpkgTool {
     Invoke-NativeCommand -FilePath $tool -Arguments @('version', '--disable-metrics')
 }
 
-# Step 3 - Inspect restored vcpkg cache (CI's diagnostics step; makes cache
+# Step 3 - Inspect restored vcpkg cache (CI diagnostics step, makes cache
 # behaviour visible instead of silently rebuilding every run)
 function Step-InspectVcpkgCache {
     function Show-CacheDir([string]$Name, [string]$Dir) {
@@ -552,17 +546,17 @@ function Step-BuildInstaller {
 
 
 # Step 10 - Smoke test installer (install -> config model -> upgrade -> uninstall)
-# Verbatim local port of the CI workflow step of the same name. It registers
-# the real PudimNetMonAgent Windows service, so it requires an elevated shell
-# and is only run when -RunSmokeTest is passed.
+# Local port of the CI step of the same name. It registers the real
+# PudimNetMonAgent Windows service, so it needs an elevated shell and only runs
+# with -RunSmokeTest.
 function Invoke-InstallerSmokeTest {
     if (-not (Test-Admin)) {
         throw 'The installer smoke test registers a Windows service and needs an ELEVATED PowerShell. Reopen an elevated shell and rerun with -RunSmokeTest.'
     }
 
-    # Every setup/uninstaller launch is bounded: a wedged child of the installer
-    # (e.g. the bundled VC++ redistributable / msiexec, or a [Run] step) must
-    # never stall this step silently.
+    # Bound every setup/uninstaller launch. A wedged child of the installer
+    # (the bundled VC++ redistributable, msiexec or a [Run] step) must not stall
+    # this step silently.
     function Invoke-SetupProcess {
         param(
             [string]$Phase,
@@ -607,9 +601,9 @@ function Invoke-InstallerSmokeTest {
         }
     }
 
-    # Dumps everything needed to diagnose why PudimNetMonAgent is not running
-    # after an install/upgrade: the exact ImagePath sc stored, service state,
-    # live agent processes and relevant event-log entries.
+    # Dumps what is needed to diagnose why PudimNetMonAgent is not running after
+    # an install or upgrade. The exact ImagePath sc stored, service state, live
+    # agent processes and relevant event-log entries.
     function Write-ServiceDiagnostics {
         param([string]$Label)
         Write-Host "---- service diagnostics: $Label ----"
@@ -641,9 +635,9 @@ function Invoke-InstallerSmokeTest {
         Write-Host '---- end service diagnostics ----'
     }
 
-    # Waits (with retries) for the service to reach Running. The installer
-    # defers the initial start to a detached helper that fires after Setup
-    # exits, so right after install the service may legitimately be Stopped.
+    # Waits for the service to reach Running. The installer defers the initial
+    # start to a detached helper that fires after Setup exits, so the service
+    # may legitimately be Stopped right after install.
     function Wait-AgentServiceRunning {
         param([string]$Label)
         for ($i = 1; $i -le 8; $i++) {
@@ -667,9 +661,9 @@ function Invoke-InstallerSmokeTest {
         $upgradeLog = Join-Path $env:TEMP 'pudim-setup-upgrade.log'
         $uninstallLog = Join-Path $env:TEMP 'pudim-setup-uninstall.log'
 
-        # ---- 0. Agent startup probe (diagnostics only): launch the freshly
-        # built binary in the console for a few seconds and capture stdout.
-        # Purely diagnostic: a probe failure never fails this step.
+        # ---- 0. Agent startup probe (diagnostics only) -----------------------
+        # Launches the built binary in the console for a few seconds and
+        # captures stdout. A probe failure never fails this step.
         try {
             $payloadAgent = Join-Path $PayloadDir 'pudim-agent.exe'
             if (Test-Path $payloadAgent) {
@@ -730,11 +724,11 @@ function Invoke-InstallerSmokeTest {
         Write-Host "[install] OK: service running ($($svc.Status))"
 
 
-        # ---- 2. Config model: only node-id is baked into the ImagePath; every
-        # mutable setting lives in agent.conf (single source of truth). -------
-        # Read the service ImagePath through WMI/CIM - `sc.exe qc` output is
-        # localized (e.g. pt-BR prints a translated label), so grepping for
-        # "BINARY_PATH_NAME" breaks on non-English Windows.
+        # ---- 2. Config model ------------------------------------------------
+        # Only the node-id is baked into the ImagePath. Every mutable setting
+        # lives in agent.conf. Read the ImagePath through WMI/CIM because
+        # `sc.exe qc` output is localized (pt-BR prints a translated label),
+        # so grepping for "BINARY_PATH_NAME" breaks on non-English Windows.
         $svcCfg = Get-CimInstance Win32_Service -Filter "Name='PudimNetMonAgent'"
         if (-not $svcCfg -or [string]::IsNullOrWhiteSpace($svcCfg.PathName)) {
             Write-ServiceDiagnostics -Label 'config model: service config unreadable'
@@ -760,9 +754,10 @@ function Invoke-InstallerSmokeTest {
             throw 'agent.conf must not contain node-id (it lives on the service command line)'
         }
 
-        # ---- 3. Upgrade path: re-run the installer over the existing install.
-        # Exercises the service-exists -> ChangeServiceConfig branch and rewrites
-        # agent.conf before the service is restarted. -------------------------
+        # ---- 3. Upgrade path ------------------------------------------------
+        # Re-runs the installer over the existing install. Exercises the
+        # service-exists -> ChangeServiceConfig branch and rewrites agent.conf
+        # before the service is restarted.
         Invoke-SetupProcess -Phase 'upgrade' -FilePath $setup.FullName `
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$upgradeLog" `
             -LogFile $upgradeLog
@@ -785,9 +780,9 @@ function Invoke-InstallerSmokeTest {
         $svc = Get-Service PudimNetMonAgent
         Write-Host '[upgrade] OK: service running after reinstall'
 
-        # ---- 4. agent.conf is authoritative: change the interval, restart, and
-        # confirm the agent still comes up (no stale ImagePath flag overrides
-        # the file). ----------------------------------------------------------
+        # ---- 4. agent.conf is authoritative --------------------------------
+        # Changes the interval, restarts, and confirms the agent still comes up
+        # with no stale ImagePath flag overriding the file.
         (Get-Content $confPath) -replace 'interval=\d+', 'interval=4321' |
             Set-Content $confPath
         Restart-Service PudimNetMonAgent
@@ -799,9 +794,9 @@ function Invoke-InstallerSmokeTest {
         }
         Write-Host 'agent.conf change OK: service restarted and running'
 
-        # ---- 5. Uninstaller --------------------------------------------------
+        # ---- 5. Uninstaller -------------------------------------------------
         # Inno registers DisplayName as AppVerName ("PudimNetMon Agent 0.1.0"),
-        # not the bare AppName - match by prefix.
+        # not the bare AppName, so match by prefix.
         $entry = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' |
             Where-Object { $_.DisplayName -like 'PudimNetMon Agent*' } |
             Select-Object -First 1
@@ -830,10 +825,10 @@ function Invoke-InstallerSmokeTest {
 
 
 # ---- reset of leftover agent state --------------------------------------------
-# Removes any leftover state a previous installer/smoke-test run left on this
-# machine so each run starts from a CI-fresh state. The smoke test's uninstall
-# keeps %ProgramData%\PudimNetMon by design; that stale agent.conf is then read
-# by agent-config-tests on the next run (no --config-file => default path),
+# Removes leftover state that a previous installer or smoke-test run left on
+# this machine so each run starts CI-fresh. The smoke test's uninstall keeps
+# %ProgramData%\PudimNetMon by design, and the stale agent.conf is then read by
+# agent-config-tests on the next run (no --config-file means the default path),
 # which breaks its "defaults" assertions. Requires an elevated shell.
 function Reset-LocalAgentState {
     if (-not (Test-Admin)) {
@@ -879,7 +874,7 @@ function Reset-LocalAgentState {
         $removed += 'Program Files'
     }
 
-    # ProgramData state (agent.conf, pending.db) - left behind by the uninstaller.
+    # ProgramData state (agent.conf, pending.db), left by the uninstaller.
     $pdPath = Join-Path $env:ProgramData 'PudimNetMon'
     if (Test-Path $pdPath) {
         Write-Host "  removing $pdPath"
@@ -888,8 +883,8 @@ function Reset-LocalAgentState {
     }
 
     Start-Sleep -Milliseconds 500
-    # Files can be transiently locked (e.g. by the deferred service-start helper
-    # or antivirus); retry the deletions once before reporting.
+    # Files can be transiently locked (for example by the deferred
+    # service-start helper or antivirus), so retry the deletions once.
     foreach ($p in @($pfPath, $pdPath)) {
         if (Test-Path $p) {
             Write-Warn "  $p still present after first attempt; retrying"
@@ -925,10 +920,10 @@ function Main {
     Assert-Prerequisites
     Set-CiEnvironment
 
-    # Every run starts from a CI-fresh machine when the installer/smoke test is
-    # involved (or when explicitly requested): leftover service/state from a
-    # previous smoke-test run would otherwise break agent-config-tests (stale
-    # agent.conf at the default path) and the fresh-install phase.
+    # Runs CI-fresh when the installer or smoke test is involved, or when
+    # requested. Leftover service or state from a previous smoke-test run would
+    # otherwise break agent-config-tests (stale agent.conf at the default path)
+    # and the fresh-install phase.
     if ($RunSmokeTest -or $ResetServiceState) {
         Invoke-Step '0. Reset leftover agent state (CI-fresh machine)' { Reset-LocalAgentState }
     }

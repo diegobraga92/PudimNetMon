@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds the agent in release mode and stages the binary into a directory that
-# the collector serves to the dashboard (--agent-dist-dir). Layout:
+# Builds the agent in release mode and stages the binary into a directory the
+# collector serves to the dashboard (--agent-dist-dir). Layout.
 #
 #   <out>/pudim-agent-linux-amd64
 #   <out>/version.txt
