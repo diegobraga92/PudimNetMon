@@ -83,6 +83,23 @@ export interface AgentVersionsResponse {
   platforms: AgentPlatform[]
 }
 
+// Single-file installer artifacts the collector serves for one-click installs.
+export interface AgentInstaller {
+  id: string          // e.g. "linux-amd64"
+  os: string          // "linux" | "windows"
+  arch: string        // human-readable, e.g. "x86_64" | "aarch64"
+  kind: string        // "setup" (Inno exe) | "run" (self-extracting .run)
+  filename: string    // canonical staged name, e.g. "PudimNetMon-Agent-Setup-0.1.0.exe"
+  size_bytes: number
+  sha256: string
+  download_url: string
+}
+
+export interface InstallerVersionsResponse {
+  version: string
+  installers: AgentInstaller[]
+}
+
 export interface ActiveAlert {
   rule_id: string
   rule_name: string

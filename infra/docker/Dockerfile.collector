@@ -37,7 +37,9 @@ COPY --from=builder /usr/local/bin/pudim-collector /usr/local/bin/pudim-collecto
 COPY --from=builder /build/collector/config/alert_rules.json /etc/pudim/alert_rules.json
 COPY --from=builder /agents/ /usr/share/pudim/agents/
 
+RUN mkdir -p /usr/share/pudim/installers
+
 EXPOSE 50051 8080
 
 ENTRYPOINT ["/usr/local/bin/pudim-collector"]
-CMD ["--grpc-addr=0.0.0.0:50051", "--http-addr=0.0.0.0:8080", "--alert-rules-path=/etc/pudim/alert_rules.json", "--agent-dist-dir=/usr/share/pudim/agents"]
+CMD ["--grpc-addr=0.0.0.0:50051", "--http-addr=0.0.0.0:8080", "--alert-rules-path=/etc/pudim/alert_rules.json", "--agent-dist-dir=/usr/share/pudim/agents", "--installer-dist-dir=/usr/share/pudim/installers"]

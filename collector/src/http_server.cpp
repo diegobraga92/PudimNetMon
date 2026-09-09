@@ -12,6 +12,7 @@
 #include "agent_dist.h"
 #include "agent_registry.h"
 #include "alerting/alert_manager.h"
+#include "installer_dist.h"
 #include "kafka/producer.h"
 #include "logging.h"
 #include "metrics_service.h"
@@ -26,13 +27,14 @@ HttpServer::HttpServer(
     std::shared_ptr<MetricsServiceImpl> metrics_service,
     std::shared_ptr<alerting::AlertManager> alert_manager,
     std::shared_ptr<kafka::KafkaProducer> kafka_producer,
-    AgentDist &agent_dist, TlsOptions tls)
+    AgentDist &agent_dist, InstallerDist &installer_dist, TlsOptions tls)
     : m_registry(registry),
       m_storage(std::move(storage)),
       m_metrics_service(std::move(metrics_service)),
       m_alert_manager(std::move(alert_manager)),
       m_kafka_producer(std::move(kafka_producer)),
       m_agent_dist(agent_dist),
+      m_installer_dist(installer_dist),
       m_tls(std::move(tls)) {
     // Run handlers on a pool so one slow request cannot stall other endpoints.
     m_server.new_task_queue = [] {
@@ -471,6 +473,51 @@ HttpServer::HttpServer(
     };
     m_server.Get("/api/agent/download", agent_download_handler);
     m_server.Get("/agent/download", agent_download_handler);
+
+    // Installer artifact manifest and download. The `config` query parameter is
+    // an optional base64url token embedded into the Content-Disposition filename
+    // so the downloaded single-file installer self-configures from its own name.
+    auto installer_versions_handler = [this](const httplib::Request &,
+                                             httplib::Response &resp) {
+        resp.set_content(m_installer_dist.ManifestJson(), "application/json");
+    };
+    m_server.Get("/api/installers/versions", installer_versions_handler);
+    m_server.Get("/installers/versions", installer_versions_handler);
+
+    auto installer_download_handler = [this](const httplib::Request &req,
+                                             httplib::Response &resp) {
+        std::string platform = req.get_param_value("platform");
+        if (!m_installer_dist.Has(platform)) {
+            resp.status = 404;
+            resp.set_content(
+                "{\"error\":\"no installer staged for platform '" +
+                    logger::escape(platform) + "'\"}",
+                "application/json");
+            return;
+        }
+        std::vector<char> bytes;
+        if (!m_installer_dist.Load(platform, bytes)) {
+            resp.status = 500;
+            resp.set_content("{\"error\":\"failed to read installer\"}",
+                             "application/json");
+            return;
+        }
+        std::string config = req.get_param_value("config");
+        std::string name = m_installer_dist.DownloadName(platform, config);
+        if (name.empty()) {
+            resp.status = 404;
+            resp.set_content("{\"error\":\"no installer staged for platform '" +
+                                 logger::escape(platform) + "'\"}",
+                             "application/json");
+            return;
+        }
+        resp.set_header("Content-Disposition",
+                        "attachment; filename=\"" + name + "\"");
+        resp.set_content(bytes.data(), bytes.size(), "application/octet-stream");
+    };
+    m_server.Get("/api/installers/download", installer_download_handler);
+    m_server.Get("/installers/download", installer_download_handler);
+
 }
 
 HttpServer::~HttpServer() {

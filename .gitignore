@@ -2,6 +2,7 @@
 agent/build/
 collector/build/
 build-agent/
+build-agent-release/
 build-collector/
 build-collector-debug/
 build-agent-debug/

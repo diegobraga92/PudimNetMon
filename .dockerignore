@@ -1,0 +1,26 @@
+# Build trees and dependency caches must not enter Docker build contexts.
+agent/build/
+collector/build/
+build/
+build-agent/
+build-agent-release/
+build-agent-debug/
+build-agent-windows/
+build-collector/
+build-collector-debug/
+.vcpkg/
+.vcpkg-cache/
+**/vcpkg_installed/
+**/_deps/
+
+# Generated / tooling output
+dist/
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+*.tsbuildinfo
+compile_commands.json
+certs/
+*.key
+*.csr
+.git/

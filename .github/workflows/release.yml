@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  # Cut a release on demand from the current default branch. Version is read
+  # from agent/CMakeLists.txt, so bumping it there is the only step needed.
+  workflow_dispatch:
+  # Optionally trigger on a pushed tag: git tag v0.1.0 && git push origin v0.1.0
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  linux-artifacts:
+    name: Build Linux release artifacts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Builds the tarball + single-file .run on the pinned ubuntu:24.04 base.
+      - name: Build Linux release artifact
+        run: ./scripts/build-linux-release.sh --docker
+
+      # Stable aliases (no version in the name) let consumers use the
+      # releases/latest/download/... URLs without knowing the version, and let
+      # the collector's release-mirror pick the newest files automatically.
+      - name: Create stable download aliases
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/.*project(pudim-agent VERSION \([0-9][0-9.]*\)).*/\1/p' agent/CMakeLists.txt)
+          version=${version:-0.1.0}
+          cp "dist/pudimnetmon-agent-${version}-linux-amd64.tar.gz" \
+             dist/pudimnetmon-agent-linux-amd64.tar.gz
+          cp "dist/pudimnetmon-agent-${version}-linux-amd64.tar.gz.sha256" \
+             dist/pudimnetmon-agent-linux-amd64.tar.gz.sha256
+          # Stable .run alias (name the collector release-mirror expects).
+          cp "dist/pudimnetmon-agent-install-${version}-linux-amd64.run" \
+             dist/pudimnetmon-agent-install-linux-amd64.run
+          sha256sum dist/pudimnetmon-agent-install-linux-amd64.run \
+            > dist/pudimnetmon-agent-install-linux-amd64.run.sha256
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pudimnetmon-agent-linux-release
+          path: |
+            dist/pudimnetmon-agent-*-linux-amd64.tar.gz
+            dist/pudimnetmon-agent-*-linux-amd64.tar.gz.sha256
+            dist/pudimnetmon-agent-install-*-linux-amd64.run
+            dist/pudimnetmon-agent-install-*-linux-amd64.run.sha256
+          if-no-files-found: error
+
+  windows-setup:
+    name: Fetch Windows setup EXE
+    runs-on: ubuntu-24.04
+    steps:
+      # Pull the installer built by the most recent successful CI run on the
+      # default branch (the Windows build requires a windows runner and vcpkg,
+      # so it is produced in ci.yml, not duplicated here).
+      - uses: dawidd6/action-download-artifact@v6
+        with:
+          name: pudimnetmon-agent-windows-setup
+          workflow: ci.yml
+          branch: main
+          workflow_conclusion: success
+          if_no_artifact_found: fail
+          path: dist/installer
+
+      - name: Verify setup EXE exists
+        run: |
+          ls -la dist/installer
+          test -n "$(find dist/installer -name 'PudimNetMon-Agent-Setup-*.exe' | head -1)"
+
+      - name: Upload Windows setup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pudimnetmon-agent-windows-setup-release
+          path: dist/installer/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux-artifacts, windows-setup]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: 'pudimnetmon-agent-*-release'
+          merge-multiple: true
+
+      - name: Compute version and stable aliases
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/.*project(pudim-agent VERSION \([0-9][0-9.]*\)).*/\1/p' agent/CMakeLists.txt)
+          version=${version:-0.1.0}
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          cd release-assets
+          # Windows setup stable alias (name the collector mirror expects).
+          win=$(find . -name 'PudimNetMon-Agent-Setup-*.exe' | head -1)
+          if [ -n "$win" ]; then cp "$win" PudimNetMon-Agent-Setup.exe; fi
+          # Linux .run stable alias.
+          cp pudimnetmon-agent-install-linux-amd64.run \
+             pudimnetmon-agent-install-latest-linux-amd64.run 2>/dev/null || true
+          ls -la
+
+      # Check latest: https://github.com/softprops/action-gh-release/releases
+      - name: Create or update release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: PudimNetMon Agent v${{ env.VERSION }}
+          body: |
+            Automated release of PudimNetMon Agent v${{ env.VERSION }}.
+
+            Artifacts (also available as stable `releases/latest/download/...` aliases):
+            - `PudimNetMon-Agent-Setup.exe` — Windows install wizard
+            - `pudimnetmon-agent-install-linux-amd64.run` — Linux single-file installer
+            - `pudimnetmon-agent-linux-amd64.tar.gz` — Linux release archive
+          files: |
+            release-assets/**
+          fail_on_unmatched_files: false

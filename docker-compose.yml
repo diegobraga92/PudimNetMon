@@ -57,6 +57,9 @@ services:
       PUDIM_DB_NAME: pudimnetmon
       PUDIM_DB_USER: pudim
       PUDIM_DB_PASSWORD: pudim
+      PUDIM_GITHUB_OWNER: ${PUDIM_GITHUB_OWNER:-diegobraga92}
+      PUDIM_GITHUB_REPO: ${PUDIM_GITHUB_REPO:-PudimNetMon}
+      PUDIM_RELEASE_SYNC_SECONDS: ${PUDIM_RELEASE_SYNC_SECONDS:-3600}
     command:
       - "--kafka-brokers=kafka:9092"  # Kafka mode. Consumers own storage and alerting.
     depends_on:

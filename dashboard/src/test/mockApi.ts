@@ -4,6 +4,7 @@ import type {
   AgentVersionsResponse,
   AlertHistoryEntry,
   HealthResponse,
+  InstallerVersionsResponse,
   MetricPoint,
   ActiveAlert,
 } from '../types'
@@ -34,6 +35,32 @@ export const mockAgentVersions: AgentVersionsResponse = {
       size_bytes: 2200000,
       sha256: 'b'.repeat(64),
       download_url: '/api/agent/download?platform=windows-amd64',
+    },
+  ],
+}
+
+export const mockInstallerVersions: InstallerVersionsResponse = {
+  version: '0.1.0',
+  installers: [
+    {
+      id: 'linux-amd64',
+      os: 'linux',
+      arch: 'x86_64',
+      kind: 'run',
+      filename: 'pudimnetmon-agent-install-0.1.0-linux-amd64.run',
+      size_bytes: 9000000,
+      sha256: 'c'.repeat(64),
+      download_url: '/api/installers/download?platform=linux-amd64',
+    },
+    {
+      id: 'windows-amd64',
+      os: 'windows',
+      arch: 'x86_64',
+      kind: 'setup',
+      filename: 'PudimNetMon-Agent-Setup-0.1.0.exe',
+      size_bytes: 8000000,
+      sha256: 'd'.repeat(64),
+      download_url: '/api/installers/download?platform=windows-amd64',
     },
   ],
 }
@@ -173,6 +200,7 @@ export interface MockApiOptions {
   alerts?: ActiveAlert[]
   alertHistory?: AlertHistoryEntry[]
   agentVersions?: AgentVersionsResponse
+  installerVersions?: InstallerVersionsResponse
 }
 
 /** Stub global.fetch with canned responses routed by URL. Returns the fetch stub. */
@@ -184,6 +212,7 @@ export function mockApi(options: MockApiOptions = {}) {
     alerts = mockAlerts,
     alertHistory = mockAlertHistory,
     agentVersions = mockAgentVersions,
+    installerVersions = mockInstallerVersions,
   } = options
 
   let currentAlerts = alerts
@@ -205,6 +234,7 @@ export function mockApi(options: MockApiOptions = {}) {
     if (url.startsWith('/api/alerts')) return jsonResponse(currentAlerts)
     if (url.startsWith('/api/alert-history')) return jsonResponse(alertHistory)
     if (url.startsWith('/api/agent/versions')) return jsonResponse(agentVersions)
+    if (url.startsWith('/api/installers/versions')) return jsonResponse(installerVersions)
     if (url.startsWith('/api/diagnostic')) {
       return jsonResponse({ success: true, timestamp_unix_ms: Date.now(), result: 'traceroute ok\npcap ok' })
     }

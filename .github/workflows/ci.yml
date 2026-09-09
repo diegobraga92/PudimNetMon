@@ -256,6 +256,7 @@ jobs:
           $installLog = Join-Path $env:TEMP 'pudim-setup-install.log'
           $upgradeLog = Join-Path $env:TEMP 'pudim-setup-upgrade.log'
           $uninstallLog = Join-Path $env:TEMP 'pudim-setup-uninstall.log'
+          $tokenLog = Join-Path $env:TEMP 'pudim-setup-token.log'
 
           # Launch the freshly binary in the console for a few seconds and capture its stdout.
           try {
@@ -379,6 +380,52 @@ jobs:
           }
           Write-Host 'agent.conf change OK: service restarted and running'
 
+          # The collector names the download PudimNetMon-Agent-Setup-<ver>-cfg-<base64url>.exe. 
+          # The installer must read that token from its own file name.
+          $query = 'collector=collector.lan%3A50051&node=token-node-01&interval=4321'
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($query)
+          $token = [Convert]::ToBase64String($bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=')
+          $tokenizedName = "$($setup.BaseName)-cfg-$token$($setup.Extension)"
+          $tokenized = Join-Path $setup.DirectoryName $tokenizedName
+          Copy-Item $setup.FullName $tokenized
+          Write-Host "[token] tokenized setup name: $tokenizedName"
+
+          Invoke-SetupProcess -Phase 'token' -FilePath $tokenized `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$tokenLog" `
+            -LogFile $tokenLog
+
+          Start-Sleep -Seconds 3
+          if (-not (Wait-AgentServiceRunning -Label 'token')) {
+            Write-ServiceDiagnostics -Label 'token: service not running'
+            throw 'Service not running after tokenized install'
+          }
+          $svc = Get-Service PudimNetMonAgent
+          Write-Host '[token] OK: service running after tokenized reinstall'
+
+          # Node id came from the token's node= (not the computer name) and lives
+          # on the service command line.
+          $svcCfg = Get-CimInstance Win32_Service -Filter "Name='PudimNetMonAgent'"
+          $binPath = 'BINARY_PATH_NAME: ' + $svcCfg.PathName
+          Write-Host $binPath
+          if ($binPath -notmatch 'pudim-agent\.exe\" --node-id=token-node-01') {
+            throw "Expected --node-id=token-node-01 from the file-name token, got: $binPath"
+          }
+
+          # Collector + interval came from the token and were written to agent.conf.
+          $conf = Get-Content $confPath -Raw
+          Write-Host "agent.conf after token:`n$conf"
+          if ($conf -notmatch 'collector-endpoints=collector\.lan:50051') {
+            throw 'agent.conf missing the token collector-endpoints=collector.lan:50051'
+          }
+          if ($conf -notmatch 'interval=4321') {
+            throw 'agent.conf missing the token interval=4321'
+          }
+          if ($conf -match 'node-id=') {
+            throw 'agent.conf must not contain node-id after a tokenized install'
+          }
+          Write-Host '[token] PASSED: file-name config token applied (node, collector, interval)'
+          Remove-Item $tokenized -ErrorAction SilentlyContinue
+
           # Uninstall
           $entry = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' |
             Where-Object { $_.DisplayName -like 'PudimNetMon Agent*' } |
@@ -439,3 +486,24 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  agent-release-linux:
+    name: C++ Agent (Linux release artifact)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Linux release artifact
+        run: ./scripts/build-linux-release.sh --docker
+
+      # Check latest: https://github.com/actions/upload-artifact/releases
+      - name: Upload Linux agent artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pudimnetmon-agent-linux
+          path: |
+            dist/pudimnetmon-agent-*-linux-*.tar.gz
+            dist/pudimnetmon-agent-*-linux-*.tar.gz.sha256
+            dist/pudimnetmon-agent-install-*-linux-*.run
+            dist/pudimnetmon-agent-install-*-linux-*.run.sha256
+          if-no-files-found: error

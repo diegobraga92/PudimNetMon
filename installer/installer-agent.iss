@@ -10,6 +10,9 @@
 ;     the console.
 ;   * Writes %ProgramData%\PudimNetMon\agent.conf for later edits.
 ;   * Stops and removes the service on uninstall.
+;   * When the setup EXE's own file name ends in -cfg-<base64url> (the name the
+;     dashboard serves), decodes the token and pre-fills the wizard settings
+;     (collector/node/interval) for unattended installs.
 ;
 ; Configuration model. One authoritative source per setting. The node-id is
 ; baked into the service command line (like the Linux unit's --node-id=%H) and
@@ -169,6 +172,146 @@ begin
     RemoveAgentService();
 end;
 
+// ---- config token from the setup file name --------------------------------
+// The dashboard serves installer downloads with a base64url config token baked
+// into the file name:
+//
+//   PudimNetMon-Agent-Setup-0.1.0-cfg-<token>.exe
+//
+// The token decodes to a URLSearchParams-style query string
+// (collector=host:port&node=..&interval=..) that pre-fills the wizard defaults
+// so both interactive and /VERYSILENT installs configure themselves. Explicit
+// wizard edits still win because InitializeWizard runs before the pages are
+// shown.
+function B64Val(C: Char): Integer;
+begin
+  if (C >= 'A') and (C <= 'Z') then Result := Ord(C) - Ord('A')
+  else if (C >= 'a') and (C <= 'z') then Result := Ord(C) - Ord('a') + 26
+  else if (C >= '0') and (C <= '9') then Result := Ord(C) - Ord('0') + 52
+  else if C = '-' then Result := 62
+  else if C = '_' then Result := 63
+  else Result := 0;  // '=' padding and stray chars contribute no bits
+end;
+
+function HexDigit(C: Char): Integer;
+begin
+  if (C >= '0') and (C <= '9') then Result := Ord(C) - Ord('0')
+  else if (C >= 'a') and (C <= 'f') then Result := Ord(C) - Ord('a') + 10
+  else if (C >= 'A') and (C <= 'F') then Result := Ord(C) - Ord('A') + 10
+  else Result := 0;
+end;
+
+function Base64UrlDecode(const S: String): String;
+var
+  I, V: Integer;
+  C1, C2, C3, C4: Char;
+begin
+  Result := '';
+  I := 1;
+  while I <= Length(S) do
+  begin
+    C1 := S[I];
+    if I + 1 <= Length(S) then C2 := S[I + 1] else C2 := '=';
+    if I + 2 <= Length(S) then C3 := S[I + 2] else C3 := '=';
+    if I + 3 <= Length(S) then C4 := S[I + 3] else C4 := '=';
+    if (B64Val(C1) < 0) or (B64Val(C2) < 0) then Break;
+    V := (B64Val(C1) shl 18) or (B64Val(C2) shl 12);
+    if C3 <> '=' then
+    begin
+      V := V or (B64Val(C3) shl 6);
+      if C4 <> '=' then
+      begin
+        V := V or B64Val(C4);
+        Result := Result + Chr((V shr 16) and $FF) +
+                         Chr((V shr 8) and $FF) + Chr(V and $FF);
+      end
+      else
+        Result := Result + Chr((V shr 16) and $FF) + Chr((V shr 8) and $FF);
+    end
+    else
+      Result := Result + Chr((V shr 16) and $FF);
+    Inc(I, 4);
+  end;
+end;
+
+function UrlDecode(const S: String): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  I := 1;
+  while I <= Length(S) do
+  begin
+    if S[I] = '+' then
+      Result := Result + ' '
+    else if (S[I] = '%') and (I + 2 <= Length(S)) then
+    begin
+      Result := Result + Chr(HexDigit(S[I + 1]) * 16 + HexDigit(S[I + 2]));
+      Inc(I, 2);
+    end
+    else
+      Result := Result + S[I];
+    Inc(I);
+  end;
+end;
+
+// Reads the -cfg-<token> suffix from this setup executable's own file name and
+// applies collector/node/interval to the wizard defaults. No-op on a plain
+// PudimNetMon-Agent-Setup-<ver>.exe download. The stem never contains '-cfg-',
+// so the first occurrence is the separator added by the collector.
+procedure ApplyConfigFromSetupFileName();
+var
+  SetupName, Token, Query, Pair, Key, Value, Node: String;
+  P, Q, PairEnd, Eq, IntervalNum: Integer;
+begin
+  // Basename of this setup executable (no reliance on ExtractFileName).
+  SetupName := ExpandConstant('{srcexe}');
+  P := Length(SetupName);
+  while (P > 0) and (SetupName[P] <> '\') do Dec(P);
+  SetupName := Copy(SetupName, P + 1, Length(SetupName) - P);
+
+  // Strip the trailing '.exe' so the token runs to the end of the name.
+  if (Length(SetupName) >= 4) and
+     (Copy(SetupName, Length(SetupName) - 3, 4) = '.exe') then
+    SetupName := Copy(SetupName, 1, Length(SetupName) - 4);
+  P := Pos('-cfg-', SetupName);
+  if P = 0 then Exit;
+  Token := Copy(SetupName, P + 5, Length(SetupName) - P - 4);
+  if Token = '' then Exit;
+  Query := Base64UrlDecode(Token);
+
+  Q := 1;
+  while Q <= Length(Query) do
+  begin
+    PairEnd := Q;
+    while (PairEnd <= Length(Query)) and (Query[PairEnd] <> '&') do Inc(PairEnd);
+    Pair := Copy(Query, Q, PairEnd - Q);
+    Eq := Pos('=', Pair);
+    if Eq > 0 then
+    begin
+      Key := Copy(Pair, 1, Eq - 1);
+      Value := UrlDecode(Copy(Pair, Eq + 1, Length(Pair) - Eq));
+      if Key = 'collector' then
+        CollectorValue := Value
+      else if Key = 'node' then
+      begin
+        Node := Value;
+        // Same rule as the wizard: the node ID is baked into the service
+        // command line, so spaces/tabs/quotes would break it.
+        if (Node <> '') and (Pos(' ', Node) = 0) and (Pos(#9, Node) = 0) and
+           (Pos('"', Node) = 0) then
+          NodeIdValue := Node;
+      end
+      else if Key = 'interval' then
+      begin
+        IntervalNum := StrToIntDef(Value, 0);
+        if IntervalNum > 0 then IntervalValue := IntToStr(IntervalNum);
+      end;
+    end;
+    Q := PairEnd + 1;
+  end;
+end;
+
 procedure InitializeWizard();
 begin
   // A reinstall replaces pudim-agent.exe while the running service holds it
@@ -183,6 +326,11 @@ begin
   NodeIdValue := GetComputerNameString();
   CollectorValue := '';
   IntervalValue := DefaultInterval;
+
+  // A dashboard download may carry a -cfg-<token> config in the file name.
+  // Apply it over the defaults before the wizard page is built (and before the
+  // [Run] steps in silent mode, where NextButtonClick never fires).
+  ApplyConfigFromSetupFileName();
 
   AgentPage := CreateInputQueryPage(wpSelectTasks,
     'Agent configuration',

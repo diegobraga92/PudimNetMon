@@ -114,6 +114,39 @@ read from `/etc/pudim/agent.conf` on Linux or `<state-dir>\agent.conf` on Window
 
 ### Linux
 
+Release build produces a self-extracting `pudimnetmon-agent-install-<version>-linux-<arch>.run` 
+that contains the agent binary and the installer:
+
+```bash
+# Download from the Deploy Agent dashboard, or copy the .run to the host.
+chmod +x pudimnetmon-agent-install-0.1.0-linux-amd64.run
+sudo ./pudimnetmon-agent-install-0.1.0-linux-amd64.run \
+  --collector-endpoints=collector.lan:50051 --node-id=host-01
+
+# Uninstall (keeps /etc/pudim/agent.conf)
+sudo ./pudimnetmon-agent-install-0.1.0-linux-amd64.run --uninstall
+```
+
+Downloads from the dashboard name the file with an embedded config token
+(`...-cfg-<token>.run`) so `sudo ./pudimnetmon-agent-...-cfg-<token>.run` 
+installs with the collector and node id already set.
+
+Can also be done with a single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/diegobraga92/PudimNetMon/main/scripts/install-linux.sh \
+  | sudo bash -s -- --collector-endpoints=collector.lan:50051 --node-id=host-01
+
+# Configure probe targets afterwards and apply them
+sudoedit /etc/pudim/agent.conf
+sudo systemctl restart pudim-agent
+
+# Uninstall (keeps /etc/pudim/agent.conf)
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/diegobraga92/PudimNetMon/main/scripts/install-linux.sh)" -- --uninstall
+```
+
+Local build + install:
+
 ```bash
 # 1. Build
 sudo apt-get install -y cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
@@ -132,12 +165,23 @@ sudo systemctl restart pudim-agent
 
 ### Windows
 
-The CI job "C++ Agent (Windows build)" packages a self-contained install wizard 
-`PudimNetMon-Agent-Setup-<version>.exe`, uploaded as the `pudimnetmon-agent-windows-setup` 
+The CI job "C++ Agent (Windows build)" packages a self-contained install wizard
+`PudimNetMon-Agent-Setup-<version>.exe`, uploaded as the `pudimnetmon-agent-windows-setup`
 artifact.
 
 ```powershell
 PudimNetMon-Agent-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
+Downloads from the dashboard carries its config in the file name
+(`PudimNetMon-Agent-Setup-<version>-cfg-<token>.exe`). The installer decodes the
+token and pre-fills the wizard, so double-clicking the downloaded file (or
+running it with `/VERYSILENT`) installs with the collector endpoint, node id and
+interval already set:
+
+```powershell
+# The file name already carries collector/node/interval.
+.\PudimNetMon-Agent-Setup-0.1.0-cfg-<token>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 Manual Build:

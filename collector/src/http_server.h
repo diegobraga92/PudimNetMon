@@ -14,6 +14,7 @@ namespace pudimcollector {
 
 class AgentDist;
 class AgentRegistry;
+class InstallerDist;
 class MetricsServiceImpl;
 class TimescaleStorage;
 namespace alerting { class AlertManager; }
@@ -33,6 +34,7 @@ public:
                std::shared_ptr<alerting::AlertManager> alert_manager,
                std::shared_ptr<kafka::KafkaProducer> kafka_producer,
                AgentDist &agent_dist,
+               InstallerDist &installer_dist,
                TlsOptions tls);
 
     ~HttpServer();
@@ -68,6 +70,7 @@ private:
     std::shared_ptr<alerting::AlertManager> m_alert_manager;
     std::shared_ptr<kafka::KafkaProducer> m_kafka_producer;
     AgentDist &m_agent_dist;
+    InstallerDist &m_installer_dist;
     TlsOptions m_tls;
 };
 

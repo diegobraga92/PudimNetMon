@@ -16,9 +16,11 @@
 #include "agent_service.h"
 #include "alerting/alert_manager.h"
 #include "http_server.h"
+#include "installer_dist.h"
 #include "kafka/producer.h"
 #include "logging.h"
 #include "metrics_service.h"
+#include "release_mirror.h"
 #include "storage/timescale_storage.h"
 #include "tls_credentials.h"
 
@@ -52,6 +54,12 @@ int main(int argc, char **argv) {
     std::string tls_cert;  // PEM server certificate
     std::string tls_key;   // PEM server private key
     std::string agent_dist_dir = "/usr/share/pudim/agents";  // staged agent binaries for download
+    std::string installer_dist_dir = "/usr/share/pudim/installers";  // staged installer artifacts
+    std::string github_owner;
+    std::string github_repo;
+    std::string github_api_base = "https://api.github.com";
+    std::string github_token;             // optional; from --github-token or env
+    int64_t release_sync_seconds = 3600;  // 0 = sync once at startup only
 
     auto get_env = [](const char *name, const std::string &def) {
         const char *v = std::getenv(name);
@@ -64,6 +72,13 @@ int main(int argc, char **argv) {
     db_name = get_env("PUDIM_DB_NAME", db_name);
     db_user = get_env("PUDIM_DB_USER", db_user);
     db_password = get_env("PUDIM_DB_PASSWORD", db_password);
+    github_owner = get_env("PUDIM_GITHUB_OWNER", github_owner);
+    github_repo = get_env("PUDIM_GITHUB_REPO", github_repo);
+    github_token = get_env("PUDIM_GITHUB_TOKEN", github_token);
+    github_api_base = get_env("PUDIM_GITHUB_API_BASE", github_api_base);
+    release_sync_seconds =
+        std::stoll(get_env("PUDIM_RELEASE_SYNC_SECONDS",
+                           std::to_string(release_sync_seconds)));
 
     // TODO: Check about replacing CLI settings
 
@@ -115,6 +130,18 @@ int main(int argc, char **argv) {
             tls_key = v;
         } else if ((v = opt(arg, "--agent-dist-dir", i)) != "") {
             agent_dist_dir = v;
+        } else if ((v = opt(arg, "--installer-dist-dir", i)) != "") {
+            installer_dist_dir = v;
+        } else if ((v = opt(arg, "--github-owner", i)) != "") {
+            github_owner = v;
+        } else if ((v = opt(arg, "--github-repo", i)) != "") {
+            github_repo = v;
+        } else if ((v = opt(arg, "--github-api-base", i)) != "") {
+            github_api_base = v;
+        } else if ((v = opt(arg, "--github-token", i)) != "") {
+            github_token = v;
+        } else if ((v = opt(arg, "--release-sync-seconds", i)) != "") {
+            release_sync_seconds = std::stoll(v);
         } else if (arg == "--help") {
             std::cout << "Usage: pudim-collector [options]\n"
                       << "  --grpc-addr         gRPC listen address (default: 0.0.0.0:50051)\n"
@@ -135,6 +162,16 @@ int main(int argc, char **argv) {
                       << "  --tls-key             PEM server private key (mTLS)\n"
                       << "  --agent-dist-dir      Directory with staged pudim-agent binaries served to the\n"
                       << "                        dashboard (default: /usr/share/pudim/agents)\n"
+                      << "  --installer-dist-dir  Directory with staged installer artifacts (Inno setup exe\n"
+                      << "                        or Linux .run files) served to the dashboard\n"
+                      << "                        (default: /usr/share/pudim/installers)\n"
+                      << "  --github-owner        GitHub owner whose latest release is mirrored into\n"
+                      << "                        the installer staged dir (default: empty = disabled)\n"
+                      << "  --github-repo         GitHub repository name (default: empty)\n"
+                      << "  --github-api-base     GitHub API base URL (default: https://api.github.com)\n"
+                      << "  --github-token        Optional GitHub token for private repos / rate limits\n"
+                      << "  --release-sync-seconds How often to re-check the latest release\n"
+                      << "                        (default: 3600; 0 = once at startup)\n"
                       << "  --help              Show this help\n";
             return 0;
         }
@@ -241,15 +278,60 @@ int main(int argc, char **argv) {
                      "' (version " + agent_dist.Version() + ")");
     }
 
+    pudimcollector::InstallerDist installer_dist;
+    if (!installer_dist.Scan(installer_dist_dir)) {
+        logger::emit("info", "No staged installer artifacts in '" +
+                     installer_dist_dir + "'; installer download disabled");
+    } else {
+        logger::emit("info", "Serving " +
+                     std::to_string(installer_dist.Artifacts().size()) +
+                     " installer artifact(s) from '" + installer_dist_dir +
+                     "' (version " + installer_dist.Version() + ")");
+    }
+
     // HTTP routes live in HttpServer.
     pudimcollector::HttpServer http_server(
         registry, storage, metrics_service, alert_manager, kafka_producer,
-        agent_dist, pudimcollector::TlsOptions{tls_ca, tls_cert, tls_key});
+        agent_dist, installer_dist, pudimcollector::TlsOptions{tls_ca, tls_cert, tls_key});
     http_server.Start(http_addr);
 
-    // Wait for shutdown signal
+    std::unique_ptr<pudimcollector::ReleaseMirror> release_mirror;
+    if (!github_owner.empty() && !github_repo.empty()) {
+        pudimcollector::ReleaseMirrorConfig cfg;
+        cfg.owner = github_owner;
+        cfg.repo = github_repo;
+        cfg.api_base = github_api_base;
+        cfg.token = github_token;
+        cfg.installer_dir = installer_dist_dir;
+        release_mirror = std::make_unique<pudimcollector::ReleaseMirror>(cfg);
+
+        std::string summary;
+        if (release_mirror->SyncOnce(summary)) {
+            installer_dist.Scan(installer_dist_dir);
+            logger::emit("info", "Release mirror: " + summary);
+        } else {
+            logger::emit("info", "Release mirror: " + summary +
+                                 " (will retry on schedule)");
+        }
+    }
+
+    // Wait for shutdown signal, re-syncing the release mirror on schedule.
+    auto last_sync = std::chrono::steady_clock::now();
     while (s_running) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (release_mirror && release_sync_seconds > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                               std::chrono::steady_clock::now() - last_sync)
+                               .count();
+            if (elapsed >= release_sync_seconds) {
+                std::string summary;
+                if (release_mirror->SyncOnce(summary)) {
+                    installer_dist.Scan(installer_dist_dir);
+                }
+                logger::emit("info", "Release mirror: " + summary);
+                last_sync = std::chrono::steady_clock::now();
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
     logger::emit("info", "Shutting down gRPC server...");

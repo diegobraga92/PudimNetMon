@@ -156,6 +156,10 @@ describe('PudimNetMon dashboard', () => {
     expect(screen.getAllByText(/pudim-agent-windows-amd64\.exe/).length).toBeGreaterThan(0)
     expect(screen.getAllByRole('link', { name: /Download/ }).length).toBeGreaterThan(0)
     expect(screen.getByText('Docker')).toBeInTheDocument()
+    // Single-file installer cards carry a config-token download link and show
+    // the decorated file name the collector will save.
+    expect(screen.getByRole('region', { name: 'Single-file installers' })).toBeInTheDocument()
+    expect(screen.getByText(/PudimNetMon-Agent-Setup-0\.1\.0\.exe/)).toBeInTheDocument()
   })
 
   it('navigates from the empty agents state to the Deploy page', async () => {

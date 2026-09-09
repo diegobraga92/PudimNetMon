@@ -19,6 +19,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka++)
 # OpenSSL for tls_credentials.cpp and the agent-binary sha256 manifest.
 find_package(OpenSSL REQUIRED)
+# libcurl for the GitHub release mirror (HTTPS fetches of staged installers).
+find_package(CURL REQUIRED)
 
 # Fetch cpp-httplib for the HTTP health/metrics endpoints
 include(FetchContent)
@@ -101,6 +103,8 @@ target_link_libraries(pudim_proto
 add_executable(pudim-collector
   src/main.cpp
   src/agent_dist.cpp
+  src/installer_dist.cpp
+  src/release_mirror.cpp
   src/agent_registry.cpp
   src/agent_rpc.cpp
   src/agent_service.cpp
@@ -124,6 +128,7 @@ target_link_libraries(pudim-collector
     PkgConfig::RDKAFKA
     PostgreSQL::PostgreSQL
     OpenSSL::Crypto
+    CURL::libcurl
 )
 target_include_directories(pudim-collector PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/../agent/src)
 
