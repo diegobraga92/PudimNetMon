@@ -28,6 +28,21 @@ export const CHECK_TYPE_COLORS: Record<string, string> = {
   ntp_offset: '#fdcb6e',
 }
 
+/** Units shown next to probe values in charts/tooltips. */
+export const CHECK_TYPE_UNITS: Record<string, string> = {
+  dns_resolution: 'ms',
+  tcp_connect: 'ms',
+  tls_handshake: 'ms',
+  http_request: 'ms',
+  icmp_ping: 'ms',
+  jitter: 'ms',
+  tcp_handshake: 'ms',
+  ntp_offset: 'ms',
+  tcp_retransmit: 'count',
+  dns_record: 'count',
+  tls_certificate: 'days',
+}
+
 /** Chart-line colors in a stable order (indexed, not keyed). */
 export const CHART_LINE_COLORS = Object.values(CHECK_TYPE_COLORS)
 
@@ -53,6 +68,10 @@ export const CHECK_TYPE_OPTIONS: { value: CheckTypeFilter; label: string }[] = [
     label,
   })),
 ]
+
+/** Landing-page filter defaults (synced into the URL). */
+export const DEFAULT_CHECK_FILTER: CheckTypeFilter = 'icmp_ping'
+export const DEFAULT_WINDOW_SECONDS = 300
 
 /** Data polling cadence for live views (ms). */
 export const POLL_INTERVAL_MS = 5000

@@ -8,6 +8,7 @@ import { FilterBar } from '../ui/FilterBar'
 import { Card } from '../ui/Card'
 import { AlertsPanel } from '../alerts/AlertsPanel'
 import { MetricsChart } from '../charts/MetricsChart'
+import { CheckSummaryStrip } from '../charts/CheckSummaryStrip'
 import { TlsCertsGrid } from '../charts/TlsCertsGrid'
 import { HttpDistribution } from '../charts/HttpDistribution'
 import { NtpOffsetChart } from '../charts/NtpOffsetChart'
@@ -69,11 +70,16 @@ export function OverviewPage() {
 
       <AlertsPanel compact />
 
+      {/* One-click quick nav between probe types; the card also sets the chart filter. */}
+      <CheckSummaryStrip />
+
       <Card className="p-3">
         <FilterBar />
       </Card>
 
-      <MetricsChart />
+      <div id="time-series-chart" className="scroll-mt-20">
+        <MetricsChart />
+      </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
         <TlsCertsGrid />

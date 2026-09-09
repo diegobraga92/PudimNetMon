@@ -5,7 +5,7 @@ import { useMetrics } from '../../hooks/useMetrics'
 import { useChartTheme } from '../../hooks/useChartTheme'
 import { useDashboard } from '../../context/DashboardContext'
 import { CHART_LINE_COLORS } from '../../lib/constants'
-import { buildNtpAgents, buildNtpSeries } from '../../lib/derive'
+import { buildNtpAgents, buildNtpSeries, pickBucketMs } from '../../lib/derive'
 import { ChartContainer } from './ChartContainer'
 import { RechartsTooltip } from './RechartsTooltip'
 
@@ -17,8 +17,18 @@ export function NtpOffsetChart() {
     windowSeconds: 3600,
   })
   const chartTheme = useChartTheme()
-  const ntpSeries = useMemo(() => buildNtpSeries(data ?? []), [data])
-  const ntpAgents = useMemo(() => buildNtpAgents(data ?? []), [data])
+  const { ntpSeries, ntpAgents } = useMemo(() => {
+    const metrics = data ?? []
+    const bucketMs = pickBucketMs(3600, metrics)
+    const toMs = Date.now()
+    return {
+      ntpSeries: buildNtpSeries(metrics, {
+        bucketMs,
+        rangeMs: { from: toMs - 3600_000, to: toMs },
+      }),
+      ntpAgents: buildNtpAgents(metrics),
+    }
+  }, [data])
 
   return (
     <ChartContainer

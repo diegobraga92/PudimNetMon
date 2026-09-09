@@ -186,4 +186,41 @@ describe('PudimNetMon dashboard', () => {
     await user.click(screen.getByRole('button', { name: /Alert History/ }))
     expect(await within(header).findByText('Alert History')).toBeInTheDocument()
   })
+
+  it('applies filters via the quick chip groups and mirrors them into the URL', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<App />)
+
+    // Default overview filter state: no reset until the user picks a non-default value.
+    expect(screen.queryByRole('button', { name: 'Reset filters' })).not.toBeInTheDocument()
+
+    const agentGroup = await screen.findByRole('group', { name: 'Filter by agent' })
+    const agentChip = await within(agentGroup).findByRole('button', { name: 'agent-1' })
+    await user.click(agentChip)
+
+    // Chip selection marks the button active and persists the filter to the query string.
+    expect(within(agentGroup).getByRole('button', { name: 'agent-1' })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => {
+      expect(window.location.search).toContain('agent=agent-1')
+    })
+
+    // Reset returns to the defaults (all agents + ICMP + 5m) and clears the URL.
+    await user.click(screen.getByRole('button', { name: 'Reset filters' }))
+    await waitFor(() => {
+      expect(window.location.search).not.toContain('agent=')
+    })
+  })
+
+  it('navigates to a probe type from the summary strip and focuses the chart', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<App />)
+
+    // The overview fetches all checks, so the strip lists probe types that have data.
+    const strip = await screen.findByRole('region', { name: 'Probe summary by check type' })
+    const ntpTile = await within(strip).findByRole('button', { name: /NTP Offset/ })
+    await user.click(ntpTile)
+
+    const checkGroup = await screen.findByRole('group', { name: 'Filter by check' })
+    expect(within(checkGroup).getByRole('button', { name: 'NTP Offset' })).toHaveAttribute('aria-pressed', 'true')
+  })
 })
