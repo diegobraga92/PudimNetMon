@@ -451,7 +451,7 @@ jobs:
 
       # Check latest: https://github.com/actions/upload-artifact/releases
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pudimnetmon-agent-windows-setup
           path: dist/installer/*

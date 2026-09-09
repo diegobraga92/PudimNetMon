@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y -qq \
     cmake protobuf-compiler libprotobuf-dev libgrpc++-dev \
     libgrpc-dev protobuf-compiler-grpc build-essential \
     pkg-config git ca-certificates \
-    libpq-dev librdkafka-dev
+    libpq-dev librdkafka-dev libcurl4-openssl-dev
 
 WORKDIR /build
 COPY collector/ ./collector/

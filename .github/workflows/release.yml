@@ -17,7 +17,7 @@ jobs:
     name: Build Linux release artifacts
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Builds the tarball + single-file .run on the pinned ubuntu:24.04 base.
       # Versioned names only; the publish job derives stable releases/latest
@@ -26,7 +26,7 @@ jobs:
         run: ./scripts/build-linux-release.sh --docker
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pudimnetmon-agent-linux-release
           path: |
@@ -43,7 +43,7 @@ jobs:
       # Pull the installer built by the most recent successful CI run on the
       # default branch (the Windows build requires a windows runner and vcpkg,
       # so it is produced in ci.yml, not duplicated here).
-      - uses: dawidd6/action-download-artifact@v6
+      - uses: dawidd6/action-download-artifact@v24
         with:
           name: pudimnetmon-agent-windows-setup
           workflow: ci.yml
@@ -58,7 +58,7 @@ jobs:
           test -n "$(find dist/installer -name 'PudimNetMon-Agent-Setup-*.exe' | head -1)"
 
       - name: Upload Windows setup artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pudimnetmon-agent-windows-setup-release
           path: dist/installer/*
@@ -69,10 +69,10 @@ jobs:
     needs: [linux-artifacts, windows-setup]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
           pattern: 'pudimnetmon-agent-*-release'
