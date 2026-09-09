@@ -230,7 +230,7 @@ begin
     end
     else
       Result := Result + Chr((V shr 16) and $FF);
-    Inc(I, 4);
+    I := I + 4;
   end;
 end;
 
@@ -247,7 +247,7 @@ begin
     else if (S[I] = '%') and (I + 2 <= Length(S)) then
     begin
       Result := Result + Chr(HexDigit(S[I + 1]) * 16 + HexDigit(S[I + 2]));
-      Inc(I, 2);
+      I := I + 2;
     end
     else
       Result := Result + S[I];
