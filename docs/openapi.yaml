@@ -561,6 +561,11 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: schedule_id
+          in: query
+          required: false
+          description: Filter to runs of one schedule (for per-schedule trends)
+          schema: { type: string }
         - name: limit
           in: query
           required: false

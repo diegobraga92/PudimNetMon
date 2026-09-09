@@ -18,11 +18,14 @@ export function useCommandSchedules() {
 }
 
 /** Recent command executions (scheduled + ad-hoc), newest first. */
-export function useCommandRuns(limit = 50) {
+export function useCommandRuns(limit = 50, scheduleId?: string) {
   return useQuery({
-    queryKey: ['command-runs', limit],
+    queryKey: ['command-runs', scheduleId ?? 'all', limit],
     queryFn: () =>
-      apiGet<CommandRunsResponse>('/api/command-runs', { limit }),
+      apiGet<CommandRunsResponse>('/api/command-runs', {
+        schedule_id: scheduleId,
+        limit,
+      }),
     refetchInterval: 15_000,
     retry: 1,
   })

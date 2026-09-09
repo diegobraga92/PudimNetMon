@@ -119,10 +119,11 @@ public:
     // Stores the result payload of a previously inserted run.
     bool FinishCommandRun(const CommandRun &run, std::string *err);
 
-    // Recent command executions, newest first. Empty agent_id/command_id 
-    // match everything, with a cap.
+    // Recent command executions, newest first. Empty agent_id / command_id /
+    // schedule_id match everything, with a cap.
     std::vector<CommandRun> ListCommandRuns(const std::string &agent_id,
                                             const std::string &command_id,
+                                            const std::string &schedule_id,
                                             int limit) const;
 
     // Deletes run history older than `older_than_unix_ms`

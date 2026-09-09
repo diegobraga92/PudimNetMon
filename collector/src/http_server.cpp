@@ -837,6 +837,7 @@ HttpServer::HttpServer(
         if (!storage_ready(resp)) return;
         std::string agent_id = req.get_param_value("agent_id");
         std::string command_id = req.get_param_value("command_id");
+        std::string schedule_id = req.get_param_value("schedule_id");
         int limit = 50;
         if (req.has_param("limit")) {
             try {
@@ -848,7 +849,7 @@ HttpServer::HttpServer(
         nlohmann::json doc;
         doc["runs"] = nlohmann::json::array();
         for (const auto &r : m_storage->ListCommandRuns(agent_id, command_id,
-                                                        limit)) {
+                                                        schedule_id, limit)) {
             doc["runs"].push_back(RunToJson(r));
         }
         resp.set_content(doc.dump(), "application/json");

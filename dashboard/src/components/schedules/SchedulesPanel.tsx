@@ -1,5 +1,12 @@
 import { useState } from 'react'
-import { CalendarClock, Plus, TerminalSquare, Trash2 } from 'lucide-react'
+import {
+  CalendarClock,
+  ChevronDown,
+  LineChart as LineChartIcon,
+  Plus,
+  TerminalSquare,
+  Trash2,
+} from 'lucide-react'
 import type { CommandSchedule } from '../../types'
 import { useAgents } from '../../hooks/useAgents'
 import {
@@ -7,6 +14,7 @@ import {
   useDeleteSchedule,
   useSetScheduleEnabled,
 } from '../../hooks/useCommandSchedules'
+import { cn } from '../../lib/cn'
 import { formatCountdown, formatDuration } from '../../lib/formatters'
 import { Badge, type BadgeVariant } from '../ui/Badge'
 import { Button } from '../ui/Button'
@@ -16,6 +24,7 @@ import { ListSkeleton } from '../ui/LoadingSkeleton'
 import { Switch } from '../ui/Switch'
 import { useToast } from '../ui/toast'
 import { NewScheduleDialog } from './NewScheduleDialog'
+import { ScheduleHistory } from './ScheduleHistory'
 
 function stateBadge(s: CommandSchedule): { label: string; variant: BadgeVariant } {
   if (s.expired) return { label: 'Expired', variant: 'neutral' }
@@ -32,6 +41,7 @@ export function SchedulesPanel() {
   const remove = useDeleteSchedule()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const items = schedules.data?.schedules ?? []
   const knownAgents = agents.data?.agents ?? []
@@ -152,7 +162,20 @@ export function SchedulesPanel() {
                     )}
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-3">
+                  <div className="flex shrink-0 flex-wrap items-center gap-3">
+                    <Button
+                      variant={expandedId === s.id ? 'secondary' : 'outline'}
+                      size="sm"
+                      onClick={() => setExpandedId((cur) => (cur === s.id ? null : s.id))}
+                      aria-expanded={expandedId === s.id}
+                    >
+                      <LineChartIcon className="size-3.5" aria-hidden="true" />
+                      Trend & history
+                      <ChevronDown
+                        className={cn('size-3 transition-transform', expandedId === s.id && 'rotate-180')}
+                        aria-hidden="true"
+                      />
+                    </Button>
                     <Switch
                       checked={s.enabled}
                       disabled={s.expired}
@@ -172,6 +195,16 @@ export function SchedulesPanel() {
                     </Button>
                   </div>
                 </div>
+
+                {expandedId === s.id && (
+                  <div className="mt-3 border-t border-border pt-3">
+                    <ScheduleHistory
+                      scheduleId={s.id}
+                      commandId={s.command_id}
+                      agentId={s.agent_id}
+                    />
+                  </div>
+                )}
               </Card>
             )
           })}

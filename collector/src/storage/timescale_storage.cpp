@@ -738,7 +738,7 @@ bool TimescaleStorage::FinishCommandRun(const CommandRun &run,
 
 std::vector<CommandRun> TimescaleStorage::ListCommandRuns(
     const std::string &agent_id, const std::string &command_id,
-    int limit) const {
+    const std::string &schedule_id, int limit) const {
     std::vector<CommandRun> out;
     std::lock_guard lock(m_impl->write_mutex);
     EnsureConnected();
@@ -753,6 +753,10 @@ std::vector<CommandRun> TimescaleStorage::ListCommandRuns(
     }
     if (!command_id.empty()) {
         sql += " AND command_id = " + EscapeLiteral(m_impl->conn, command_id);
+    }
+    if (!schedule_id.empty()) {
+        sql +=
+            " AND schedule_id = " + EscapeLiteral(m_impl->conn, schedule_id);
     }
     if (limit <= 0 || limit > 200) limit = 200;
     sql += " ORDER BY started_unix_ms DESC LIMIT " + std::to_string(limit) +
