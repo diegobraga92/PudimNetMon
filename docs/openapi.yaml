@@ -447,6 +447,139 @@ paths:
         '502':
           description: Agent unreachable
 
+  /api/command-schedules:
+    get:
+      summary: List scheduled ("heavy") commands
+      description: |
+        Schedules persisted by the collector. Each schedule runs one pre-set
+        agent command repeatedly inside a time window at a fixed interval.
+        Derived fields (active/expired/next_in_ms) are computed server-side.
+      responses:
+        '200':
+          description: Schedules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schedules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CommandSchedule'
+        '503':
+          description: TimescaleDB storage unavailable
+    post:
+      summary: Create a command schedule
+      description: |
+        Example: run speedtest every 3600 seconds for the next 12 hours on
+        agent-x. Requires interval_sec >= 60 and a future window_end_unix_ms.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, command_id, window_end_unix_ms, interval_sec]
+              properties:
+                agent_id: { type: string }
+                command_id: { type: string, example: speedtest }
+                label: { type: string }
+                params:
+                  type: object
+                  additionalProperties: { type: string }
+                window_start_unix_ms: { type: integer, format: int64 }
+                window_end_unix_ms: { type: integer, format: int64 }
+                interval_sec: { type: integer, example: 3600 }
+      responses:
+        '200':
+          description: Created schedule
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  error: { type: string }
+                  schedule:
+                    $ref: '#/components/schemas/CommandSchedule'
+        '400':
+          description: Invalid body or parameters
+        '503':
+          description: TimescaleDB storage unavailable
+
+  /api/command-schedules/delete:
+    post:
+      summary: Delete a command schedule
+      description: Removes the schedule definition but keeps its run history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string }
+      responses:
+        '200':
+          description: Deleted
+        '400':
+          description: Missing id or unknown schedule
+        '503':
+          description: TimescaleDB storage unavailable
+
+  /api/command-schedules/enable:
+    post:
+      summary: Pause or resume a command schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, enabled]
+              properties:
+                id: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: Updated schedule
+        '400':
+          description: Missing id/enabled or unknown schedule
+        '503':
+          description: TimescaleDB storage unavailable
+
+  /api/command-runs:
+    get:
+      summary: Recent command executions (scheduled and ad-hoc)
+      parameters:
+        - name: agent_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: command_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: Run history (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CommandRun'
+        '503':
+          description: TimescaleDB storage unavailable
+
   /api/agent/versions:
     get:
       summary: Agent download manifest (self-hosted binaries)
@@ -658,4 +791,45 @@ components:
           type: string
           description: Human-readable summary, e.g. "dns=example.com tcp= tls= http= ping=1.1.1.1 ping_count=4 tls_cert=on ..."
         error: { type: string }
+
+    CommandSchedule:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        agent_id: { type: string }
+        command_id: { type: string }
+        params:
+          type: object
+          additionalProperties: { type: string }
+        window_start_unix_ms: { type: integer }
+        window_end_unix_ms: { type: integer }
+        interval_sec: { type: integer }
+        next_run_unix_ms: { type: integer }
+        enabled: { type: boolean }
+        active: { type: boolean }
+        expired: { type: boolean }
+        next_in_ms: { type: integer }
+
+    CommandRun:
+      type: object
+      properties:
+        run_id: { type: integer }
+        schedule_id: { type: string }
+        agent_id: { type: string }
+        command_id: { type: string }
+        scheduled_unix_ms: { type: integer }
+        started_unix_ms: { type: integer }
+        finished_unix_ms: { type: integer }
+        running: { type: boolean }
+        success: { type: boolean }
+        error: { type: string }
+        summary: { type: string }
+        fields:
+          type: object
+          additionalProperties: { type: string }
+        issues:
+          type: array
+          items: { type: string }
+        detail: { type: string }
 

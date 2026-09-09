@@ -43,3 +43,24 @@ export function formatBytes(bytes: number): string {
   }
   return `${formatNumber(value, value >= 100 ? 0 : 1)} ${unit}`
 }
+
+/** "45s", "2m", "1h 30m", "3d". Human readable duration from seconds. */
+export function formatDuration(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '—'
+  const sec = Math.round(totalSeconds)
+  if (sec < 60) return `${sec}s`
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  return `${m}m`
+}
+
+/** Countdown like "in 25m" or the past tense for negative inputs. */
+export function formatCountdown(unixMs: number, now = Date.now()): string {
+  const diffMs = unixMs - now
+  if (diffMs <= 0) return 'now'
+  const sec = Math.floor(diffMs / 1000)
+  return `in ${formatDuration(sec)}`
+}

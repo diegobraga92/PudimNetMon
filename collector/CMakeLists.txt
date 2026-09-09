@@ -108,6 +108,7 @@ add_executable(pudim-collector
   src/agent_registry.cpp
   src/agent_rpc.cpp
   src/agent_service.cpp
+  src/command_scheduler.cpp
   src/http_server.cpp
   src/storage/timescale_storage.cpp
   src/metrics_service.cpp

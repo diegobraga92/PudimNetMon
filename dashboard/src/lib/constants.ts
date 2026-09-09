@@ -81,6 +81,7 @@ export const VIEW_LABELS: Record<string, string> = {
   overview: 'Overview',
   metrics: 'Metrics',
   agents: 'Agents',
+  schedules: 'Scheduled Commands',
   alerts: 'Alerts',
   history: 'Alert History',
   config: 'Agent Config',

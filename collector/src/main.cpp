@@ -15,6 +15,7 @@
 #include "agent_rpc.h"
 #include "agent_service.h"
 #include "alerting/alert_manager.h"
+#include "command_scheduler.h"
 #include "http_server.h"
 #include "installer_dist.h"
 #include "kafka/producer.h"
@@ -294,6 +295,11 @@ int main(int argc, char **argv) {
         agent_dist, installer_dist, pudimcollector::TlsOptions{tls_ca, tls_cert, tls_key});
     http_server.Start(http_addr);
 
+    // Runs scheduled ("heavy") agent commands inside their time windows.
+    pudimcollector::CommandScheduler command_scheduler(
+        registry, storage, pudimcollector::TlsOptions{tls_ca, tls_cert, tls_key});
+    command_scheduler.Start();
+
     std::unique_ptr<pudimcollector::ReleaseMirror> release_mirror;
     if (!github_owner.empty() && !github_repo.empty()) {
         pudimcollector::ReleaseMirrorConfig cfg;
@@ -339,6 +345,8 @@ int main(int argc, char **argv) {
 
     logger::emit("info", "Shutting down HTTP server...");
     http_server.Stop();
+
+    command_scheduler.Stop();
 
     logger::emit("info", "Collector shut down gracefully");
     return 0;

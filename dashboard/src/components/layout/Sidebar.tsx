@@ -1,6 +1,7 @@
 import {
   Activity,
   Bell,
+  CalendarClock,
   Download,
   History,
   LayoutDashboard,
@@ -17,6 +18,7 @@ const NAV_ITEMS: { view: View; label: string; icon: typeof LayoutDashboard }[] =
   { view: 'overview', label: 'Overview', icon: LayoutDashboard },
   { view: 'metrics', label: 'Metrics', icon: Table2 },
   { view: 'agents', label: 'Agents', icon: Radio },
+  { view: 'schedules', label: 'Scheduled Commands', icon: CalendarClock },
   { view: 'alerts', label: 'Alerts', icon: Bell },
   { view: 'history', label: 'Alert History', icon: History },
   { view: 'config', label: 'Agent Config', icon: Settings2 },

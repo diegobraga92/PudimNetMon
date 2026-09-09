@@ -59,6 +59,14 @@ std::string AgentRegistry::GetDiagnosticEndpoint(const std::string &agent_id) co
     return (it != m_agents.end()) ? it->second.diagnostic_endpoint : "";
 }
 
+bool AgentRegistry::IsAgentAlive(const std::string &agent_id,
+                                 int64_t timeout_ms) const {
+    std::shared_lock lock(m_mutex);
+    auto it = m_agents.find(agent_id);
+    return (it != m_agents.end()) &&
+           (NowMs() - it->second.last_seen_unix_ms) < timeout_ms;
+}
+
 size_t AgentRegistry::TotalAgentCount() const {
     std::shared_lock lock(m_mutex);
     return m_agents.size();

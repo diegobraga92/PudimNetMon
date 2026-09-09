@@ -1,5 +1,7 @@
 #include "http_server.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -21,6 +23,75 @@
 // TODO: Check Prometheus usage
 
 namespace pudimcollector {
+
+namespace {
+
+int64_t NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+// Small monotonic id generator for persisted schedules.
+std::string NewScheduleId() {
+    static std::atomic<uint64_t> counter{0};
+    return "cs_" + std::to_string(NowMs() / 1000) + "_" +
+           std::to_string(counter.fetch_add(1));
+}
+
+// Adds UI-friendly derived fields (active/expired/next_in_ms).
+nlohmann::json ScheduleToJson(const CommandSchedule &s, int64_t now_ms) {
+    nlohmann::json doc;
+    doc["id"] = s.id;
+    doc["label"] = s.label;
+    doc["agent_id"] = s.agent_id;
+    doc["command_id"] = s.command_id;
+    try {
+        doc["params"] = nlohmann::json::parse(s.params_json);
+    } catch (...) {
+        doc["params"] = nlohmann::json::object();
+    }
+    doc["window_start_unix_ms"] = s.window_start_unix_ms;
+    doc["window_end_unix_ms"] = s.window_end_unix_ms;
+    doc["interval_sec"] = s.interval_sec;
+    doc["next_run_unix_ms"] = s.next_run_unix_ms;
+    doc["enabled"] = s.enabled;
+    doc["expired"] = s.window_end_unix_ms < now_ms;
+    doc["active"] = s.enabled && s.window_start_unix_ms <= now_ms &&
+                    s.window_end_unix_ms >= now_ms;
+    int64_t next_in = s.next_run_unix_ms - now_ms;
+    doc["next_in_ms"] = next_in > 0 ? next_in : 0;
+    return doc;
+}
+
+nlohmann::json RunToJson(const CommandRun &r) {
+    nlohmann::json doc;
+    doc["run_id"] = r.run_id;
+    doc["schedule_id"] = r.schedule_id;
+    doc["agent_id"] = r.agent_id;
+    doc["command_id"] = r.command_id;
+    doc["scheduled_unix_ms"] = r.scheduled_unix_ms;
+    doc["started_unix_ms"] = r.started_unix_ms;
+    doc["finished_unix_ms"] = r.finished_unix_ms;
+    doc["running"] = !r.has_result;
+    doc["success"] = r.has_result && r.success;
+    doc["error"] = r.error;
+    doc["summary"] = r.summary;
+    try {
+        doc["fields"] = nlohmann::json::parse(r.fields_json);
+    } catch (...) {
+        doc["fields"] = nlohmann::json::object();
+    }
+    try {
+        doc["issues"] = nlohmann::json::parse(r.issues_json);
+    } catch (...) {
+        doc["issues"] = nlohmann::json::array();
+    }
+    doc["detail"] = r.detail;
+    return doc;
+}
+
+} // namespace
 
 HttpServer::HttpServer(
     const AgentRegistry &registry, std::shared_ptr<TimescaleStorage> storage,
@@ -498,6 +569,39 @@ HttpServer::HttpServer(
             SendAgentRpcError(resp, status);
             return;
         }
+
+        // Keep ad-hoc runs in the same history table the scheduler writes to.
+        if (m_storage) {
+            CommandRun run;
+            run.agent_id = agent_id;
+            run.command_id = command_id;
+            run.scheduled_unix_ms =
+                cresp.timestamp_unix_ms() > 0 ? cresp.timestamp_unix_ms()
+                                              : NowMs();
+            run.started_unix_ms = run.scheduled_unix_ms;
+            std::string perr;
+            const int64_t rid = m_storage->InsertCommandRun(run, &perr);
+            if (rid > 0) {
+                run.run_id = rid;
+                run.finished_unix_ms = NowMs();
+                run.success = cresp.success();
+                run.error = cresp.error();
+                run.summary = cresp.summary();
+                nlohmann::json fields = nlohmann::json::object();
+                for (const auto &kv : cresp.fields()) {
+                    fields[kv.first] = kv.second;
+                }
+                nlohmann::json issues = nlohmann::json::array();
+                for (int i = 0; i < cresp.issues_size(); ++i) {
+                    issues.push_back(cresp.issues(i));
+                }
+                run.fields_json = fields.dump();
+                run.issues_json = issues.dump();
+                run.detail = cresp.detail();
+                m_storage->FinishCommandRun(run, nullptr);
+            }
+        }
+
         std::string json = "{\"success\":" +
                            std::string(cresp.success() ? "true" : "false") +
                            ",\"command_id\":\"" +
@@ -523,6 +627,234 @@ HttpServer::HttpServer(
         resp.set_content(json, "application/json");
     };
     m_server.Post("/api/agents/command", run_command_handler);
+
+    auto storage_ready = [this](httplib::Response &resp) {
+        if (!m_storage || !m_storage->IsHealthy()) {
+            resp.status = 503;
+            resp.set_content(
+                "{\"error\":\"scheduled commands require TimescaleDB storage\"}",
+                "application/json");
+            return false;
+        }
+        return true;
+    };
+
+    // Lists every persisted command schedule.
+    auto list_schedules_handler = [this, storage_ready](const httplib::Request &,
+                                                        httplib::Response &resp) {
+        if (!storage_ready(resp)) return;
+        const int64_t now = NowMs();
+        nlohmann::json doc;
+        doc["schedules"] = nlohmann::json::array();
+        for (const auto &s : m_storage->ListCommandSchedules()) {
+            doc["schedules"].push_back(ScheduleToJson(s, now));
+        }
+        resp.set_content(doc.dump(), "application/json");
+    };
+    m_server.Get("/command-schedules", list_schedules_handler);
+    m_server.Get("/api/command-schedules", list_schedules_handler);
+
+    // Creates a schedule. Body:
+    // {agent_id, command_id, params?, label?, window_start_unix_ms?,
+    //  window_end_unix_ms, interval_sec}
+    auto create_schedule_handler = [this, storage_ready](
+                                       const httplib::Request &req,
+                                       httplib::Response &resp) {
+        if (!storage_ready(resp)) return;
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}",
+                             "application/json");
+            return;
+        }
+        if (!body.is_object()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"a JSON object is required\"}",
+                             "application/json");
+            return;
+        }
+        const std::string agent_id = body.value("agent_id", "");
+        const std::string command_id = body.value("command_id", "");
+        if (agent_id.empty() || command_id.empty()) {
+            resp.status = 400;
+            resp.set_content(
+                "{\"error\":\"agent_id and command_id are required\"}",
+                "application/json");
+            return;
+        }
+        const int64_t now = NowMs();
+        int64_t window_start = now;
+        if (body.contains("window_start_unix_ms") &&
+            body["window_start_unix_ms"].is_number_integer()) {
+            window_start = body["window_start_unix_ms"].get<int64_t>();
+        }
+        if (!body.contains("window_end_unix_ms") ||
+            !body["window_end_unix_ms"].is_number_integer()) {
+            resp.status = 400;
+            resp.set_content(
+                "{\"error\":\"window_end_unix_ms is required\"}",
+                "application/json");
+            return;
+        }
+        const int64_t window_end =
+            body["window_end_unix_ms"].get<int64_t>();
+        if (!body.contains("interval_sec") ||
+            !body["interval_sec"].is_number_integer()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"interval_sec is required\"}",
+                             "application/json");
+            return;
+        }
+        const int64_t interval_sec = body["interval_sec"].get<int64_t>();
+        const int64_t kMinIntervalSec = 60;
+        if (interval_sec < kMinIntervalSec) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"interval_sec must be >= " +
+                                 std::to_string(kMinIntervalSec) + "\"}",
+                             "application/json");
+            return;
+        }
+        if (window_end <= window_start || window_end < now) {
+            resp.status = 400;
+            resp.set_content(
+                "{\"error\":\"window_end_unix_ms must be after the start and in "
+                "the future\"}",
+                "application/json");
+            return;
+        }
+
+        CommandSchedule s;
+        s.id = NewScheduleId();
+        s.label = body.value("label", "");
+        s.agent_id = agent_id;
+        s.command_id = command_id;
+        s.window_start_unix_ms = window_start;
+        s.window_end_unix_ms = window_end;
+        s.interval_sec = interval_sec;
+        // First run: at the window start when it is still ahead, otherwise now.
+        s.next_run_unix_ms = std::max(now, window_start);
+        s.enabled = true;
+        if (body.contains("params") && body["params"].is_object()) {
+            s.params_json = body["params"].dump();
+        }
+        std::string err;
+        if (!m_storage->CreateCommandSchedule(s, &err)) {
+            resp.status = 400;
+            nlohmann::json doc;
+            doc["success"] = false;
+            doc["error"] = err;
+            resp.set_content(doc.dump(), "application/json");
+            return;
+        }
+        nlohmann::json doc;
+        doc["success"] = true;
+        doc["error"] = "";
+        doc["schedule"] = ScheduleToJson(s, now);
+        resp.set_content(doc.dump(), "application/json");
+    };
+    m_server.Post("/command-schedules", create_schedule_handler);
+    m_server.Post("/api/command-schedules", create_schedule_handler);
+
+    // Deletes one schedule (keeps its run history). Body: {"id": "..."}
+    auto delete_schedule_handler = [this, storage_ready](
+                                       const httplib::Request &req,
+                                       httplib::Response &resp) {
+        if (!storage_ready(resp)) return;
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}",
+                             "application/json");
+            return;
+        }
+        const std::string id = body.value("id", "");
+        if (id.empty()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"'id' is required\"}",
+                             "application/json");
+            return;
+        }
+        std::string err;
+        const bool ok = m_storage->DeleteCommandSchedule(id, &err);
+        resp.status = ok ? 200 : 400;
+        nlohmann::json doc;
+        doc["success"] = ok;
+        doc["error"] = ok ? "" : err;
+        resp.set_content(doc.dump(), "application/json");
+    };
+    m_server.Post("/command-schedules/delete", delete_schedule_handler);
+    m_server.Post("/api/command-schedules/delete", delete_schedule_handler);
+
+    // Enables or pauses one schedule. Body: {"id": "...", "enabled": bool}
+    auto enable_schedule_handler = [this, storage_ready](
+                                       const httplib::Request &req,
+                                       httplib::Response &resp) {
+        if (!storage_ready(resp)) return;
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}",
+                             "application/json");
+            return;
+        }
+        const std::string id = body.value("id", "");
+        if (id.empty() || !body.contains("enabled")) {
+            resp.status = 400;
+            resp.set_content(
+                "{\"error\":\"'id' and 'enabled' are required\"}",
+                "application/json");
+            return;
+        }
+        std::string err;
+        const bool ok = m_storage->SetCommandScheduleEnabled(
+            id, body["enabled"].get<bool>(), &err);
+        resp.status = ok ? 200 : 400;
+        nlohmann::json doc;
+        doc["success"] = ok;
+        doc["error"] = ok ? "" : err;
+        const int64_t now = NowMs();
+        for (const auto &s : m_storage->ListCommandSchedules()) {
+            if (s.id == id) {
+                doc["schedule"] = ScheduleToJson(s, now);
+                break;
+            }
+        }
+        resp.set_content(doc.dump(), "application/json");
+    };
+    m_server.Post("/command-schedules/enable", enable_schedule_handler);
+    m_server.Post("/api/command-schedules/enable", enable_schedule_handler);
+
+    // Recent command executions (scheduled + ad-hoc), newest first.
+    auto runs_handler = [this, storage_ready](const httplib::Request &req,
+                                              httplib::Response &resp) {
+        if (!storage_ready(resp)) return;
+        std::string agent_id = req.get_param_value("agent_id");
+        std::string command_id = req.get_param_value("command_id");
+        int limit = 50;
+        if (req.has_param("limit")) {
+            try {
+                limit = std::stoi(req.get_param_value("limit"));
+            } catch (...) {
+                limit = 50;
+            }
+        }
+        nlohmann::json doc;
+        doc["runs"] = nlohmann::json::array();
+        for (const auto &r : m_storage->ListCommandRuns(agent_id, command_id,
+                                                        limit)) {
+            doc["runs"].push_back(RunToJson(r));
+        }
+        resp.set_content(doc.dump(), "application/json");
+    };
+    m_server.Get("/command-runs", runs_handler);
+    m_server.Get("/api/command-runs", runs_handler);
 
     // Agent binary manifest and download.
     auto agent_versions_handler = [this](const httplib::Request &,

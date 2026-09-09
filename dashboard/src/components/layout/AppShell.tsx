@@ -6,6 +6,7 @@ import { useHealth } from '../../hooks/useHealth'
 import { ErrorBoundary } from '../ui/ErrorBoundary'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
+import { SchedulesPage } from '../pages/SchedulesPage'
 import { OverviewPage } from '../pages/OverviewPage'
 import { MetricsPage } from '../pages/MetricsPage'
 import { AgentsPage } from '../pages/AgentsPage'
@@ -50,6 +51,7 @@ export function AppShell() {
               {view === 'overview' && <OverviewPage />}
               {view === 'metrics' && <MetricsPage />}
               {view === 'agents' && <AgentsPage />}
+              {view === 'schedules' && <SchedulesPage />}
               {view === 'alerts' && <AlertsPage />}
               {view === 'history' && <HistoryPage />}
               {view === 'config' && <ConfigPage />}

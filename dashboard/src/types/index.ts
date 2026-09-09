@@ -61,6 +61,68 @@ export interface CommandResult {
   detail?: string
 }
 
+// Persisted "heavy" command schedule (collector /api/command-schedules).
+export interface CommandSchedule {
+  id: string
+  label?: string
+  agent_id: string
+  command_id: string
+  params: Record<string, string>
+  window_start_unix_ms: number
+  window_end_unix_ms: number
+  interval_sec: number
+  next_run_unix_ms: number
+  enabled: boolean
+  /** Derived by the server: inside its window and enabled. */
+  active: boolean
+  expired: boolean
+  next_in_ms: number
+}
+
+export interface CommandSchedulesResponse {
+  success?: boolean
+  error?: string
+  schedules: CommandSchedule[]
+}
+
+export interface ScheduleInput {
+  label?: string
+  agent_id: string
+  command_id: string
+  params?: Record<string, string>
+  window_start_unix_ms: number
+  window_end_unix_ms: number
+  interval_sec: number
+}
+
+export interface ScheduleMutationResponse {
+  success: boolean
+  error?: string
+  schedule?: CommandSchedule
+}
+
+// One execution (scheduled or ad-hoc) of a command on an agent.
+export interface CommandRun {
+  run_id: number
+  schedule_id: string
+  agent_id: string
+  command_id: string
+  scheduled_unix_ms: number
+  started_unix_ms: number
+  finished_unix_ms: number
+  running: boolean
+  success: boolean
+  error: string
+  summary: string
+  fields: Record<string, string>
+  issues: string[]
+  detail: string
+}
+
+export interface CommandRunsResponse {
+  runs: CommandRun[]
+}
+
 export interface AgentConfigResponse {
   success: boolean
   applied: string

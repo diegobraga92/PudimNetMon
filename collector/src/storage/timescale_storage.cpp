@@ -60,6 +60,61 @@ const char *PgBoolToJson(const char *v) {
     return (v && v[0] == 't') ? "true" : "false";
 }
 
+bool PgBool(const char *v) {
+    return v && v[0] == 't';
+}
+
+// Reads one command_schedules row into a CommandSchedule struct.
+CommandSchedule ReadScheduleRow(PGresult *res, int row) {
+    CommandSchedule s;
+    s.id = PQgetvalue(res, row, 0);
+    s.label = PQgetvalue(res, row, 1);
+    s.agent_id = PQgetvalue(res, row, 2);
+    s.command_id = PQgetvalue(res, row, 3);
+    std::string params = PQgetvalue(res, row, 4);
+    s.params_json = params.empty() ? "{}" : params;
+    s.window_start_unix_ms = std::stoll(PQgetvalue(res, row, 5));
+    s.window_end_unix_ms = std::stoll(PQgetvalue(res, row, 6));
+    s.interval_sec = std::stoll(PQgetvalue(res, row, 7));
+    s.next_run_unix_ms = std::stoll(PQgetvalue(res, row, 8));
+    s.enabled = PgBool(PQgetvalue(res, row, 9));
+    return s;
+}
+
+// Reads one command_runs row into a CommandRun struct.
+CommandRun ReadRunRow(PGresult *res, int row) {
+    CommandRun r;
+    r.run_id = std::stoll(PQgetvalue(res, row, 0));
+    r.schedule_id = PQgetvalue(res, row, 1);
+    r.agent_id = PQgetvalue(res, row, 2);
+    r.command_id = PQgetvalue(res, row, 3);
+    r.scheduled_unix_ms = std::stoll(PQgetvalue(res, row, 4));
+    r.started_unix_ms = std::stoll(PQgetvalue(res, row, 5));
+    if (!PQgetisnull(res, row, 6)) r.finished_unix_ms = std::stoll(PQgetvalue(res, row, 6));
+    if (!PQgetisnull(res, row, 7)) {
+        r.success = PgBool(PQgetvalue(res, row, 7));
+        r.has_result = true;
+    }
+    r.error = PQgetvalue(res, row, 8);
+    r.summary = PQgetvalue(res, row, 9);
+    std::string fields = PQgetvalue(res, row, 10);
+    r.fields_json = fields.empty() ? "{}" : fields;
+    std::string issues = PQgetvalue(res, row, 11);
+    r.issues_json = issues.empty() ? "[]" : issues;
+    r.detail = PQgetvalue(res, row, 12);
+    return r;
+}
+
+// Wraps a raw JSON literal for a JSONB column.
+std::string JsonbLiteral(PGconn *conn, const std::string &json) {
+    const std::string &body = json.empty() ? "{}" : json;
+    char *escaped = PQescapeLiteral(conn, body.c_str(), body.length());
+    if (!escaped) return "'{}'::jsonb";
+    std::string out(escaped);
+    PQfreemem(escaped);
+    return out + "::jsonb";
+}
+
 // Map a protobuf CheckType enum to a string for the SQL check_type column.
 const char *CheckTypeToString(pudimnetmon::CheckType type) {
     switch (type) {
@@ -211,6 +266,54 @@ END $$;
     if (!m_impl->ExecSimple(
             "SELECT add_retention_policy('network_metrics', INTERVAL '30 days');")) {
         // Non-fatal if policy already exists
+    }
+
+    // Command schedules
+    const std::string schedule_schema = R"SQL(
+CREATE TABLE IF NOT EXISTS command_schedules (
+    id                    TEXT PRIMARY KEY,
+    label                 TEXT NOT NULL DEFAULT '',
+    agent_id              TEXT NOT NULL,
+    command_id            TEXT NOT NULL,
+    params                JSONB NOT NULL DEFAULT '{}'::jsonb,
+    window_start_unix_ms  BIGINT NOT NULL,
+    window_end_unix_ms    BIGINT NOT NULL,
+    interval_sec          BIGINT NOT NULL,
+    next_run_unix_ms      BIGINT NOT NULL,
+    enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_command_schedules_due
+    ON command_schedules (enabled, window_end_unix_ms, next_run_unix_ms);
+)SQL";
+    if (!m_impl->ExecSimple(schedule_schema)) {
+        return false;
+    }
+
+    // Command run history
+    const std::string runs_schema = R"SQL(
+CREATE TABLE IF NOT EXISTS command_runs (
+    run_id             BIGSERIAL PRIMARY KEY,
+    schedule_id        TEXT NOT NULL DEFAULT '',
+    agent_id           TEXT NOT NULL,
+    command_id         TEXT NOT NULL,
+    scheduled_unix_ms  BIGINT NOT NULL,
+    started_unix_ms    BIGINT NOT NULL,
+    finished_unix_ms   BIGINT,
+    success            BOOLEAN,
+    error              TEXT NOT NULL DEFAULT '',
+    summary            TEXT NOT NULL DEFAULT '',
+    fields             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    issues             JSONB NOT NULL DEFAULT '[]'::jsonb,
+    detail             TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_command_runs_agent_time
+    ON command_runs (agent_id, started_unix_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_command_runs_schedule_time
+    ON command_runs (schedule_id, started_unix_ms DESC);
+)SQL";
+    if (!m_impl->ExecSimple(runs_schema)) {
+        return false;
     }
 
     return true;
@@ -394,6 +497,296 @@ std::string TimescaleStorage::QueryMetricsJson(
     json += "]";
     PQclear(res);
     return json;
+}
+
+std::vector<CommandSchedule> TimescaleStorage::ListCommandSchedules() const {
+    std::vector<CommandSchedule> out;
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) return out;
+
+    PGresult *res = PQexec(
+        m_impl->conn,
+        "SELECT id, label, agent_id, command_id, params, "
+        "window_start_unix_ms, window_end_unix_ms, interval_sec, "
+        "next_run_unix_ms, enabled FROM command_schedules "
+        "ORDER BY created_at DESC LIMIT 200;");
+    if (PQresultStatus(res) == PGRES_TUPLES_OK) {
+        for (int i = 0; i < PQntuples(res); ++i) {
+            out.push_back(ReadScheduleRow(res, i));
+        }
+    } else {
+        std::cerr << "ListCommandSchedules error: "
+                  << PQerrorMessage(m_impl->conn);
+    }
+    PQclear(res);
+    return out;
+}
+
+std::vector<CommandSchedule> TimescaleStorage::ListDueCommandSchedules(
+    int64_t now_ms) const {
+    std::vector<CommandSchedule> out;
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) return out;
+
+    const int64_t kToleranceMs = 2000;
+    std::string sql =
+        "SELECT id, label, agent_id, command_id, params, "
+        "window_start_unix_ms, window_end_unix_ms, interval_sec, "
+        "next_run_unix_ms, enabled FROM command_schedules "
+        "WHERE enabled AND window_start_unix_ms <= " +
+        std::to_string(now_ms) + " AND window_end_unix_ms >= " +
+        std::to_string(now_ms) + " AND next_run_unix_ms BETWEEN " +
+        std::to_string(now_ms - kToleranceMs) + " AND " +
+        std::to_string(now_ms + kToleranceMs) +
+        " ORDER BY next_run_unix_ms ASC LIMIT 20;";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    if (PQresultStatus(res) == PGRES_TUPLES_OK) {
+        for (int i = 0; i < PQntuples(res); ++i) {
+            out.push_back(ReadScheduleRow(res, i));
+        }
+    } else {
+        std::cerr << "ListDueCommandSchedules error: "
+                  << PQerrorMessage(m_impl->conn);
+    }
+    PQclear(res);
+    return out;
+}
+
+void TimescaleStorage::RescheduleStaleSchedules(int64_t now_ms) const {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) return;
+
+    const int64_t kToleranceMs = 2000;
+    // Re-bases overdue schedules to the next interval slot after now without
+    // running a catch-up burst (e.g. after the collector was down).
+    std::string sql =
+        "UPDATE command_schedules "
+        "SET next_run_unix_ms = window_start_unix_ms + "
+        "  interval_sec * 1000 * ((( " +
+        std::to_string(now_ms) +
+        " - window_start_unix_ms) / (interval_sec * 1000)) + 1) "
+        "WHERE enabled AND window_start_unix_ms <= " +
+        std::to_string(now_ms - kToleranceMs) +
+        " AND window_end_unix_ms >= " + std::to_string(now_ms) +
+        " AND next_run_unix_ms < " +
+        std::to_string(now_ms - kToleranceMs) + ";";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    PQclear(res);
+}
+
+bool TimescaleStorage::CreateCommandSchedule(const CommandSchedule &schedule,
+                                             std::string *err) {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) {
+        if (err) *err = "storage not available";
+        return false;
+    }
+
+    std::string sql =
+        "INSERT INTO command_schedules (id, label, agent_id, command_id, "
+        "params, window_start_unix_ms, window_end_unix_ms, interval_sec, "
+        "next_run_unix_ms, enabled) VALUES (" +
+        EscapeLiteral(m_impl->conn, schedule.id) + ", " +
+        EscapeLiteral(m_impl->conn, schedule.label) + ", " +
+        EscapeLiteral(m_impl->conn, schedule.agent_id) + ", " +
+        EscapeLiteral(m_impl->conn, schedule.command_id) + ", " +
+        JsonbLiteral(m_impl->conn, schedule.params_json) + ", " +
+        std::to_string(schedule.window_start_unix_ms) + ", " +
+        std::to_string(schedule.window_end_unix_ms) + ", " +
+        std::to_string(schedule.interval_sec) + ", " +
+        std::to_string(schedule.next_run_unix_ms) + ", " +
+        (schedule.enabled ? "TRUE" : "FALSE") + ");";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    bool ok = PQresultStatus(res) == PGRES_COMMAND_OK;
+    if (!ok && err) {
+        *err = std::string(PQerrorMessage(m_impl->conn));
+    }
+    PQclear(res);
+    return ok;
+}
+
+bool TimescaleStorage::SetCommandScheduleEnabled(const std::string &id,
+                                                 bool enabled,
+                                                 std::string *err) {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) {
+        if (err) *err = "storage not available";
+        return false;
+    }
+
+    std::string sql =
+        "UPDATE command_schedules SET enabled = " +
+        std::string(enabled ? "TRUE" : "FALSE") + " WHERE id = " +
+        EscapeLiteral(m_impl->conn, id) + ";";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    bool ok = PQresultStatus(res) == PGRES_COMMAND_OK;
+    if (ok && std::string(PQcmdTuples(res)) == "0") {
+        if (err) *err = "schedule not found";
+        ok = false;
+    }
+    if (!ok && err) {
+        *err = std::string(PQerrorMessage(m_impl->conn));
+    }
+    PQclear(res);
+    return ok;
+}
+
+bool TimescaleStorage::DeleteCommandSchedule(const std::string &id,
+                                             std::string *err) {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) {
+        if (err) *err = "storage not available";
+        return false;
+    }
+
+    std::string sql =
+        "DELETE FROM command_schedules WHERE id = " +
+        EscapeLiteral(m_impl->conn, id) + ";";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    bool ok = PQresultStatus(res) == PGRES_COMMAND_OK;
+    if (ok && std::string(PQcmdTuples(res)) == "0") {
+        if (err) *err = "schedule not found";
+        ok = false;
+    }
+    if (!ok && err) {
+        *err = std::string(PQerrorMessage(m_impl->conn));
+    }
+    PQclear(res);
+    return ok;
+}
+
+bool TimescaleStorage::AdvanceCommandScheduleNextRun(
+    const std::string &id, int64_t expected_ms, int64_t new_next_ms) {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) return false;
+
+    std::string sql =
+        "UPDATE command_schedules SET next_run_unix_ms = " +
+        std::to_string(new_next_ms) + " WHERE id = " +
+        EscapeLiteral(m_impl->conn, id) + " AND next_run_unix_ms = " +
+        std::to_string(expected_ms) + " AND enabled;";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    bool ok = PQresultStatus(res) == PGRES_COMMAND_OK &&
+              std::string(PQcmdTuples(res)) == "1";
+    PQclear(res);
+    return ok;
+}
+
+int64_t TimescaleStorage::InsertCommandRun(const CommandRun &run,
+                                           std::string *err) {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) {
+        if (err) *err = "storage not available";
+        return -1;
+    }
+
+    std::string sql =
+        "INSERT INTO command_runs (schedule_id, agent_id, command_id, "
+        "scheduled_unix_ms, started_unix_ms) VALUES (" +
+        EscapeLiteral(m_impl->conn, run.schedule_id) + ", " +
+        EscapeLiteral(m_impl->conn, run.agent_id) + ", " +
+        EscapeLiteral(m_impl->conn, run.command_id) + ", " +
+        std::to_string(run.scheduled_unix_ms) + ", " +
+        std::to_string(run.started_unix_ms) + ") RETURNING run_id;";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    int64_t run_id = -1;
+    if (PQresultStatus(res) == PGRES_TUPLES_OK && PQntuples(res) == 1) {
+        run_id = std::stoll(PQgetvalue(res, 0, 0));
+    } else if (err) {
+        *err = std::string(PQerrorMessage(m_impl->conn));
+    }
+    PQclear(res);
+    return run_id;
+}
+
+bool TimescaleStorage::FinishCommandRun(const CommandRun &run,
+                                        std::string *err) {
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) {
+        if (err) *err = "storage not available";
+        return false;
+    }
+
+    std::string sql =
+        "UPDATE command_runs SET finished_unix_ms = " +
+        std::to_string(run.finished_unix_ms) + ", success = " +
+        (run.success ? "TRUE" : "FALSE") + ", error = " +
+        EscapeLiteral(m_impl->conn, run.error) + ", summary = " +
+        EscapeLiteral(m_impl->conn, run.summary) + ", fields = " +
+        JsonbLiteral(m_impl->conn, run.fields_json) + ", issues = " +
+        JsonbLiteral(m_impl->conn, run.issues_json.empty() ? "[]"
+                                                           : run.issues_json) +
+        ", detail = " + EscapeLiteral(m_impl->conn, run.detail) +
+        " WHERE run_id = " + std::to_string(run.run_id) + ";";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    bool ok = PQresultStatus(res) == PGRES_COMMAND_OK;
+    if (!ok && err) {
+        *err = std::string(PQerrorMessage(m_impl->conn));
+    }
+    PQclear(res);
+    return ok;
+}
+
+std::vector<CommandRun> TimescaleStorage::ListCommandRuns(
+    const std::string &agent_id, const std::string &command_id,
+    int limit) const {
+    std::vector<CommandRun> out;
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) return out;
+
+    std::string sql =
+        "SELECT run_id, schedule_id, agent_id, command_id, "
+        "scheduled_unix_ms, started_unix_ms, finished_unix_ms, success, "
+        "error, summary, fields, issues, detail FROM command_runs WHERE 1=1";
+    if (!agent_id.empty()) {
+        sql += " AND agent_id = " + EscapeLiteral(m_impl->conn, agent_id);
+    }
+    if (!command_id.empty()) {
+        sql += " AND command_id = " + EscapeLiteral(m_impl->conn, command_id);
+    }
+    if (limit <= 0 || limit > 200) limit = 200;
+    sql += " ORDER BY started_unix_ms DESC LIMIT " + std::to_string(limit) +
+           ";";
+
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    if (PQresultStatus(res) == PGRES_TUPLES_OK) {
+        for (int i = 0; i < PQntuples(res); ++i) {
+            out.push_back(ReadRunRow(res, i));
+        }
+    } else {
+        std::cerr << "ListCommandRuns error: " << PQerrorMessage(m_impl->conn);
+    }
+    PQclear(res);
+    return out;
+}
+
+bool TimescaleStorage::PruneCommandRuns(int64_t older_than_unix_ms,
+                                        int64_t *removed) const {
+    if (removed) *removed = 0;
+    std::lock_guard lock(m_impl->write_mutex);
+    EnsureConnected();
+    if (!m_impl->conn || PQstatus(m_impl->conn) != CONNECTION_OK) return false;
+
+    std::string sql =
+        "DELETE FROM command_runs WHERE started_unix_ms < " +
+        std::to_string(older_than_unix_ms) + ";";
+    PGresult *res = PQexec(m_impl->conn, sql.c_str());
+    bool ok = PQresultStatus(res) == PGRES_COMMAND_OK;
+    if (ok && removed) {
+        *removed = std::stoll(PQcmdTuples(res));
+    }
+    PQclear(res);
+    return ok;
 }
 
 bool TimescaleStorage::IsHealthy() const {

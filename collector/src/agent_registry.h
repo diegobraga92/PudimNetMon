@@ -36,6 +36,10 @@ public:
     // The agent's advertised diagnostic endpoint, or "" when unknown.
     std::string GetDiagnosticEndpoint(const std::string &agent_id) const;
 
+    // True when the agent has heartbeated within timeout_ms.
+    bool IsAgentAlive(const std::string &agent_id,
+                      int64_t timeout_ms = 30000) const;
+
     size_t TotalAgentCount() const;
 
     uint64_t HeartbeatCount() const;

@@ -24,18 +24,34 @@ int main() {
     pudimnetmon::ListCommandsResponse list;
     pudimagent::ListCommands(&list);
     Check(list.success(), "list success");
-    Check(list.commands_size() >= 2, "catalog has >= 2 commands");
+    Check(list.commands_size() >= 5, "catalog has >= 5 commands");
     bool has_hdd = false;
     bool has_info = false;
+    bool has_speedtest = false;
+    bool has_ping_burst = false;
+    bool has_route_quality = false;
+    bool speedtest_param = false;
     for (const auto &c : list.commands()) {
         Check(!c.command_id().empty(), "command id non-empty");
         Check(!c.description().empty(),
               "description non-empty for " + c.command_id());
         if (c.command_id() == "hdd_check") has_hdd = true;
         if (c.command_id() == "agent_info") has_info = true;
+        if (c.command_id() == "speedtest") {
+            has_speedtest = true;
+            for (const auto &p : c.param_names()) {
+                if (p == "server_id") speedtest_param = true;
+            }
+        }
+        if (c.command_id() == "ping_burst") has_ping_burst = true;
+        if (c.command_id() == "route_quality") has_route_quality = true;
     }
     Check(has_hdd, "catalog has hdd_check");
     Check(has_info, "catalog has agent_info");
+    Check(has_speedtest, "catalog has speedtest");
+    Check(speedtest_param, "speedtest advertises the server_id param");
+    Check(has_ping_burst, "catalog has ping_burst");
+    Check(has_route_quality, "catalog has route_quality");
 
     // 2. Unknown commands are rejected, never executed.
     pudimnetmon::CommandResponse resp;

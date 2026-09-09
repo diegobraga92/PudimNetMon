@@ -7,7 +7,15 @@ import {
   TIME_WINDOWS,
 } from '../lib/constants'
 
-export type View = 'overview' | 'metrics' | 'agents' | 'alerts' | 'history' | 'config' | 'deploy'
+export type View =
+  | 'overview'
+  | 'metrics'
+  | 'agents'
+  | 'schedules'
+  | 'alerts'
+  | 'history'
+  | 'config'
+  | 'deploy'
 
 interface DashboardContextValue {
   view: View
