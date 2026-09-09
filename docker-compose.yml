@@ -61,7 +61,10 @@ services:
       PUDIM_GITHUB_REPO: ${PUDIM_GITHUB_REPO:-PudimNetMon}
       PUDIM_RELEASE_SYNC_SECONDS: ${PUDIM_RELEASE_SYNC_SECONDS:-3600}
     command:
-      - "--kafka-brokers=kafka:9092"  # Kafka mode. Consumers own storage and alerting.
+      - "--kafka-brokers=kafka:9092"
+      - "--alert-rules-path=/etc/pudim/alert_rules.json"
+    volumes:
+      - alert-rules:/etc/pudim
     depends_on:
       kafka:
         condition: service_healthy
@@ -87,22 +90,6 @@ services:
       kafka:
         condition: service_healthy
       timescaledb:
-        condition: service_healthy
-    restart: unless-stopped
-
-  consumer-alert:
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile.consumers
-    ports:
-      # Exposed on 9093 because 9092 collides with the Kafka host port.
-      - "${PUDIM_CONSUMER_ALERT_PROMETHEUS_PORT:-9093}:9092"  # Prometheus
-    command:
-      - "/usr/local/bin/pudim-consumer-alert"
-      - "--kafka-brokers=kafka:9092"
-      - "--alert-rules-path=/etc/pudim/alert_rules.json"
-    depends_on:
-      kafka:
         condition: service_healthy
     restart: unless-stopped
 
@@ -174,9 +161,9 @@ services:
     depends_on:
       - collector
       - consumer-storage
-      - consumer-alert
     restart: unless-stopped
 
 volumes:
   timescaledb-data:
   kafka-data:
+  alert-rules:

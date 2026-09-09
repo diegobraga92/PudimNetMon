@@ -1,4 +1,4 @@
-# Builds the Kafka consumers (pudim-consumer-storage, pudim-consumer-alert)
+# Builds the Kafka storage consumer (pudim-consumer-storage)
 # Check https://hub.docker.com/_/ubuntu/tags
 FROM ubuntu:24.04 AS builder
 
@@ -17,11 +17,8 @@ COPY agent/ ./agent/
 COPY api/ ./api/
 
 RUN cmake -S collector -B build && \
-    cmake --build build -j$(nproc) --target pudim-consumer-storage pudim-consumer-alert && \
-    cp build/pudim-consumer-storage /usr/local/bin/ && \
-    cp build/pudim-consumer-alert /usr/local/bin/ && \
-    mkdir -p /etc/pudim && \
-    cp collector/config/alert_rules.json /etc/pudim/alert_rules.json
+    cmake --build build -j$(nproc) --target pudim-consumer-storage && \
+    cp build/pudim-consumer-storage /usr/local/bin/
 
 FROM ubuntu:24.04
 
@@ -31,8 +28,6 @@ RUN apt-get update && apt-get install -y -qq \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/pudim-consumer-storage /usr/local/bin/
-COPY --from=builder /usr/local/bin/pudim-consumer-alert /usr/local/bin/
-COPY --from=builder /etc/pudim/alert_rules.json /etc/pudim/alert_rules.json
 
 # The compose file passes the full command (binary + flags) explicitly.
 ENTRYPOINT []

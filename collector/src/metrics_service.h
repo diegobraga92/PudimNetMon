@@ -15,12 +15,11 @@ namespace pudimcollector {
 
 // Where validated metrics go next.
 enum class StorageMode {
-    Direct,  // write to TimescaleDB and run alerting in-process
-    Kafka,   // produce to Kafka and leave storage and alerting to consumers
+    Direct,  // write to TimescaleDB in-process
+    Kafka,   // produce to Kafka. The storage consumer persists downstream
 };
 
-// gRPC service for MetricsService. Direct mode writes to TimescaleStorage and
-// evaluates alerts in-process. Kafka mode produces every batch to Kafka.
+// gRPC service for MetricsService.
 class MetricsServiceImpl final : public pudimnetmon::MetricsService::Service {
 public:
     explicit MetricsServiceImpl(

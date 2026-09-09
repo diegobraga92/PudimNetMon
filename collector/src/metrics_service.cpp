@@ -36,7 +36,7 @@ bool MetricsServiceImpl::IngestBatch(const MetricsBatch &batch,
 
     bool ok = false;
     if (m_mode == StorageMode::Kafka) {
-        // Produce to Kafka and leave storage and alerting to consumers.
+        // Produce to Kafka
         ok = m_producer ? m_producer->Produce(batch, traceparent) : false;
     } else {
         // Direct mode writes to TimescaleDB and then evaluates alerts.
@@ -45,9 +45,11 @@ bool MetricsServiceImpl::IngestBatch(const MetricsBatch &batch,
                           std::chrono::system_clock::now().time_since_epoch())
                           .count();
         ok = m_storage->InsertMetrics(batch.agent_id(), now_ms, batch.metrics());
-        if (ok && m_alerts) {
-            m_alerts->Evaluate(batch.agent_id(), batch.metrics());
-        }
+    }
+
+    // Alert evaluation is independent of persistence
+    if (m_alerts) {
+        m_alerts->Evaluate(batch.agent_id(), batch.metrics());
     }
 
     elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(

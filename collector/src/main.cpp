@@ -223,10 +223,9 @@ int main(int argc, char **argv) {
         logger::emit("info", "Kafka mode enabled (topic=" + kafka_topic + ")");
     }
 
-    // Alert manager used in Direct mode.
+    // Alert manager.
     auto alert_manager = std::make_shared<pudimcollector::alerting::AlertManager>();
-    if (storage_mode == pudimcollector::StorageMode::Direct &&
-        !alert_rules_path.empty()) {
+    if (!alert_rules_path.empty()) {
         std::string err;
         if (alert_manager->LoadRulesFromFile(alert_rules_path, err)) {
             logger::emit("info",
@@ -235,7 +234,7 @@ int main(int argc, char **argv) {
         } else {
             logger::emit("warn", "Failed to load alert rules: " + err);
         }
-    } else if (storage_mode == pudimcollector::StorageMode::Direct) {
+    } else {
         logger::emit("info",
                      "No alert rules configured (--alert-rules-path unset); alerting disabled");
     }

@@ -223,4 +223,35 @@ describe('PudimNetMon dashboard', () => {
     const checkGroup = await screen.findByRole('group', { name: 'Filter by check' })
     expect(within(checkGroup).getByRole('button', { name: 'NTP Offset' })).toHaveAttribute('aria-pressed', 'true')
   })
+
+  it('creates and deletes an alert rule from the Alerts page', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    renderWithProviders(<App />)
+
+    const nav = screen.getByRole('navigation', { name: 'Main navigation' })
+    await user.click(within(nav).getByRole('button', { name: /^Alerts/ }))
+
+    // Rules from the API are listed below the active alerts.
+    expect(await screen.findByText('High TCP Connect Latency')).toBeInTheDocument()
+
+    // Create a new rule through the editor dialog.
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Add alert rule' })
+    await user.type(within(dialog).getByLabelText('Rule id'), 'high-http-latency')
+    await user.type(within(dialog).getByLabelText('Display name'), 'High HTTP Latency')
+    await user.type(within(dialog).getByLabelText('Threshold'), '1000')
+    await user.click(within(dialog).getByRole('button', { name: 'Create rule' }))
+
+    expect(await screen.findByText('High HTTP Latency')).toBeInTheDocument()
+    expect(await screen.findByText('Rule created')).toBeInTheDocument()
+
+    // Deletion uses a two-step confirm.
+    await user.click(screen.getByRole('button', { name: 'Delete High HTTP Latency' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+    await waitFor(() => {
+      expect(screen.queryByText('High HTTP Latency')).not.toBeInTheDocument()
+    })
+    expect(await screen.findByText('Rule deleted')).toBeInTheDocument()
+  })
 })

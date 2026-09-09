@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <sstream>
@@ -105,6 +106,27 @@ std::string AlertManager::StateKey(const std::string &rule_id,
     return rule_id + kKeySep + agent_id + kKeySep + target;
 }
 
+namespace {
+
+// Serializes one rule to its canonical JSON representation
+nlohmann::json RuleToJson(const AlertRule &r) {
+    nlohmann::json j;
+    j["id"] = r.id;
+    j["name"] = r.name;
+    j["agent_id"] = r.agent_id;
+    j["check_type"] = r.check_type;
+    j["target"] = r.target;
+    j["metric"] = r.metric_field;
+    j["op"] = r.greater_than ? ">" : "<";
+    j["threshold"] = r.threshold;
+    j["repeat_interval_sec"] = r.repeat_interval_sec;
+    j["severity"] = r.severity;
+    j["on_failure"] = r.on_failure;
+    return j;
+}
+
+} // anonymous namespace
+
 bool AlertManager::LoadRulesFromFile(const std::string &path, std::string &error) {
     std::ifstream in(path);
     if (!in) {
@@ -113,7 +135,45 @@ bool AlertManager::LoadRulesFromFile(const std::string &path, std::string &error
     }
     std::stringstream ss;
     ss << in.rdbuf();
-    return LoadRulesFromJson(ss.str(), error);
+    if (!LoadRulesFromJson(ss.str(), error)) return false;
+    // Remember the path so UI edits can be persisted back to the same file.
+    m_rules_path = path;
+    return true;
+}
+
+bool AlertManager::ParseRule(const nlohmann::json &r, AlertRule &rule,
+                             std::string &error) {
+    rule = AlertRule{};
+    rule.id = r.value("id", "");
+    if (rule.id.empty()) {
+        error = "rule missing required 'id'";
+        return false;
+    }
+    rule.name = r.value("name", rule.id);
+    rule.agent_id = r.value("agent_id", "");
+    rule.check_type = r.value("check_type", "");
+    rule.target = r.value("target", "");
+    rule.metric_field = r.value("metric", "");
+    rule.severity = r.value("severity", "warning");
+    rule.threshold = r.value("threshold", 0.0);
+    rule.repeat_interval_sec = r.value("repeat_interval_sec", 300);
+    rule.on_failure = r.value("on_failure", false);
+
+    std::string op = r.value("op", ">");
+    if (op == ">") {
+        rule.greater_than = true;
+    } else if (op == "<") {
+        rule.greater_than = false;
+    } else {
+        error = "rule '" + rule.id + "' has invalid op '" + op +
+                "' (expected '>' or '<')";
+        return false;
+    }
+    if (!rule.on_failure && rule.metric_field.empty()) {
+        error = "rule '" + rule.id + "' missing required 'metric' field";
+        return false;
+    }
+    return true;
 }
 
 bool AlertManager::LoadRulesFromJson(const std::string &json, std::string &error) {
@@ -133,35 +193,7 @@ bool AlertManager::LoadRulesFromJson(const std::string &json, std::string &error
         }
         for (const auto &r : doc["rules"]) {
             AlertRule rule;
-            rule.id = r.value("id", "");
-            if (rule.id.empty()) {
-                error = "rule missing required 'id'";
-                return false;
-            }
-            rule.name = r.value("name", rule.id);
-            rule.agent_id = r.value("agent_id", "");
-            rule.check_type = r.value("check_type", "");
-            rule.target = r.value("target", "");
-            rule.metric_field = r.value("metric", "");
-            rule.severity = r.value("severity", "warning");
-            rule.threshold = r.value("threshold", 0.0);
-            rule.repeat_interval_sec = r.value("repeat_interval_sec", 300);
-            rule.on_failure = r.value("on_failure", false);
-
-            std::string op = r.value("op", ">");
-            if (op == ">") {
-                rule.greater_than = true;
-            } else if (op == "<") {
-                rule.greater_than = false;
-            } else {
-                error = "rule '" + rule.id +
-                        "' has invalid op '" + op + "' (expected '>' or '<')";
-                return false;
-            }
-            if (!rule.on_failure && rule.metric_field.empty()) {
-                error = "rule '" + rule.id + "' missing required 'metric' field";
-                return false;
-            }
+            if (!ParseRule(r, rule, error)) return false;
             new_rules.push_back(std::move(rule));
         }
     }
@@ -172,6 +204,7 @@ bool AlertManager::LoadRulesFromJson(const std::string &json, std::string &error
         std::lock_guard lock(m_mutex);
         m_rules = std::move(new_rules);
         m_states.clear();  // reset per-rule state for the new rule set
+        m_webhook_url = webhook_url;
         m_notifiers.clear();
         m_notifiers.push_back(std::make_unique<LogNotifier>());
         if (!webhook_url.empty() && webhook_url != "log") {
@@ -179,6 +212,116 @@ bool AlertManager::LoadRulesFromJson(const std::string &json, std::string &error
         }
     }
     return true;
+}
+
+bool AlertManager::WriteRulesFileLocked(const std::vector<AlertRule> &rules,
+                                        const std::string &path,
+                                        std::string &error) const {
+    nlohmann::json doc;
+    doc["webhook_url"] = m_webhook_url;
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto &r : rules) arr.push_back(RuleToJson(r));
+    doc["rules"] = arr;
+
+    std::ofstream out(path, std::ios::trunc);
+    if (!out) {
+        error = "cannot write alert rules file: " + path;
+        return false;
+    }
+    out << doc.dump(2) << "\n";
+    if (!out.good()) {
+        error = "error writing alert rules file: " + path;
+        return false;
+    }
+    return true;
+}
+
+bool AlertManager::UpsertRule(const std::string &rule_json, std::string &error) {
+    nlohmann::json doc;
+    try {
+        doc = nlohmann::json::parse(rule_json);
+    } catch (const nlohmann::json::parse_error &e) {
+        error = std::string("invalid rule JSON: ") + e.what();
+        return false;
+    }
+    if (!doc.is_object()) {
+        error = "rule must be a JSON object";
+        return false;
+    }
+
+    AlertRule rule;
+    if (!ParseRule(doc, rule, error)) return false;
+
+    std::lock_guard lock(m_mutex);
+    std::vector<AlertRule> candidate = m_rules;
+    bool replaced = false;
+    for (auto &r : candidate) {
+        if (r.id == rule.id) {
+            r = rule;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) candidate.push_back(std::move(rule));
+
+    // Persist before committing so the file always mirrors the in-memory set.
+    if (!m_rules_path.empty() &&
+        !WriteRulesFileLocked(candidate, m_rules_path, error)) {
+        return false;
+    }
+    m_rules = std::move(candidate);
+    return true;
+}
+
+bool AlertManager::DeleteRule(const std::string &rule_id, std::string &error) {
+    if (rule_id.empty()) {
+        error = "rule_id is required";
+        return false;
+    }
+
+    std::lock_guard lock(m_mutex);
+    std::vector<AlertRule> candidate = m_rules;
+    const size_t before = candidate.size();
+    candidate.erase(
+        std::remove_if(candidate.begin(), candidate.end(),
+                       [&rule_id](const AlertRule &r) { return r.id == rule_id; }),
+        candidate.end());
+    if (candidate.size() == before) {
+        error = "no rule with id '" + rule_id + "'";
+        return false;
+    }
+
+    if (!m_rules_path.empty() &&
+        !WriteRulesFileLocked(candidate, m_rules_path, error)) {
+        return false;
+    }
+    m_rules = std::move(candidate);
+
+    // Forget firing/ack state of the deleted rule (keys are id + agent + target).
+    const std::string prefix = rule_id + kKeySep;
+    for (auto st = m_states.begin(); st != m_states.end();) {
+        if (st->first.compare(0, prefix.size(), prefix) == 0) {
+            st = m_states.erase(st);
+        } else {
+            ++st;
+        }
+    }
+    return true;
+}
+
+bool AlertManager::SaveRulesFile(std::string &error) const {
+    if (m_rules_path.empty()) {
+        error = "no alert rules file configured (--alert-rules-path unset)";
+        return false;
+    }
+    std::lock_guard lock(m_mutex);
+    return WriteRulesFileLocked(m_rules, m_rules_path, error);
+}
+
+bool AlertManager::SaveRulesFile(const std::string &path,
+                                 std::string &error) const {
+    std::lock_guard lock(m_mutex);
+    return WriteRulesFileLocked(m_rules, path, error);
 }
 
 void AlertManager::Evaluate(
@@ -343,26 +486,11 @@ std::string AlertManager::AlertHistoryJson(size_t max_events) const {
 
 std::string AlertManager::RulesJson() const {
     std::lock_guard lock(m_mutex);
-    std::string json = "{\"rules\":[";
-    bool first = true;
-    for (const auto &r : m_rules) {
-        if (!first) json += ",";
-        first = false;
-        json += "{";
-        json += "\"id\":\"" + EscapeJson(r.id) + "\",";
-        json += "\"name\":\"" + EscapeJson(r.name) + "\",";
-        json += "\"agent_id\":\"" + EscapeJson(r.agent_id) + "\",";
-        json += "\"check_type\":\"" + EscapeJson(r.check_type) + "\",";
-        json += "\"metric\":\"" + EscapeJson(r.metric_field) + "\",";
-        json += "\"op\":\"" + std::string(r.greater_than ? ">" : "<") + "\",";
-        json += "\"threshold\":" + FormatDouble(r.threshold) + ",";
-        json += "\"repeat_interval_sec\":" + std::to_string(r.repeat_interval_sec) + ",";
-        json += "\"severity\":\"" + EscapeJson(r.severity) + "\",";
-        json += "\"on_failure\":" + std::string(r.on_failure ? "true" : "false");
-        json += "}";
-    }
-    json += "]}";
-    return json;
+    nlohmann::json doc;
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto &r : m_rules) arr.push_back(RuleToJson(r));
+    doc["rules"] = arr;
+    return doc.dump();
 }
 
 size_t AlertManager::ActiveAlertCount() const {

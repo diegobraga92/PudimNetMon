@@ -185,6 +185,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Rules'
+    post:
+      summary: Create or replace one alert rule (upsert by id)
+      description: |
+        Managed by the dashboard Alerts page. Persists the updated rule set to
+        the collector's rules file when one is configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rule]
+              properties:
+                rule:
+                  $ref: '#/components/schemas/RuleInput'
+      responses:
+        '200':
+          description: Rule set after the upsert
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RulesMutationResult'
+        '400':
+          description: Invalid rule (missing id/metric, bad op, ...)
+        '503':
+          description: Alerting unavailable
   /diagnostic:
     post:
       summary: Trigger an on-demand diagnostic on an agent (traceroute/pcap)
@@ -276,6 +302,30 @@ paths:
           description: Invalid body / missing fields
         '503':
           description: Alerting disabled
+
+  /api/alert-rules/delete:
+    post:
+      summary: Delete an alert rule and its firing state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rule_id]
+              properties:
+                rule_id: { type: string }
+      responses:
+        '200':
+          description: Rule set after the deletion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RulesMutationResult'
+        '400':
+          description: No rule with the given id
+        '503':
+          description: Alerting unavailable
 
   /api/agents/config:
     get:
@@ -518,18 +568,48 @@ components:
         rules:
           type: array
           items:
-            type: object
-            properties:
-              id: { type: string }
-              name: { type: string }
-              agent_id: { type: string }
-              check_type: { type: string }
-              metric: { type: string }
-              op: { type: string, enum: ['>', '<'] }
-              threshold: { type: number }
-              repeat_interval_sec: { type: integer }
-              severity: { type: string }
-              on_failure: { type: boolean }
+            $ref: '#/components/schemas/RuleInput'
+
+    RuleInput:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, description: 'Unique slug. Upsert key.' }
+        name: { type: string }
+        agent_id:
+          type: string
+          description: 'Empty = all agents'
+        check_type:
+          type: string
+          description: 'e.g. tcp_connect, icmp_ping; empty = all check types'
+        target:
+          type: string
+          description: 'Empty = all targets'
+        metric:
+          type: string
+          description: 'latency_ms, packet_loss_pct, jitter_ms, rtt_ms, status_code'
+        op: { type: string, enum: ['>', '<'] }
+        threshold: { type: number }
+        repeat_interval_sec:
+          type: integer
+          description: 'Min seconds between repeat notifications (0 disables repeats)'
+        severity: { type: string, enum: [info, warning, critical] }
+        on_failure:
+          type: boolean
+          description: 'Fire when the probe itself fails instead of on a metric threshold'
+
+    RulesMutationResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        error: { type: string }
+        persisted:
+          type: boolean
+          description: 'False when no rules file is configured (edits are in-memory only)'
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleInput'
 
     DiagnosticResult:
       type: object

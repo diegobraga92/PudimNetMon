@@ -142,6 +142,39 @@ export type CheckType =
 export type CheckTypeFilter = 'all' | CheckType
 export type Severity = 'info' | 'warning' | 'critical'
 export type SeverityFilter = 'all' | Severity
+export type SeveritySelectValue = Severity | ''
+
+/** Comparison operator for a threshold rule. */
+export type AlertOp = '>' | '<'
+
+/** One alert rule as returned by GET /api/alert-rules. */
+export interface AlertRule {
+  id: string
+  name: string
+  /** Empty = matches all agents. */
+  agent_id: string
+  /** Empty = matches all check types. */
+  check_type: string
+  /** Empty = matches all targets. */
+  target: string
+  /** Metric field compared against the threshold (unused when on_failure). */
+  metric: string
+  op: AlertOp
+  threshold: number
+  /** Min seconds between repeat notifications while the rule is firing. */
+  repeat_interval_sec: number
+  severity: Severity
+  /** Fires when the probe itself fails instead of on a metric threshold. */
+  on_failure: boolean
+}
+
+export interface AlertRulesResponse {
+  success?: boolean
+  error?: string
+  /** False when the collector has no rules file to persist edits to. */
+  persisted?: boolean
+  rules: AlertRule[]
+}
 
 /** Form state for the agent reconfiguration panel. */
 export interface AgentConfigForm {

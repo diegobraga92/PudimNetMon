@@ -37,7 +37,7 @@
     },
     {
       "id": 4, "type": "stat", "title": "Firing Alerts",
-      "datasource": { "type": "prometheus", "uid": "prom-alert" },
+      "datasource": { "type": "prometheus", "uid": "prom-collector" },
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
         "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },

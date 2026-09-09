@@ -3,6 +3,7 @@ import type {
   AgentInfo,
   AgentVersionsResponse,
   AlertHistoryEntry,
+  AlertRule,
   HealthResponse,
   InstallerVersionsResponse,
   MetricPoint,
@@ -186,6 +187,35 @@ export const mockAlertHistory: AlertHistoryEntry[] = [
   },
 ]
 
+export const mockRules: AlertRule[] = [
+  {
+    id: 'high-tcp-latency',
+    name: 'High TCP Connect Latency',
+    agent_id: '',
+    check_type: 'tcp_connect',
+    target: '',
+    metric: 'latency_ms',
+    op: '>',
+    threshold: 500,
+    repeat_interval_sec: 300,
+    severity: 'warning',
+    on_failure: false,
+  },
+  {
+    id: 'dns-failure',
+    name: 'DNS Resolution Failure',
+    agent_id: '',
+    check_type: 'dns_resolution',
+    target: '',
+    metric: '',
+    op: '>',
+    threshold: 0,
+    repeat_interval_sec: 120,
+    severity: 'critical',
+    on_failure: true,
+  },
+]
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -199,6 +229,7 @@ export interface MockApiOptions {
   metrics?: MetricPoint[]
   alerts?: ActiveAlert[]
   alertHistory?: AlertHistoryEntry[]
+  rules?: AlertRule[]
   agentVersions?: AgentVersionsResponse
   installerVersions?: InstallerVersionsResponse
 }
@@ -211,36 +242,69 @@ export function mockApi(options: MockApiOptions = {}) {
     metrics = mockMetrics,
     alerts = mockAlerts,
     alertHistory = mockAlertHistory,
+    rules = mockRules,
     agentVersions = mockAgentVersions,
     installerVersions = mockInstallerVersions,
   } = options
 
   let currentAlerts = alerts
+  let currentRules = rules
 
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-    const url = typeof input === 'string' ? input : input.toString()
-    if (url.startsWith('/api/health')) return jsonResponse(health)
-    if (url.startsWith('/api/agents')) return jsonResponse({ agents })
-    if (url.startsWith('/api/metrics')) return jsonResponse(metrics)
-    if (url.startsWith('/api/alerts/ack')) {
-      const body = await (input instanceof Request ? input.json() : Promise.resolve(null))
-      if (body) {
-        currentAlerts = currentAlerts.map((a) =>
-          a.rule_id === body.rule_id && a.agent_id === body.agent_id ? { ...a, acknowledged: true } : a,
-        )
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const method = input instanceof Request ? input.method : (init?.method ?? 'GET')
+      const body = () => {
+        if (input instanceof Request) return input.json()
+        if (init?.body && typeof init.body === 'string') return JSON.parse(init.body)
+        return Promise.resolve(null)
       }
-      return jsonResponse({ alerts: currentAlerts })
-    }
-    if (url.startsWith('/api/alerts')) return jsonResponse(currentAlerts)
-    if (url.startsWith('/api/alert-history')) return jsonResponse(alertHistory)
-    if (url.startsWith('/api/agent/versions')) return jsonResponse(agentVersions)
-    if (url.startsWith('/api/installers/versions')) return jsonResponse(installerVersions)
-    if (url.startsWith('/api/diagnostic')) {
-      return jsonResponse({ success: true, timestamp_unix_ms: Date.now(), result: 'traceroute ok\npcap ok' })
-    }
-    return jsonResponse({ error: 'not found' }, 404)
-  })
+
+      if (url.startsWith('/api/health')) return jsonResponse(health)
+      if (url.startsWith('/api/agents')) return jsonResponse({ agents })
+      if (url.startsWith('/api/metrics')) return jsonResponse(metrics)
+      if (url.startsWith('/api/alerts/ack')) {
+        const payload = await body()
+        if (payload) {
+          currentAlerts = currentAlerts.map((a) =>
+            a.rule_id === payload.rule_id && a.agent_id === payload.agent_id
+              ? { ...a, acknowledged: true }
+              : a,
+          )
+        }
+        return jsonResponse({ alerts: currentAlerts })
+      }
+      if (url.startsWith('/api/alerts')) return jsonResponse(currentAlerts)
+      if (url.startsWith('/api/alert-history')) return jsonResponse(alertHistory)
+      if (url.startsWith('/api/alert-rules/delete')) {
+        const payload = await body()
+        if (payload?.rule_id) {
+          currentRules = currentRules.filter((r) => r.id !== payload.rule_id)
+        }
+        return jsonResponse({ success: true, error: '', persisted: true, rules: currentRules })
+      }
+      if (url.startsWith('/api/alert-rules')) {
+        if (method !== 'GET') {
+          const payload = await body()
+          const rule = payload?.rule
+          if (rule) {
+            const exists = currentRules.some((r) => r.id === rule.id)
+            currentRules = exists
+              ? currentRules.map((r) => (r.id === rule.id ? rule : r))
+              : [...currentRules, rule]
+          }
+        }
+        return jsonResponse({ success: true, error: '', persisted: true, rules: currentRules })
+      }
+      if (url.startsWith('/api/agent/versions')) return jsonResponse(agentVersions)
+      if (url.startsWith('/api/installers/versions')) return jsonResponse(installerVersions)
+      if (url.startsWith('/api/diagnostic')) {
+        return jsonResponse({ success: true, timestamp_unix_ms: Date.now(), result: 'traceroute ok\npcap ok' })
+      }
+      return jsonResponse({ error: 'not found' }, 404)
+    },
+  )
 
   vi.stubGlobal('fetch', fetchMock)
-  return { fetchMock, getAlerts: () => currentAlerts }
+  return { fetchMock, getAlerts: () => currentAlerts, getRules: () => currentRules }
 }

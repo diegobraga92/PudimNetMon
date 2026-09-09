@@ -6,24 +6,24 @@ services), a C++ central collector, and a TypeScript/React web dashboard.
 ## Architecture Overview
 
 ```
-          gRPC (heartbeat + metrics)       produce (protobuf, keyed by agent)
+          gRPC (heartbeat + metrics)          produce (protobuf, keyed by agent)
   ┌──────────────┐      ┌──────────────┐     ┌──────────────────────┐
   │  Agent(s)     │─────▶│  Collector   │────▶│   Kafka broker       │
   │  (C++ daemon) │      │  (C++ server)│     │   network.metrics     │
-  └──────────────┘      └──────────────┘     └───────────┬──────────┘
-     Port 50051 gRPC           HTTP :8080               │ consume (groups:
-     /health /agents /api/metrics                       │  storage, alert)
-                                                         ▼
-                                           ┌──────────────────────────────────┐
-                                           │ pudim-consumer-storage ──▶ TimescaleDB │
-                                           │ pudim-consumer-alert   ──▶ AlertManager│
-                                           └──────────────────────────────────┘
-                                             Prometheus :9091 (storage) / :9093 (alert)
-
-  ┌──────────────┐     HTTP     ┌──────────────┐
-  │  Dashboard    │◀────────────│  Collector   │  :3000
-  │  (React/TS)  │   :3000      │  :8080       │
-  └──────────────┘              └──────────────┘
+  └──────────────┘      └──────┬───────┘     └───────────┬──────────┘
+     Port 50051 gRPC           │ HTTP :8080               │ consume (group:
+     /health /agents /api/*    │                          │  storage)
+                                ▼                          ▼
+                 ┌──────────────────────────┐  ┌────────────────────────────┐
+                 │ AlertManager in-process  │  │ pudim-consumer-storage     │
+                 │ rules: /etc/pudim/       │  │   ──▶ TimescaleDB           │
+                 │   alert_rules.json       │  └────────────────────────────┘
+                 │ dashboard alert API      │
+                 └─────────────┬────────────┘
+                               ▲ HTTP :3000
+                 ┌─────────────┴────────────┐
+                 │  Dashboard (React/TS)    │
+                 └──────────────────────────┘
 ```
 
 ## Quick Start
@@ -73,7 +73,6 @@ Override ports that conflict on the server. Defaults are the following.
 | TimescaleDB (PostgreSQL) | `PUDIM_TIMESCALEDB_PORT` | `5432` |
 | Kafka broker | `PUDIM_KAFKA_PORT` | `9092` |
 | Consumer-storage Prometheus | `PUDIM_CONSUMER_STORAGE_PROMETHEUS_PORT` | `9091` |
-| Consumer-alert Prometheus | `PUDIM_CONSUMER_ALERT_PROMETHEUS_PORT` | `9093` |
 
 ```bash
 docker compose up --build

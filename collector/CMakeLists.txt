@@ -209,8 +209,7 @@ target_include_directories(test-alerting
 )
 add_test(NAME alerting-tests COMMAND test-alerting)
 
-# Kafka consumers (Phase 3, ADR 004). Storage consumer persists to TimescaleDB;
-# alert consumer evaluates alert rules. Both share consumer_common.
+# Kafka storage consumer. Persists metrics to TimescaleDB.
 add_executable(pudim-consumer-storage
   src/kafka/storage_consumer.cpp
   src/kafka/consumer_common.cpp
@@ -227,25 +226,6 @@ target_link_libraries(pudim-consumer-storage
     PostgreSQL::PostgreSQL
 )
 target_include_directories(pudim-consumer-storage PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
-
-add_executable(pudim-consumer-alert
-  src/kafka/alert_consumer.cpp
-  src/kafka/consumer_common.cpp
-  src/alerting/alert_rule.cpp
-  src/alerting/alert_manager.cpp
-  src/alerting/notifier.cpp
-)
-target_link_libraries(pudim-consumer-alert
-  PRIVATE
-    pudim_proto
-    protobuf::libprotobuf
-    gRPC::grpc++
-    Threads::Threads
-    httplib::httplib
-    nlohmann_json::nlohmann_json
-    PkgConfig::RDKAFKA
-)
-target_include_directories(pudim-consumer-alert PRIVATE ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/src)
 
 # Kafka round-trip integration test: producer → consumer via a real broker.
 # Skips gracefully when no broker is reachable (PUDIM_TEST_KAFKA_BROKERS).
@@ -271,5 +251,5 @@ target_include_directories(test-e2e-kafka
 add_test(NAME e2e-kafka-tests COMMAND test-e2e-kafka)
 
 # Install
-install(TARGETS pudim-collector pudim-consumer-storage pudim-consumer-alert
+install(TARGETS pudim-collector pudim-consumer-storage
         DESTINATION /usr/local/bin)

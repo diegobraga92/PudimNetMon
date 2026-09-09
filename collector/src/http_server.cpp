@@ -141,6 +141,90 @@ HttpServer::HttpServer(
     m_server.Get("/alert-rules", alert_rules_handler);
     m_server.Get("/api/alert-rules", alert_rules_handler);
 
+    // Builds the {success, error, rules, persisted} response used by rule mutations
+    auto alert_rules_response = [this](bool success, const std::string &error) {
+        nlohmann::json doc;
+        if (m_alert_manager) {
+            doc = nlohmann::json::parse(m_alert_manager->RulesJson());
+        } else {
+            doc["rules"] = nlohmann::json::array();
+        }
+        doc["success"] = success;
+        doc["error"] = error;
+        doc["persisted"] =
+            m_alert_manager && !m_alert_manager->RulesFilePath().empty();
+        return doc.dump();
+    };
+
+    // Creates or replaces one alert rule. Body: {"rule": {...}}.
+    auto upsert_rule_handler = [this, alert_rules_response](
+                                   const httplib::Request &req,
+                                   httplib::Response &resp) {
+        if (!m_alert_manager) {
+            resp.status = 503;
+            resp.set_content("{\"error\":\"alerting unavailable\"}",
+                             "application/json");
+            return;
+        }
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}",
+                             "application/json");
+            return;
+        }
+        if (!body.is_object() || !body.contains("rule") ||
+            body["rule"].is_null() || !body["rule"].is_object()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"a 'rule' object is required\"}",
+                             "application/json");
+            return;
+        }
+        std::string err;
+        const bool ok = m_alert_manager->UpsertRule(body["rule"].dump(), err);
+        resp.status = ok ? 200 : 400;
+        resp.set_content(alert_rules_response(ok, err), "application/json");
+    };
+    m_server.Post("/alert-rules", upsert_rule_handler);
+    m_server.Post("/api/alert-rules", upsert_rule_handler);
+
+    // Deletes one rule and its firing state. Body: {"rule_id": "..."}.
+    auto delete_rule_handler = [this, alert_rules_response](
+                                   const httplib::Request &req,
+                                   httplib::Response &resp) {
+        if (!m_alert_manager) {
+            resp.status = 503;
+            resp.set_content("{\"error\":\"alerting unavailable\"}",
+                             "application/json");
+            return;
+        }
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}",
+                             "application/json");
+            return;
+        }
+        if (!body.is_object() ||
+            body.value("rule_id", "").empty()) {
+            resp.status = 400;
+            resp.set_content(
+                "{\"error\":\"'rule_id' is required\"}", "application/json");
+            return;
+        }
+        std::string err;
+        const bool ok =
+            m_alert_manager->DeleteRule(body["rule_id"].get<std::string>(), err);
+        resp.status = ok ? 200 : 400;
+        resp.set_content(alert_rules_response(ok, err), "application/json");
+    };
+    m_server.Post("/alert-rules/delete", delete_rule_handler);
+    m_server.Post("/api/alert-rules/delete", delete_rule_handler);
+
     // Runs an on-demand diagnostic (traceroute or pcap) on the target agent.
     auto diagnostic_handler = [this](const httplib::Request &req,
                                      httplib::Response &resp) {

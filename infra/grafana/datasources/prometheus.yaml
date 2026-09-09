@@ -17,10 +17,3 @@ datasources:
     access: proxy
     url: http://consumer-storage:9091
     editable: false
-
-  - name: Alert Consumer
-    uid: prom-alert
-    type: prometheus
-    access: proxy
-    url: http://consumer-alert:9092
-    editable: false

@@ -30,8 +30,22 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!resp.ok) throw new ApiError(`HTTP ${resp.status}`, resp.status)
+  if (!resp.ok) throw new ApiError(await errorMessage(resp), resp.status)
   return (await resp.json()) as T
+}
+
+/** Prefers the server-provided `error` field for a friendly toast message. */
+async function errorMessage(resp: Response): Promise<string> {
+  try {
+    const data: unknown = await resp.json()
+    if (data && typeof data === 'object' && 'error' in data) {
+      const msg = (data as { error?: unknown }).error
+      if (typeof msg === 'string' && msg.length > 0) return msg
+    }
+  } catch {
+    /* not JSON — fall through */
+  }
+  return `HTTP ${resp.status}`
 }
 
 export async function apiPostForm<T>(path: string, body: Record<string, string>): Promise<T> {

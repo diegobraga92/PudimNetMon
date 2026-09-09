@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "alert_rule.h"
 #include "notifier.h"
 
@@ -29,23 +31,26 @@ struct AlertRecord {
 };
 
 // Thread-safe in-memory alert state machine.
-// State is tracked per (rule, agent, target). A threshold breach or a failed
-// probe moves OK to FIRING. FIRING moves back to RESOLVED when the metric
-// recovers and repeats notifications every rule.repeat_interval_sec.
+// State is tracked per (rule, agent, target).
 class AlertManager {
 public:
     AlertManager() = default;
 
-    // Loads rules from a JSON file. Existing rules are kept on parse failure.
     bool LoadRulesFromFile(const std::string &path, std::string &error);
 
-    // Parses rules from a JSON document.
     bool LoadRulesFromJson(const std::string &json, std::string &error);
 
-    // Registers a notifier.
+    bool UpsertRule(const std::string &rule_json, std::string &error);
+
+    bool DeleteRule(const std::string &rule_id, std::string &error);
+
+    bool SaveRulesFile(std::string &error) const;
+    bool SaveRulesFile(const std::string &path, std::string &error) const;
+
+    std::string RulesFilePath() const { return m_rules_path; }
+
     void AddNotifier(std::unique_ptr<Notifier> notifier);
 
-    // Evaluates a metric batch against the loaded rules.
     void Evaluate(const std::string &agent_id,
                   const google::protobuf::RepeatedPtrField<pudimnetmon::Metric> &metrics);
 
@@ -54,8 +59,6 @@ public:
     std::string AlertHistoryJson(size_t max_events = 200) const;
     std::string RulesJson() const;
 
-    // Marks a firing alert as acknowledged. Returns false when the alert is
-    // not firing or is already acknowledged.
     bool Ack(const std::string &rule_id, const std::string &agent_id,
              const std::string &target);
 
@@ -81,6 +84,15 @@ private:
     const AlertRule *FindRule(const std::string &id) const;
     void TrimHistory();
 
+    static bool ParseRule(const nlohmann::json &r, AlertRule &rule,
+                          std::string &error);
+
+    // Writes `rules` to `path` as the rules file (webhook_url preserved) while
+    // m_mutex is held.
+    bool WriteRulesFileLocked(const std::vector<AlertRule> &rules,
+                              const std::string &path,
+                              std::string &error) const;
+
     std::vector<AlertRule> m_rules;
     std::unordered_map<std::string, FiringState> m_states;
     std::vector<std::unique_ptr<Notifier>> m_notifiers;
@@ -88,6 +100,10 @@ private:
     std::vector<AlertRecord> m_history;
     mutable std::mutex m_mutex;
     uint64_t m_alerts_fired_total = 0;
+    // Rules file that backs the UI edits (empty = in-memory only).
+    std::string m_rules_path;
+    // Top-level webhook_url from the rules file (kept across UI edits).
+    std::string m_webhook_url;
 };
 
 } // namespace pudimcollector::alerting
