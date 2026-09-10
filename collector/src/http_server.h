@@ -28,7 +28,7 @@ namespace kafka { class KafkaProducer; }
 // proxies that strip or keep the /api prefix. Prometheus scrapes /metrics.
 class HttpServer {
 public:
-    HttpServer(const AgentRegistry &registry,
+    HttpServer(AgentRegistry &registry,
                std::shared_ptr<TimescaleStorage> storage,
                std::shared_ptr<MetricsServiceImpl> metrics_service,
                std::shared_ptr<alerting::AlertManager> alert_manager,
@@ -64,7 +64,7 @@ private:
     httplib::Server m_server;
     std::thread m_thread;
 
-    const AgentRegistry &m_registry;
+    AgentRegistry &m_registry;
     std::shared_ptr<TimescaleStorage> m_storage;
     std::shared_ptr<MetricsServiceImpl> m_metrics_service;
     std::shared_ptr<alerting::AlertManager> m_alert_manager;

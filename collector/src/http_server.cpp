@@ -94,7 +94,7 @@ nlohmann::json RunToJson(const CommandRun &r) {
 } // namespace
 
 HttpServer::HttpServer(
-    const AgentRegistry &registry, std::shared_ptr<TimescaleStorage> storage,
+    AgentRegistry &registry, std::shared_ptr<TimescaleStorage> storage,
     std::shared_ptr<MetricsServiceImpl> metrics_service,
     std::shared_ptr<alerting::AlertManager> alert_manager,
     std::shared_ptr<kafka::KafkaProducer> kafka_producer,
@@ -132,6 +132,51 @@ HttpServer::HttpServer(
     };
     m_server.Get("/agents", agents_handler);
     m_server.Get("/api/agents", agents_handler);
+
+    // Registry snapshot plus a mutation status, so a delete can refresh the
+    // dashboard list in a single round trip (mirrors the alert-rules shape).
+    auto agents_response = [this](bool success, const std::string &error) {
+        nlohmann::json doc;
+        doc["success"] = success;
+        doc["error"] = error;
+        try {
+            doc["agents"] = nlohmann::json::parse(m_registry.DumpAgents())
+                                .value("agents", nlohmann::json::array());
+        } catch (...) {
+            doc["agents"] = nlohmann::json::array();
+        }
+        return doc.dump();
+    };
+
+    // Forgets one agent. Body: {"agent_id": "..."}.
+    auto delete_agent_handler = [this, agents_response](
+                                    const httplib::Request &req,
+                                    httplib::Response &resp) {
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"invalid JSON body\"}",
+                             "application/json");
+            return;
+        }
+        if (!body.is_object() || !body.contains("agent_id") ||
+            !body["agent_id"].is_string() ||
+            body["agent_id"].get<std::string>().empty()) {
+            resp.status = 400;
+            resp.set_content("{\"error\":\"'agent_id' is required\"}",
+                             "application/json");
+            return;
+        }
+        const std::string agent_id = body["agent_id"].get<std::string>();
+        const bool ok = m_registry.RemoveAgent(agent_id);
+        resp.status = ok ? 200 : 404;
+        resp.set_content(agents_response(ok, ok ? "" : "agent not found"),
+                         "application/json");
+    };
+    m_server.Post("/agents/delete", delete_agent_handler);
+    m_server.Post("/api/agents/delete", delete_agent_handler);
 
     // Prometheus scrape endpoint (text format, no /api alias).
     m_server.Get("/metrics",

@@ -249,6 +249,7 @@ export function mockApi(options: MockApiOptions = {}) {
 
   let currentAlerts = alerts
   let currentRules = rules
+  let currentAgents = agents
 
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -261,7 +262,14 @@ export function mockApi(options: MockApiOptions = {}) {
       }
 
       if (url.startsWith('/api/health')) return jsonResponse(health)
-      if (url.startsWith('/api/agents')) return jsonResponse({ agents })
+      if (url.startsWith('/api/agents/delete')) {
+        const payload = await body()
+        if (payload?.agent_id) {
+          currentAgents = currentAgents.filter((a) => a.agent_id !== payload.agent_id)
+        }
+        return jsonResponse({ success: true, error: '', agents: currentAgents })
+      }
+      if (url.startsWith('/api/agents')) return jsonResponse({ agents: currentAgents })
       if (url.startsWith('/api/metrics')) return jsonResponse(metrics)
       if (url.startsWith('/api/alerts/ack')) {
         const payload = await body()
@@ -306,5 +314,5 @@ export function mockApi(options: MockApiOptions = {}) {
   )
 
   vi.stubGlobal('fetch', fetchMock)
-  return { fetchMock, getAlerts: () => currentAlerts, getRules: () => currentRules }
+  return { fetchMock, getAlerts: () => currentAlerts, getRules: () => currentRules, getAgents: () => currentAgents }
 }

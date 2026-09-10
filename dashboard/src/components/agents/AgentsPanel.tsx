@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Download, Radio } from 'lucide-react'
 import type { AgentInfo } from '../../types'
-import { useAgents } from '../../hooks/useAgents'
+import { useAgents, useDeleteAgent } from '../../hooks/useAgents'
 import { useMetrics } from '../../hooks/useMetrics'
 import { useDashboard } from '../../context/DashboardContext'
 import { cn } from '../../lib/cn'
@@ -9,6 +9,7 @@ import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { EmptyState } from '../ui/EmptyState'
 import { ListSkeleton } from '../ui/LoadingSkeleton'
+import { useToast } from '../ui/toast'
 import { AgentCard } from './AgentCard'
 
 type StatusFilter = 'all' | 'alive' | 'offline'
@@ -21,12 +22,33 @@ export function AgentsPanel({
   onRunCommand?: (agent: AgentInfo) => void
 }) {
   const { data, isLoading } = useAgents()
+  const remove = useDeleteAgent()
   const metrics = useMetrics({ agentId: 'all', checkType: 'all', windowSeconds: 300 })
   const { setView } = useDashboard()
+  const { toast } = useToast()
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
 
   const agents = data?.agents ?? []
+
+  const handleRemove = (agent: AgentInfo) => {
+    remove.mutate(agent.agent_id, {
+      onSuccess: (data) => {
+        if (data.success === false) {
+          toast({ title: 'Agent not removed', description: data.error, variant: 'error' })
+          return
+        }
+        toast({ title: 'Agent removed', description: `${agent.agent_id} forgotten.`, variant: 'success' })
+      },
+      onError: (err) => {
+        toast({
+          title: 'Could not remove agent',
+          description: err instanceof Error ? err.message : 'Try again in a moment.',
+          variant: 'error',
+        })
+      },
+    })
+  }
 
   /** One shared metrics query powers every card's sparkline. */
   const sparklines = useMemo(() => {
@@ -126,6 +148,8 @@ export function AgentsPanel({
               sparkline={sparklines.get(agent.agent_id)}
               onRunDiagnostic={onRunDiagnostic}
               onRunCommand={onRunCommand}
+              onRemove={handleRemove}
+              removePending={remove.isPending && remove.variables === agent.agent_id}
             />
           ))}
         </div>

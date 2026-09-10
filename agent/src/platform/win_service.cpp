@@ -2,9 +2,6 @@
 
 #include <string>
 #include <thread>
-#include <vector>
-
-#include "platform.h"
 
 #ifdef _WIN32
 
@@ -27,6 +24,10 @@ DWORD g_exit_code = 0;
 
 std::function<int(int, char **)> g_run_main;
 std::function<void()> g_on_stop;
+
+// Process command line captured from main() in TryRunAsService.
+int g_proc_argc = 0;
+char **g_proc_argv = nullptr;
 
 void ReportStatus(DWORD state, DWORD wait_hint) {
     if (!g_status_handle) return;
@@ -58,11 +59,7 @@ DWORD WINAPI ControlHandler(DWORD control, DWORD, void *, void *) {
     }
 }
 
-// UTF-8 argv storage, kept alive for the whole service lifetime.
-std::vector<std::string> g_svc_argv_strs;
-std::vector<char *> g_svc_argv_ptrs;
-
-void WINAPI ServiceMain(DWORD argc, LPWSTR *argv) {
+void WINAPI ServiceMain(DWORD, LPWSTR *) {
     g_status_handle =
         RegisterServiceCtrlHandlerExW(kServiceName, ControlHandler, nullptr);
     if (!g_status_handle) return;
@@ -71,20 +68,18 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR *argv) {
     g_stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!g_stop_event) return;
 
-    // Convert the SCM-provided command line to a UTF-8 argv for the agent.
-    g_svc_argv_strs.clear();
-    g_svc_argv_ptrs.clear();
-    g_svc_argv_ptrs.reserve(argc);
-    for (DWORD i = 0; i < argc; ++i) {
-        g_svc_argv_strs.push_back(WideToUtf8(argv[i]));
-        g_svc_argv_ptrs.push_back(
-            const_cast<char *>(g_svc_argv_strs.back().c_str()));
+    // Run the agent with the process command line so that the ImagePath
+    // arguments (e.g. --node-id=...) reach the config loader.
+    static char *kFallbackArgv[] = {const_cast<char *>("pudim-agent"), nullptr};
+    int agent_argc = 1;
+    char **agent_argv = kFallbackArgv;
+    if (g_proc_argv && g_proc_argc > 0) {
+        agent_argc = g_proc_argc;
+        agent_argv = g_proc_argv;
     }
-    int svc_argc = static_cast<int>(g_svc_argv_ptrs.size());
-    char **svc_argv = svc_argc > 0 ? g_svc_argv_ptrs.data() : nullptr;
 
-    std::thread worker([svc_argc, svc_argv]() {
-        g_exit_code = g_run_main ? g_run_main(svc_argc, svc_argv) : 1;
+    std::thread worker([agent_argc, agent_argv]() {
+        g_exit_code = g_run_main ? g_run_main(agent_argc, agent_argv) : 1;
     });
 
     ReportStatus(SERVICE_RUNNING, 0);
@@ -110,11 +105,13 @@ bool InitNetwork(std::string &error) {
 
 void CleanupNetwork() { WSACleanup(); }
 
-bool TryRunAsService(int, char **,
+bool TryRunAsService(int argc, char **argv,
                      std::function<int(int, char **)> run_main,
                      std::function<void()> on_stop) {
     g_run_main = std::move(run_main);
     g_on_stop = std::move(on_stop);
+    g_proc_argc = argc;
+    g_proc_argv = argv;
 
     SERVICE_TABLE_ENTRYW table[] = {
         { const_cast<LPWSTR>(kServiceName), ServiceMain },

@@ -223,6 +223,24 @@ target_link_libraries(test-agent-peer
 target_include_directories(test-agent-peer PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME agent-peer-tests COMMAND test-agent-peer)
 
+add_executable(test-agent-registry
+  tests/test_agent_registry.cpp
+  src/agent_registry.cpp
+)
+target_link_libraries(test-agent-registry
+  PRIVATE
+    pudim_proto
+    protobuf::libprotobuf
+    gRPC::grpc++
+    Threads::Threads
+)
+target_include_directories(test-agent-registry
+  PRIVATE
+    ${CMAKE_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}/src
+)
+add_test(NAME agent-registry-tests COMMAND test-agent-registry)
+
 # Kafka storage consumer. Persists metrics to TimescaleDB.
 add_executable(pudim-consumer-storage
   src/kafka/storage_consumer.cpp

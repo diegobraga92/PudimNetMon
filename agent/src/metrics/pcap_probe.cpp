@@ -190,13 +190,140 @@ void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric
 
 #else  // !HAVE_LIBPCAP
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 namespace pudimagent {
+
+namespace {
+
+#ifdef _WIN32
+using Sock = SOCKET;
+const Sock kInvalidSock = INVALID_SOCKET;
+void CloseSock(Sock s) { closesocket(s); }
+int SockErr() { return WSAGetLastError(); }
+bool SockInProgress(int e) { return e == WSAEWOULDBLOCK || e == WSAEINPROGRESS; }
+#else
+using Sock = int;
+const Sock kInvalidSock = -1;
+void CloseSock(Sock s) { close(s); }
+int SockErr() { return errno; }
+bool SockInProgress(int e) { return e == EINPROGRESS || e == EWOULDBLOCK; }
+#endif
+
+// Times the TCP three-way handshake by measuring a non-blocking connect() on a
+// fresh socket. Returns true and fills latency_ms on success.
+bool TimeTcpHandshake(const std::string &host, int port, double &latency_ms,
+                      std::string &error) {
+    struct addrinfo hints {};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    LookupResult lr =
+        GlobalResolver().Lookup(host, std::to_string(port), hints, 3000);
+    if (!lr.ok || !lr.addrs) {
+        error = lr.ok ? "no IPv4 address found"
+                      : (lr.error.empty() ? "resolution failed" : lr.error);
+        return false;
+    }
+
+    error = "connect failed";
+    for (struct addrinfo *ai = lr.addrs.get(); ai; ai = ai->ai_next) {
+        Sock fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd == kInvalidSock) continue;
+
+#ifdef _WIN32
+        u_long nonblock = 1;
+        ioctlsocket(fd, FIONBIO, &nonblock);
+#else
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+
+        auto start = std::chrono::steady_clock::now();
+        int rc = ::connect(fd, ai->ai_addr, static_cast<int>(ai->ai_addrlen));
+        if (rc != 0 && !SockInProgress(SockErr())) {
+            CloseSock(fd);
+            continue;
+        }
+
+        fd_set wr;
+        FD_ZERO(&wr);
+        FD_SET(fd, &wr);
+        struct timeval tv {};
+        tv.tv_sec = 4;
+        int sel = ::select(static_cast<int>(fd) + 1, nullptr, &wr, nullptr, &tv);
+        if (sel <= 0) {
+            error = (sel == 0) ? "handshake timed out" : "select failed";
+            CloseSock(fd);
+            continue;
+        }
+
+        int so_error = 0;
+#ifdef _WIN32
+        int so_len = sizeof(so_error);
+#else
+        socklen_t so_len = sizeof(so_error);
+#endif
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR,
+                         reinterpret_cast<char *>(&so_error), &so_len) != 0 ||
+            so_error != 0) {
+            error = "connect failed";
+            CloseSock(fd);
+            continue;
+        }
+
+        auto end = std::chrono::steady_clock::now();
+        CloseSock(fd);
+        latency_ms =
+            std::chrono::duration<double, std::milli>(end - start).count();
+        return true;
+    }
+    return false;
+}
+
+} // anonymous namespace
 
 void ProbeTcpHandshake(const std::string &host_port, pudimnetmon::Metric &metric) {
     metric.set_check_type(pudimnetmon::CHECK_TYPE_TCP_HANDSHAKE);
     metric.set_target(host_port);
-    metric.set_success(false);
-    metric.set_detail("libpcap not available in this build");
+    metric.set_monotonic_us(platform::MonotonicUs());
+
+    auto fail = [&](const std::string &detail) {
+        metric.set_success(false);
+        metric.set_detail(detail);
+    };
+
+    auto colon = host_port.rfind(':');
+    if (colon == std::string::npos) { fail("invalid host:port"); return; }
+    std::string host = host_port.substr(0, colon);
+    int port = 0;
+    try {
+        port = std::stoi(host_port.substr(colon + 1));
+    } catch (...) { fail("invalid port"); return; }
+
+    double latency_ms = 0.0;
+    std::string error;
+    if (!TimeTcpHandshake(host, port, latency_ms, error)) {
+        fail(error);
+        return;
+    }
+    metric.set_latency_ms(latency_ms);
+    (*metric.mutable_attributes())["method"] = "socket";
+    metric.set_success(true);
 }
 
 } // namespace pudimagent

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '../../lib/cn'
 
@@ -27,18 +27,23 @@ const sizeClasses = {
   lg: 'h-10 px-5 text-sm gap-2',
 }
 
-export function Button({
-  variant = 'primary',
-  size = 'md',
-  loading = false,
-  className,
-  disabled,
-  children,
-  type = 'button',
-  ...props
-}: ButtonProps) {
+// forwardRef so the button can be used as a Radix Tooltip/Trigger child.
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    variant = 'primary',
+    size = 'md',
+    loading = false,
+    className,
+    disabled,
+    children,
+    type = 'button',
+    ...props
+  },
+  ref,
+) {
   return (
     <button
+      ref={ref}
       type={type}
       className={cn(
         'inline-flex items-center justify-center rounded-lg font-medium transition-colors',
@@ -55,4 +60,4 @@ export function Button({
       {children}
     </button>
   )
-}
+})

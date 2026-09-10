@@ -20,6 +20,13 @@ export interface AgentsResponse {
   agents: AgentInfo[]
 }
 
+/** Result of a registry mutation (e.g. forgetting an agent). */
+export interface AgentsDeleteResponse {
+  success: boolean
+  error?: string
+  agents: AgentInfo[]
+}
+
 export interface MetricPoint {
   time_ms: number
   agent_id: string

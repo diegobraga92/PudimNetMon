@@ -1,4 +1,5 @@
-import { Beaker, Crosshair, TerminalSquare } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Beaker, Crosshair, TerminalSquare, Trash2 } from 'lucide-react'
 import type { AgentInfo } from '../../types'
 import { useDashboard } from '../../context/DashboardContext'
 import { formatRelativeTime } from '../../lib/formatters'
@@ -14,11 +15,27 @@ interface AgentCardProps {
   sparkline?: { time_ms: number; value: number }[]
   onRunDiagnostic?: (agent: AgentInfo) => void
   onRunCommand?: (agent: AgentInfo) => void
+  onRemove?: (agent: AgentInfo) => void
+  removePending?: boolean
   diagnosticRunning?: boolean
 }
 
-export function AgentCard({ agent, sparkline, onRunDiagnostic, onRunCommand, diagnosticRunning }: AgentCardProps) {
+export function AgentCard({ agent, sparkline, onRunDiagnostic, onRunCommand, onRemove, removePending, diagnosticRunning }: AgentCardProps) {
   const { setSelectedAgent } = useDashboard()
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  const confirmTimer = useRef<number | null>(null)
+
+  // Two-step confirm so a stray click cannot forget a live agent.
+  const openConfirm = () => {
+    if (confirmTimer.current) window.clearTimeout(confirmTimer.current)
+    setConfirmRemove(true)
+    confirmTimer.current = window.setTimeout(() => setConfirmRemove(false), 3000)
+  }
+
+  const cancelConfirm = () => {
+    if (confirmTimer.current) window.clearTimeout(confirmTimer.current)
+    setConfirmRemove(false)
+  }
 
   return (
     <Card className="flex flex-col gap-3 p-4 transition-colors hover:border-border-strong">
@@ -59,7 +76,7 @@ export function AgentCard({ agent, sparkline, onRunDiagnostic, onRunCommand, dia
         <dd className="text-right text-fg-muted">{formatRelativeTime(agent.first_seen_unix_ms)}</dd>
       </dl>
 
-      <div className="mt-auto flex items-center gap-2 border-t border-border pt-3">
+      <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-border pt-3">
         <Tooltip content="Focus the overview charts on this agent">
           <Button variant="secondary" size="sm" onClick={() => setSelectedAgent(agent.agent_id)}>
             <Crosshair className="size-3.5" aria-hidden="true" />
@@ -82,6 +99,38 @@ export function AgentCard({ agent, sparkline, onRunDiagnostic, onRunCommand, dia
             <TerminalSquare className="size-3.5" aria-hidden="true" />
             Commands
           </Button>
+        )}
+        {onRemove && (
+          <div className="ml-auto flex items-center gap-2">
+            {confirmRemove ? (
+              <>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  loading={removePending}
+                  onClick={() => onRemove(agent)}
+                >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                  Confirm
+                </Button>
+                <Button variant="ghost" size="sm" onClick={cancelConfirm}>
+                  Keep
+                </Button>
+              </>
+            ) : (
+              <Tooltip content="Remove this agent from the list (e.g. after uninstalling it)">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Forget ${agent.agent_id}`}
+                  disabled={removePending}
+                  onClick={openConfirm}
+                >
+                  <Trash2 className="size-3.5 text-critical" aria-hidden="true" />
+                </Button>
+              </Tooltip>
+            )}
+          </div>
         )}
       </div>
     </Card>

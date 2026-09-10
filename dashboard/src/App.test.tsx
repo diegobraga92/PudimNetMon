@@ -254,4 +254,26 @@ describe('PudimNetMon dashboard', () => {
     })
     expect(await screen.findByText('Rule deleted')).toBeInTheDocument()
   })
+
+  it('forgets an agent from the Agents page', async () => {
+    const user = userEvent.setup()
+    const api = mockApi()
+    renderWithProviders(<App />)
+
+    const nav = screen.getByRole('navigation', { name: 'Main navigation' })
+    await user.click(within(nav).getByRole('button', { name: /Agents/ }))
+
+    // Agent cards render once the registry snapshot arrives.
+    expect(await screen.findByText('agent-2')).toBeInTheDocument()
+
+    // Removal uses a two-step confirm.
+    await user.click(screen.getByRole('button', { name: 'Forget agent-2' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('agent-2')).not.toBeInTheDocument()
+    })
+    expect(await screen.findByText('Agent removed')).toBeInTheDocument()
+    expect(api.getAgents().some((a) => a.agent_id === 'agent-2')).toBe(false)
+  })
 })
