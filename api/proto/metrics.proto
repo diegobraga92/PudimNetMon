@@ -40,9 +40,11 @@ message Metric {
     double latency_ms = 10;      // For DNS, TCP, TLS, HTTP, RTT etc.
     double packet_loss_pct = 11; // For packet loss checks
     double jitter_ms = 12;       // For jitter (stddev of successive RTTs)
-    int64 status_code = 13;      // For HTTP status code
     double rtt_ms = 16;          // Round-trip time for ICMP
   }
+
+  // HTTP status code (also carries tcpi_total_retrans for tcp_retransmit).
+  optional int64 status_code = 13;
 
   // Optional metadata key-value pairs (e.g., {"dns_server": "8.8.8.8"}).
   map<string, string> attributes = 20;

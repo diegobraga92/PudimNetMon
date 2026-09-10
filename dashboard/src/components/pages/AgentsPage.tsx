@@ -3,6 +3,7 @@ import type { AgentInfo } from '../../types'
 import { AgentsPanel } from '../agents/AgentsPanel'
 import { DiagnosticDialog } from '../agents/DiagnosticDialog'
 import { CommandDialog } from '../agents/CommandDialog'
+import { TlsCertsGrid } from '../charts/TlsCertsGrid'
 
 export function AgentsPage() {
   const [diagAgent, setDiagAgent] = useState<AgentInfo | null>(null)
@@ -29,6 +30,8 @@ export function AgentsPage() {
         </p>
       </div>
       <AgentsPanel onRunDiagnostic={handleRunDiagnostic} onRunCommand={handleRunCommand} />
+      {/* Certificate inventory lives here now: it is per-target, not a live chart. */}
+      <TlsCertsGrid />
       <DiagnosticDialog
         agent={diagAgent}
         open={dialogOpen}

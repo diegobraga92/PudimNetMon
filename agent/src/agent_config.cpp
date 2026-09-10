@@ -165,7 +165,7 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
     tls_targets = ParseList(get_s("tls-targets", ""));
     http_targets = ParseList(get_s("http-targets", ""));
     ping_targets = ParseList(get_s("ping-targets", ""));
-    http_protocols = ParseList(get_s("http-protocols", ""));
+    http_protocols = ParseList(get_s("http-protocols", "http1.1,http2"));
     ApplyDnsExpected(get_s("dns-expected", ""), dns_expected);
 
     static struct option long_options[] = {
@@ -291,7 +291,7 @@ ConfigResult LoadAgentConfig(int argc, char **argv, AgentConfig &out) {
                           << "      --no-tcp-handshake    Disable TCP handshake capture (libpcap)\n"
                           << "      --tcp-handshake-interval  Run pcap handshake capture at most this often (ms; default: every cycle)\n"
                           << "      --log-level           Log verbosity: debug, info, warn, error (default: info)\n"
-                          << "  -x, --http-protocols      HTTP versions to measure: http1.1,http2,http3\n"
+                          << "  -x, --http-protocols      HTTP versions to measure: http1.1,http2,http3 (default: http1.1,http2; set empty to disable)\n"
                           << "  -y, --dns-expected        Expected DNS records: host=A:1.2.3.4,host2=CNAME:x\n"
                           << "  -z, --diagnostic-port     gRPC diagnostic server port (default: 50052)\n"
                           << "  -a, --diagnostic-address  Advertised diagnostic endpoint, e.g. agent.example.com:50052\n"

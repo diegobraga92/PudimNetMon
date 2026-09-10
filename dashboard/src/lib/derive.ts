@@ -201,36 +201,6 @@ export function buildTlsCerts(metrics: MetricPoint[]): TlsCertInfo[] {
   })
 }
 
-export interface ProtocolComparison {
-  url: string
-  http11?: number
-  http2?: number
-  http3?: number
-}
-
-/** Latest latency per (base URL, protocol) for `target;http1.1` style targets. */
-export function buildProtocolComparison(metrics: MetricPoint[]): ProtocolComparison[] {
-  const latest = new Map<string, { url: string; protocol: string; latency: number }>()
-  metrics
-    .filter((m) => m.check_type === 'http_request' && m.success)
-    .forEach((m) => {
-      const semi = m.target.indexOf(';http')
-      if (semi === -1) return
-      const url = m.target.slice(0, semi)
-      const protocol = m.target.slice(semi + 1)
-      latest.set(`${url}|${protocol}`, { url, protocol, latency: m.value })
-    })
-  const groups = new Map<string, ProtocolComparison>()
-  latest.forEach((v) => {
-    const g = groups.get(v.url) ?? { url: v.url }
-    if (v.protocol === 'http1.1') g.http11 = v.latency
-    if (v.protocol === 'http2') g.http2 = v.latency
-    if (v.protocol === 'http3') g.http3 = v.latency
-    groups.set(v.url, g)
-  })
-  return Array.from(groups.values())
-}
-
 /** NTP offset time series, one line per agent, aligned into shared time buckets. */
 export function buildNtpSeries(metrics: MetricPoint[], options: SeriesOptions = {}): SeriesPoint[] {
   const { bucketMs = DEFAULT_CADENCE_MS, rangeMs } = options

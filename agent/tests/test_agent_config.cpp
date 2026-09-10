@@ -107,6 +107,9 @@ int main() {
                   cfg.probe_cfg.dns_targets[1] == "dns2.lan",
               "file dns-targets list");
         Check(cfg.use_stream_metrics, "file stream-metrics");
+        Check(cfg.probe_cfg.http_protocols ==
+                  std::vector<std::string>({"http1.1", "http2"}),
+              "file default http protocols");
         std::filesystem::remove(path);
     }
 

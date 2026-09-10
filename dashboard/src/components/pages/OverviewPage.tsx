@@ -9,9 +9,7 @@ import { Card } from '../ui/Card'
 import { AlertsPanel } from '../alerts/AlertsPanel'
 import { MetricsChart } from '../charts/MetricsChart'
 import { CheckSummaryStrip } from '../charts/CheckSummaryStrip'
-import { TlsCertsGrid } from '../charts/TlsCertsGrid'
-import { HttpDistribution } from '../charts/HttpDistribution'
-import { NtpOffsetChart } from '../charts/NtpOffsetChart'
+import { NtpOffsetStrip } from '../charts/NtpOffsetStrip'
 
 export function OverviewPage() {
   const { setView, selectedAgent, selectedCheck, windowSeconds } = useDashboard()
@@ -81,12 +79,7 @@ export function OverviewPage() {
         <MetricsChart />
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-2">
-        <TlsCertsGrid />
-        <HttpDistribution />
-      </div>
-
-      <NtpOffsetChart />
+      <NtpOffsetStrip />
     </div>
   )
 }
