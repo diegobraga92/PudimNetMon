@@ -17,9 +17,14 @@ int64_t NowMs() {
 
 } // namespace
 
-void AgentRegistry::RecordHeartbeat(const pudimnetmon::HeartbeatRequest &req) {
+void AgentRegistry::RecordHeartbeat(const pudimnetmon::HeartbeatRequest &req,
+                                    const std::string &fallback_endpoint) {
     std::unique_lock lock(m_mutex);
     auto now = NowMs();
+    // Prefer the endpoint the agent advertises
+    const std::string endpoint = req.diagnostic_endpoint().empty()
+                                     ? fallback_endpoint
+                                     : req.diagnostic_endpoint();
     auto it = m_agents.find(req.agent_id());
     if (it == m_agents.end()) {
         AgentEntry entry;
@@ -28,14 +33,14 @@ void AgentRegistry::RecordHeartbeat(const pudimnetmon::HeartbeatRequest &req) {
         entry.interval_ms = req.interval_ms();
         entry.version = req.version();
         entry.first_seen_unix_ms = now;
-        entry.diagnostic_endpoint = req.diagnostic_endpoint();
+        entry.diagnostic_endpoint = endpoint;
         m_agents[req.agent_id()] = entry;
         logger::emit("info", "New agent registered", req.agent_id());
     } else {
         it->second.last_seen_unix_ms = now;
         it->second.interval_ms = req.interval_ms();
         it->second.version = req.version();
-        it->second.diagnostic_endpoint = req.diagnostic_endpoint();
+        it->second.diagnostic_endpoint = endpoint;
     }
     m_heartbeat_count++;
 }

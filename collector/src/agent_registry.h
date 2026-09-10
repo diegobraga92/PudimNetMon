@@ -28,7 +28,8 @@ public:
     AgentRegistry() = default;
 
     // Records a heartbeat and registers the agent on first sight.
-    void RecordHeartbeat(const pudimnetmon::HeartbeatRequest &req);
+    void RecordHeartbeat(const pudimnetmon::HeartbeatRequest &req,
+                         const std::string &fallback_endpoint = "");
 
     // Agents that heartbeated within timeout_ms.
     size_t ActiveAgentCount(int64_t timeout_ms = 30000) const;

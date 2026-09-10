@@ -107,6 +107,7 @@ add_executable(pudim-collector
   src/release_mirror.cpp
   src/agent_registry.cpp
   src/agent_rpc.cpp
+  src/agent_endpoint.cpp
   src/agent_service.cpp
   src/command_scheduler.cpp
   src/http_server.cpp
@@ -209,6 +210,18 @@ target_include_directories(test-alerting
     ${CMAKE_SOURCE_DIR}/src
 )
 add_test(NAME alerting-tests COMMAND test-alerting)
+
+# Peer-derived diagnostic endpoint unit tests (no database required)
+add_executable(test-agent-peer
+  tests/test_agent_peer.cpp
+  src/agent_endpoint.cpp
+)
+target_link_libraries(test-agent-peer
+  PRIVATE
+    Threads::Threads
+)
+target_include_directories(test-agent-peer PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME agent-peer-tests COMMAND test-agent-peer)
 
 # Kafka storage consumer. Persists metrics to TimescaleDB.
 add_executable(pudim-consumer-storage

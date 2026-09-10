@@ -20,7 +20,7 @@ export async function apiGet<T>(path: string, params?: Record<string, string | n
     }
   }
   const resp = await fetch(url.pathname + url.search)
-  if (!resp.ok) throw new ApiError(`HTTP ${resp.status}`, resp.status)
+  if (!resp.ok) throw new ApiError(await errorMessage(resp), resp.status)
   return (await resp.json()) as T
 }
 
@@ -54,6 +54,6 @@ export async function apiPostForm<T>(path: string, body: Record<string, string>)
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(body),
   })
-  if (!resp.ok) throw new ApiError(`HTTP ${resp.status}`, resp.status)
+  if (!resp.ok) throw new ApiError(await errorMessage(resp), resp.status)
   return (await resp.json()) as T
 }

@@ -2,6 +2,7 @@
 
 #include <chrono>
 
+#include "agent_endpoint.h"
 #include "agent_registry.h"
 #include "logging.h"
 
@@ -13,10 +14,15 @@ AgentServiceImpl::AgentServiceImpl(AgentRegistry &registry)
 grpc::Status AgentServiceImpl::SendHeartbeat(
     grpc::ServerContext *ctx, const pudimnetmon::HeartbeatRequest *request,
     pudimnetmon::HeartbeatResponse *response) {
-    (void)ctx;
+    // Fall back to the address the heartbeat arrived from.
+    std::string fallback_endpoint;
+    if (request->diagnostic_endpoint().empty() && ctx != nullptr) {
+        fallback_endpoint = DiagnosticEndpointFromPeer(
+            ctx->peer(), kDefaultAgentDiagnosticPort);
+    }
 
     // Record the heartbeat
-    m_registry.RecordHeartbeat(*request);
+    m_registry.RecordHeartbeat(*request, fallback_endpoint);
 
     logger::emit("info", "Heartbeat received from " + request->agent_id(),
                  request->agent_id());
