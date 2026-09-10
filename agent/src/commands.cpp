@@ -42,7 +42,11 @@ std::string ReadAll(FILE *fp) {
 }
 
 std::string RunFixed(const std::string &cmd) {
+#ifdef _WIN32
     FILE *fp = popen((cmd + " 2>&1").c_str(), "r");
+#else
+    FILE *fp = popen(("( " + cmd + " ) 2>&1").c_str(), "r");
+#endif
     if (!fp) return "";
     std::string out = ReadAll(fp);
     pclose(fp);
@@ -384,15 +388,34 @@ double NumberBefore(const std::string &text, const std::string &marker) {
     }
 }
 
+// True when the candidate binary is Ookla's client. The Python
+// `speedtest-cli` package installs entry points named both `speedtest` and
+// `speedtest-cli`, so the binary name alone does not identify the vendor.
+bool IsOoklaTool(const std::string &bin) {
+    if (bin.empty()) return false;
+    std::string out = RunBounded(bin + " --version", 15);
+    for (char &c : out) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return out.find("ookla") != std::string::npos;
+}
+
+// True when the CLI rejected the flags we passed instead of reporting results.
+bool SpeedtestRejectedFlags(const std::string &out) {
+    return out.find("usage:") != std::string::npos ||
+           out.find("Traceback") != std::string::npos ||
+           out.find("unknown option") != std::string::npos ||
+           out.find("unrecognized arguments") != std::string::npos;
+}
+
 // Requires a speedtest tool on the agent.
 void RunSpeedtest(const CommandParams &params, CommandResponse *resp) {
     std::string server_id = GetParam(params, "server_id", "");
-    std::string tool =
+    std::string named =
         FindTool("speedtest", {"/usr/local/bin/speedtest", "/usr/bin/speedtest",
                                "/opt/homebrew/bin/speedtest"});
-    std::string cli =
-        tool.empty() ? FindTool("speedtest-cli", {}) : std::string();
-    if (tool.empty() && cli.empty()) {
+    std::string cli = FindTool("speedtest-cli", {});
+    if (named.empty() && cli.empty()) {
         resp->set_success(false);
         resp->set_error("no speedtest tool on agent: install Ookla 'speedtest' "
                         "or 'speedtest-cli'");
@@ -401,21 +424,40 @@ void RunSpeedtest(const CommandParams &params, CommandResponse *resp) {
         return;
     }
 
-    bool ookla = !tool.empty();
+    // Prefer Ookla when present (nested JSON, bandwidth in bits/s); otherwise
+    // fall back to speedtest-cli, which reports flat bytes/s fields.
+    std::string tool;
+    bool ookla = false;
+    if (IsOoklaTool(named)) {
+        tool = named;
+        ookla = true;
+    } else if (IsOoklaTool(cli)) {
+        tool = cli;
+        ookla = true;
+    } else {
+        tool = cli.empty() ? named : cli;
+    }
+
     std::string base =
         ookla ? (tool + " --format=json --accept-license --accept-gdpr")
-              : (cli + " --json");
+              : (tool + " --json");
     if (!server_id.empty()) {
         base += ookla ? (" --server-id=" + server_id)
                       : (" --server " + server_id);
     }
 
     std::string out = RunBounded(base, 420);
-    if (out.find("usage:") != std::string::npos ||
-        out.find("Traceback") != std::string::npos ||
-        out.find("unknown option") != std::string::npos ||
-        out.find("--format") != std::string::npos) {
-        out = RunBounded((cli.empty() ? tool : cli) + " --json", 420);
+    if (SpeedtestRejectedFlags(out)) {
+        // Some installs expose a single client under both names, so retry once
+        // with the opposite flag spelling before giving up.
+        std::string alt =
+            ookla ? (tool + " --json")
+                  : (tool + " --format=json --accept-license --accept-gdpr");
+        if (!server_id.empty()) {
+            alt += ookla ? (" --server " + server_id)
+                         : (" --server-id=" + server_id);
+        }
+        out = RunBounded(alt, 420);
     }
 
     resp->mutable_detail()->append("=== speedtest ===\n");
