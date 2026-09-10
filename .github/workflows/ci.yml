@@ -85,18 +85,35 @@ jobs:
             "https://github.com/microsoft/vcpkg-tool/releases/download/$env:VCPKG_TOOL_VERSION/vcpkg.exe"
           & "$env:VCPKG_ROOT\vcpkg.exe" version --disable-metrics
 
+      - name: Resolve runner image identity (for the vcpkg cache key)
+        id: runner-image
+        shell: pwsh
+        run: |
+          $os    = if ($env:ImageOS)      { $env:ImageOS }      else { 'unknown' }
+          $image = if ($env:ImageVersion) { $env:ImageVersion } else { 'unknown' }
+          "os=$os"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
+          "image=$image" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
+          Write-Host "vcpkg cache key image: ImageOS=$os ImageVersion=$image"
+
       # Check latest: https://github.com/actions/cache/releases
-      - name: Cache vcpkg artifacts
-        uses: actions/cache@v5
+      - name: Restore vcpkg cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             ${{ env.VCPKG_ROOT }}/downloads
             ${{ github.workspace }}/.vcpkg-cache
             build/agent-win/vcpkg_installed
-          key: vcpkg-v3-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('agent/vcpkg.json') }}-${{ env.VCPKG_TOOL_VERSION }}
+          # "v4" deliberately breaks prefix-matching against the stale v3
+          # entries created before the runner image was part of the key (bump
+          # it again whenever the cache layout changes).
+          key: vcpkg-v4-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ steps.runner-image.outputs.os }}-${{ steps.runner-image.outputs.image }}-${{ hashFiles('agent/vcpkg.json') }}-${{ env.VCPKG_TOOL_VERSION }}
+          # Prefix fallback only (never an exact hit): after an image roll-over
+          # this still brings back the downloaded sources so the one-off rebuild
+          # is faster, and because the primary key missed, the fresh tree gets
+          # saved under the new key at the end of the job.
           restore-keys: |
-            vcpkg-v3-${{ runner.os }}-
-          save-always: true
+            vcpkg-v4-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-
 
       - name: Inspect restored vcpkg cache
         shell: pwsh
@@ -115,6 +132,7 @@ jobs:
           Show-CacheDir 'installed tree'    "build/agent-win/vcpkg_installed"
 
       - name: Configure (MSVC)
+        id: configure
         shell: pwsh
         run: |
           cmake -S agent -B build/agent-win `
@@ -456,6 +474,21 @@ jobs:
           name: pudimnetmon-agent-windows-setup
           path: dist/installer/*
           if-no-files-found: error
+
+      # Persist the freshly built vcpkg tree even when a later step (for
+      # example the installer smoke test) fails, so a multi-hour dependency
+      # build is never discarded. This is the supported replacement for the
+      # deprecated `save-always` input of actions/cache, which does not actually
+      # work and was dropped from the restore step above.
+      - name: Save vcpkg cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true' && steps.configure.conclusion == 'success'
+        uses: actions/cache/save@v5
+        with:
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+          path: |
+            ${{ env.VCPKG_ROOT }}/downloads
+            ${{ github.workspace }}/.vcpkg-cache
+            build/agent-win/vcpkg_installed
 
   dashboard:
     name: Dashboard (lint + build)
