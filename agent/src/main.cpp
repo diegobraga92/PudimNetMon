@@ -260,6 +260,8 @@ int RunAgent(int argc, char **argv) {
         if (!buffer.empty()) {
             if (!fresh.empty()) {
                 should_send = true;
+            } else if (buffer.size() > 1) {
+                should_send = true;
             } else if (now - last_send_attempt >=
                        std::chrono::milliseconds(current_interval_ms)) {
                 should_send = true;
@@ -267,17 +269,28 @@ int RunAgent(int argc, char **argv) {
         }
 
         if (should_send) {
-            last_send_attempt = now;
-            std::string traceparent = pudimagent::GenerateTraceParent();
-            MetricsBatch &to_send = buffer.front();
-            LOG_INFO("Collected " + std::to_string(to_send.metrics_size()) +
-                     " metrics, sending to collector");
-            bool ok = cfg.use_stream_metrics
-                          ? clients.second->StreamMetrics(cfg.node_id,
-                                                          to_send.metrics(),
-                                                          traceparent)
-                          : clients.second->SendBatch(to_send, traceparent);
-            if (ok) {
+            constexpr size_t kMaxBatchesPerCycle = 8;
+            const size_t max_sends = buffer.size() > 1 ? kMaxBatchesPerCycle : 1;
+            for (size_t sent = 0; sent < max_sends && !buffer.empty(); ++sent) {
+                last_send_attempt = now;
+                std::string traceparent = pudimagent::GenerateTraceParent();
+                MetricsBatch &to_send = buffer.front();
+                LOG_INFO("Collected " + std::to_string(to_send.metrics_size()) +
+                         " metrics, sending to collector");
+                bool ok = cfg.use_stream_metrics
+                              ? clients.second->StreamMetrics(cfg.node_id,
+                                                              to_send.metrics(),
+                                                              traceparent)
+                              : clients.second->SendBatch(to_send, traceparent);
+                if (!ok) {
+                    LOG_WARN("Metrics batch rejected or send failed; keeping it buffered");
+                    if (failover.OnSendFailure()) {
+                        LOG_WARN("Failing over to " + failover.CurrentEndpoint());
+                        clients = reconnect();
+                    }
+                    break;  // stop draining until the connection recovers
+                }
+
                 buffer.pop_front();
                 LOG_INFO("Metrics batch accepted by collector");
                 failover.OnSendSuccess();
@@ -305,12 +318,6 @@ int RunAgent(int argc, char **argv) {
                              std::to_string(disk_drained_total) +
                              " persisted batches from disk buffer (pending=" +
                              std::to_string(disk_buffer.Size()) + ")");
-                }
-            } else {
-                LOG_WARN("Metrics batch rejected or send failed; keeping it buffered");
-                if (failover.OnSendFailure()) {
-                    LOG_WARN("Failing over to " + failover.CurrentEndpoint());
-                    clients = reconnect();
                 }
             }
         }

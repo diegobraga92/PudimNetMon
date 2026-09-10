@@ -13,6 +13,9 @@ ExecStart=/usr/local/bin/pudim-agent --node-id=%H
 # Run unprivileged and retain only the capabilities the probes need
 User=nobody
 Group=nogroup
+# Persistent state for the disk-backed metric buffer.
+StateDirectory=pudim
+StateDirectoryMode=0750
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
