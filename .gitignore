@@ -6,6 +6,7 @@ build-agent-release/
 build-collector/
 build-collector-debug/
 build-agent-debug/
+build-agent-static/
 build-agent-windows/
 
 # Installer staging + output (produced by CI / package steps)

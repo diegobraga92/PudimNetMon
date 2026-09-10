@@ -19,7 +19,7 @@ COPY api/ ./api/
 RUN cmake -S collector -B build && \
     cmake --build build -j$(nproc) && \
     cp build/pudim-collector /usr/local/bin/pudim-collector && \
-    cmake -S agent -B build-agent && \
+    cmake -S agent -B build-agent -DPUDIM_STATIC_GRPC=ON && \
     cmake --build build-agent -j$(nproc) && \
     mkdir -p /agents && \
     cp build-agent/pudim-agent /agents/pudim-agent-linux-amd64 && \

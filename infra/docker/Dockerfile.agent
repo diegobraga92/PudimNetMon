@@ -11,14 +11,17 @@ WORKDIR /build
 COPY agent/ ./agent/
 COPY api/ ./api/
 
-RUN cmake -S agent -B build && \
+# Build the agent with gRPC/protobuf/abseil linked statically so the staged
+# binary runs on any Debian/Ubuntu release
+RUN cmake -S agent -B build -DPUDIM_STATIC_GRPC=ON && \
     cmake --build build -j$(nproc) && \
     cp build/pudim-agent /usr/local/bin/pudim-agent
 
 FROM ubuntu:24.04
 
+# The agent bundles gRPC/protobuf/abseil, so the runtime only needs the stable
+# dynamic deps
 RUN apt-get update && apt-get install -y -qq \
-    libprotobuf32t64 libgrpc++1.51t64 \
     libcurl4t64 libssl3t64 libpcap0.8t64 libsystemd0 libsqlite3-0 \
     traceroute tcpdump && \
     rm -rf /var/lib/apt/lists/*

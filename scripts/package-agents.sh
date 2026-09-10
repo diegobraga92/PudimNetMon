@@ -14,9 +14,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/dist/agents}"
 VERSION="${PUDIM_AGENT_VERSION:-0.1.0}"
 
-echo "==> Building agent (Release)"
+echo "==> Building agent (Release, static gRPC/protobuf/abseil)"
 cmake -S "$ROOT/agent" -B "$ROOT/build-agent-release" \
-    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_TYPE=Release -DPUDIM_STATIC_GRPC=ON
 cmake --build "$ROOT/build-agent-release" -j"$(nproc)"
 
 echo "==> Staging into $OUT"

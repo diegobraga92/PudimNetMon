@@ -5,12 +5,10 @@
 #     reads an optional `-cfg-<base64url>` config token from its own file name
 #     (as served by the dashboard) so the collector/node are applied for free.
 #
-# The agent links gRPC/protobuf/OpenSSL/cURL which use dlopen and NSS at
-# runtime, so a fully static glibc binary is not possible. This produces the
-# same kind of artifact the Docker images ship: a binary built on the pinned
-# ubuntu:24.04 base, meant to run on Ubuntu 24.04+ (or any distro where the
-# matching runtime libs from the agent Dockerfile are installed). The install
-# script installs those libs on Debian/Ubuntu automatically.
+# The agent links OpenSSL/cURL/libpcap dynamically (they use dlopen and NSS at
+# runtime, so a fully static glibc binary is not possible), but gRPC, protobuf
+# and abseil are linked statically (PUDIM_STATIC_GRPC). Their shared-library
+# sonames are not stable across Ubuntu releases.
 #
 # Usage:
 #   scripts/build-linux-release.sh [options]
@@ -56,8 +54,8 @@ mkdir -p dist
 
 # ---- build ------------------------------------------------------------------
 build_host() {
-  echo "==> Building agent (host toolchain, Release)"
-  cmake -S agent -B build-agent-release -DCMAKE_BUILD_TYPE=Release
+  echo "==> Building agent (host toolchain, Release, static gRPC/protobuf/abseil)"
+  cmake -S agent -B build-agent-release -DCMAKE_BUILD_TYPE=Release -DPUDIM_STATIC_GRPC=ON
   cmake --build build-agent-release -j"$(nproc)"
   cp build-agent-release/pudim-agent dist/pudim-agent-linux-${ARCH}
 }
@@ -77,7 +75,7 @@ RUN apt-get update && apt-get install -y -qq \
 WORKDIR /build
 COPY agent/ /build/agent/
 COPY api/ /build/api/
-RUN cmake -S agent -B build -DCMAKE_BUILD_TYPE=Release && \
+RUN cmake -S agent -B build -DCMAKE_BUILD_TYPE=Release -DPUDIM_STATIC_GRPC=ON && \
     cmake --build build -j$(nproc)
 EOF
   docker create --name pudimnetmon-agent-builder-c "$image" /bin/true >/dev/null

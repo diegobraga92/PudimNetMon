@@ -59,6 +59,116 @@ else()
   message(STATUS "libsystemd NOT found: sd_notify disabled")
 endif()
 
+option(PUDIM_STATIC_GRPC "Statically link gRPC/protobuf/abseil (Linux release builds)" OFF)
+
+# Everything gRPC/protobuf/abseil is bundled into the executable when PUDIM_STATIC_GRPC=ON.
+set(PUDIM_PROTO_LINK_TARGETS protobuf::libprotobuf gRPC::grpc++)
+
+if(PUDIM_STATIC_GRPC)
+  if(WIN32 OR APPLE)
+    message(FATAL_ERROR "PUDIM_STATIC_GRPC is only supported on Linux")
+  endif()
+  if(NOT PkgConfig_FOUND)
+    find_package(PkgConfig REQUIRED)
+  endif()
+
+  # pkg-config --static lists gRPC's full transitive closure (its own libraries,
+  # upb, re2, c-ares and every abseil library) in a dependency-safe order.
+  execute_process(
+    COMMAND pkg-config --libs --static grpc++
+    OUTPUT_VARIABLE _pudim_grpc_static_flags
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _pudim_pc_rc)
+  if(NOT _pudim_pc_rc EQUAL 0 OR _pudim_grpc_static_flags STREQUAL "")
+    message(FATAL_ERROR "pkg-config --libs --static grpc++ failed; install the static gRPC/abseil dev packages")
+  endif()
+  execute_process(
+    COMMAND pkg-config --variable=libdir grpc++
+    OUTPUT_VARIABLE _pudim_libdir
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _pudim_libdir)
+    set(_pudim_libdir "/usr/lib")
+  endif()
+
+  set(_pudim_lib_dirs "${_pudim_libdir}")
+  if(CMAKE_LIBRARY_ARCHITECTURE)
+    list(APPEND _pudim_lib_dirs "${_pudim_libdir}/${CMAKE_LIBRARY_ARCHITECTURE}")
+    list(APPEND _pudim_lib_dirs "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}")
+  endif()
+
+  # C++ libraries to bundle statically. Everything else (ssl, crypto, z, zstd,
+  # dl, pthread, rt, atomic) stays dynamic so it can be shared with curl.
+  set(_pudim_static_re "^-l(grpc\\+\\+|grpc|gpr|upb|address_sorting|protobuf|protobuf-lite|re2|cares|absl_.*)$")
+  set(_pudim_grpc_static_libs "")
+  set(_pudim_grpc_dynamic_flags "")
+  separate_arguments(_pudim_tokens UNIX_COMMAND "${_pudim_grpc_static_flags}")
+  foreach(_tok IN LISTS _pudim_tokens)
+    if(_tok MATCHES "${_pudim_static_re}")
+      string(REGEX REPLACE "^-l" "" _name "${_tok}")
+
+      set(_pudim_arch "")
+      foreach(_dir IN LISTS _pudim_lib_dirs)
+        if(EXISTS "${_dir}/lib${_name}.a")
+          set(_pudim_arch "${_dir}/lib${_name}.a")
+          break()
+        endif()
+      endforeach()
+      if(NOT _pudim_arch)
+        # Some distros ship no static archive for a dependency (c-ares on Ubuntu
+        # 24.04). Fall back to the shared library rather than failing the build
+        message(STATUS "  ${_name}: no static archive, linking shared")
+        list(APPEND _pudim_grpc_dynamic_flags "-l${_name}")
+      else()
+        list(APPEND _pudim_grpc_static_libs "${_pudim_arch}")
+      endif()
+    elseif(_tok MATCHES "^-l:libjitterentropy\\.a$")
+      # Only pulled in by a *static* libcrypto; OpenSSL stays dynamic here.
+    else()
+      list(APPEND _pudim_grpc_dynamic_flags "${_tok}")
+    endif()
+  endforeach()
+
+  # gRPC's .pc does not list every abseil archive our code pulls in through the
+  # generated stubs (e.g. absl::log_internal::LogMessage), so bundle them all.
+  set(_pudim_absl_archives "")
+  foreach(_dir IN LISTS _pudim_lib_dirs)
+    file(GLOB _pudim_absl_globbed "${_dir}/libabsl_*.a")
+    if(_pudim_absl_globbed)
+      set(_pudim_absl_archives ${_pudim_absl_globbed})
+      break()
+    endif()
+  endforeach()
+  if(NOT _pudim_absl_archives)
+    message(FATAL_ERROR "no static abseil archives found in ${_pudim_lib_dirs}")
+  endif()
+  list(FILTER _pudim_absl_archives EXCLUDE REGEX "libabsl_[^/]*(test|testing|mock|matcher)[^/]*\\.a$")
+  list(APPEND _pudim_grpc_static_libs ${_pudim_absl_archives})
+
+  # gRPC's .pc omits protobuf (it is a separate package)
+  set(_pudim_protobuf_arch "")
+  foreach(_dir IN LISTS _pudim_lib_dirs)
+    if(EXISTS "${_dir}/libprotobuf.a")
+      set(_pudim_protobuf_arch "${_dir}/libprotobuf.a")
+      break()
+    endif()
+  endforeach()
+  if(NOT _pudim_protobuf_arch)
+    message(STATUS "  protobuf: no static archive, linking shared")
+    list(APPEND _pudim_grpc_dynamic_flags -lprotobuf)
+  else()
+    list(APPEND _pudim_grpc_static_libs "${_pudim_protobuf_arch}")
+  endif()
+  list(REMOVE_DUPLICATES _pudim_grpc_static_libs)
+
+  # --start-group resolves the cyclic references between the static archives.
+  set(PUDIM_PROTO_LINK_TARGETS
+    -Wl,--start-group ${_pudim_grpc_static_libs} -Wl,--end-group
+    ${_pudim_grpc_dynamic_flags})
+  message(STATUS "gRPC/protobuf/abseil: static (${_pudim_libdir})")
+else()
+  message(STATUS "gRPC/protobuf/abseil: shared")
+endif()
+
 # ---- Windows support (MSVC + vcpkg) ----
 # Platform abstraction layer, Windows service integration and the getopt shim.
 set(PUDIM_PLATFORM_SOURCES
@@ -130,8 +240,7 @@ add_library(pudim_proto STATIC
 target_include_directories(pudim_proto PUBLIC ${CMAKE_BINARY_DIR})
 target_link_libraries(pudim_proto
   PUBLIC
-    protobuf::libprotobuf
-    gRPC::grpc++
+    ${PUDIM_PROTO_LINK_TARGETS}
 )
 
 # Agent executable
@@ -158,8 +267,7 @@ add_executable(pudim-agent
 target_link_libraries(pudim-agent
   PRIVATE
     pudim_proto
-    protobuf::libprotobuf
-    gRPC::grpc++
+    ${PUDIM_PROTO_LINK_TARGETS}
     Threads::Threads
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -199,8 +307,7 @@ add_executable(test-probes
 target_link_libraries(test-probes
   PRIVATE
     pudim_proto
-    protobuf::libprotobuf
-    gRPC::grpc++
+    ${PUDIM_PROTO_LINK_TARGETS}
     Threads::Threads
     OpenSSL::SSL
     OpenSSL::Crypto

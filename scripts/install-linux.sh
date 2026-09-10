@@ -194,7 +194,7 @@ distro_id() {
   fi
 }
 
-RUNTIME_LIBS="libprotobuf32t64 libgrpc++1.51t64 libcurl4t64 libssl3t64 libpcap0.8t64 libsystemd0 libsqlite3-0"
+RUNTIME_LIBS="libcurl4t64 libssl3t64 libpcap0.8t64 libsystemd0 libsqlite3-0"
 
 if [ "$DRY_RUN" -eq 0 ]; then
   if needs_runtime_libs; then
@@ -204,9 +204,16 @@ if [ "$DRY_RUN" -eq 0 ]; then
       run_as_root apt-get update
       # shellcheck disable=SC2086
       run_as_root apt-get install -y $RUNTIME_LIBS
+      
+      if needs_runtime_libs; then
+        echo "error: the agent still has missing shared libraries after" >&2
+        echo "installing: $RUNTIME_LIBS" >&2
+        echo "       Inspect with: ldd $BINARY_FILE | grep 'not found'" >&2
+        exit 1
+      fi
     else
-      echo "error: the prebuilt agent needs matching gRPC/protobuf/OpenSSL" >&2
-      echo "runtime libraries that are missing on this host. Install them" >&2
+      echo "error: the prebuilt agent needs runtime libraries that are missing" >&2
+      echo "on this host (OpenSSL/cURL/libpcap/libsystemd/sqlite3). Install them" >&2
       echo "manually, use the agent Docker image (infra/docker/Dockerfile.agent)," >&2
       echo "or build from source (see the README)." >&2
       exit 1
