@@ -86,23 +86,6 @@ bool AgentRegistry::RemoveAgent(const std::string &agent_id) {
     return true;
 }
 
-size_t AgentRegistry::ExpireStale(int64_t max_age_ms) {
-    if (max_age_ms <= 0) return 0;
-    std::unique_lock lock(m_mutex);
-    const int64_t cutoff = NowMs() - max_age_ms;
-    size_t removed = 0;
-    for (auto it = m_agents.begin(); it != m_agents.end();) {
-        if (it->second.last_seen_unix_ms < cutoff) {
-            logger::emit("info", "Agent expired from registry", it->first);
-            it = m_agents.erase(it);
-            ++removed;
-        } else {
-            ++it;
-        }
-    }
-    return removed;
-}
-
 uint64_t AgentRegistry::HeartbeatCount() const {
     std::shared_lock lock(m_mutex);
     return m_heartbeat_count;

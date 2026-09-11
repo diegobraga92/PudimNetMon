@@ -60,7 +60,6 @@ services:
       PUDIM_GITHUB_OWNER: ${PUDIM_GITHUB_OWNER:-diegobraga92}
       PUDIM_GITHUB_REPO: ${PUDIM_GITHUB_REPO:-PudimNetMon}
       PUDIM_RELEASE_SYNC_SECONDS: ${PUDIM_RELEASE_SYNC_SECONDS:-3600}
-      PUDIM_AGENT_TTL_SECONDS: ${PUDIM_AGENT_TTL_SECONDS:-0}
     command:
       - "--kafka-brokers=kafka:9092"
       - "--alert-rules-path=/etc/pudim/alert_rules.json"

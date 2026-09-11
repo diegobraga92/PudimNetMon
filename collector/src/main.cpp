@@ -61,7 +61,6 @@ int main(int argc, char **argv) {
     std::string github_api_base = "https://api.github.com";
     std::string github_token;             // optional; from --github-token or env
     int64_t release_sync_seconds = 3600;  // 0 = sync once at startup only
-    int64_t agent_ttl_seconds = 0;  // 0 = keep offline agents in the registry forever
 
     auto get_env = [](const char *name, const std::string &def) {
         const char *v = std::getenv(name);
@@ -81,9 +80,6 @@ int main(int argc, char **argv) {
     release_sync_seconds =
         std::stoll(get_env("PUDIM_RELEASE_SYNC_SECONDS",
                            std::to_string(release_sync_seconds)));
-    agent_ttl_seconds =
-        std::stoll(get_env("PUDIM_AGENT_TTL_SECONDS",
-                           std::to_string(agent_ttl_seconds)));
 
     // TODO: Check about replacing CLI settings
 
@@ -147,8 +143,6 @@ int main(int argc, char **argv) {
             github_token = v;
         } else if ((v = opt(arg, "--release-sync-seconds", i)) != "") {
             release_sync_seconds = std::stoll(v);
-        } else if ((v = opt(arg, "--agent-ttl-seconds", i)) != "") {
-            agent_ttl_seconds = std::stoll(v);
         } else if (arg == "--help") {
             std::cout << "Usage: pudim-collector [options]\n"
                       << "  --grpc-addr         gRPC listen address (default: 0.0.0.0:50051)\n"
@@ -179,8 +173,6 @@ int main(int argc, char **argv) {
                       << "  --github-token        Optional GitHub token for private repos / rate limits\n"
                       << "  --release-sync-seconds How often to re-check the latest release\n"
                       << "                        (default: 3600; 0 = once at startup)\n"
-                      << "  --agent-ttl-seconds   Drop registered agents not seen for this many\n"
-                      << "                        seconds (default: 0 = keep them forever)\n"
                       << "  --help              Show this help\n";
             return 0;
         }
@@ -330,7 +322,6 @@ int main(int argc, char **argv) {
 
     // Wait for shutdown signal, re-syncing the release mirror on schedule.
     auto last_sync = std::chrono::steady_clock::now();
-    auto last_expire = std::chrono::steady_clock::now();
     while (s_running) {
         if (release_mirror && release_sync_seconds > 0) {
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
@@ -343,26 +334,6 @@ int main(int argc, char **argv) {
                 }
                 logger::emit("info", "Release mirror: " + summary);
                 last_sync = std::chrono::steady_clock::now();
-            }
-        }
-
-        // Optionally drop agents that stopped heartbeating (e.g. their service
-        // was uninstalled). Runs at most every 30s.
-        if (agent_ttl_seconds > 0) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                               std::chrono::steady_clock::now() - last_expire)
-                               .count();
-            if (elapsed >= 30) {
-                const size_t removed =
-                    registry.ExpireStale(agent_ttl_seconds * 1000);
-                if (removed > 0) {
-                    logger::emit(
-                        "info",
-                        "Expired " + std::to_string(removed) +
-                            " stale agent(s) from the registry (ttl " +
-                            std::to_string(agent_ttl_seconds) + "s)");
-                }
-                last_expire = std::chrono::steady_clock::now();
             }
         }
 

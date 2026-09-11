@@ -1,10 +1,8 @@
-// Unit tests for the heartbeat agent registry: removal and TTL expiry.
+// Unit tests for the heartbeat agent registry: registration and removal.
 // No database or gRPC server is required.
-#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <string>
-#include <thread>
 
 #include "agent_registry.h"
 #include "heartbeat.pb.h"
@@ -58,13 +56,8 @@ int main() {
     // The remaining agent is still registered.
     Check(registry.IsAgentAlive("agent-b", 60000), "agent-b still alive");
 
-    // TTL expiry: age the entry out, then prune with a short window.
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    Check(registry.ExpireStale(0) == 0, "non-positive ttl is a no-op");
-    Check(registry.ExpireStale(100000) == 0,
-          "fresh agent survives a long-lived ttl");
-    Check(registry.ExpireStale(1) == 1, "stale agent expired");
-    Check(registry.TotalAgentCount() == 0, "registry empty after expiry");
+    Check(registry.TotalAgentCount() == 1,
+          "idle agents are retained until explicitly removed");
 
     if (g_failures > 0) {
         std::cerr << g_failures << " agent-registry test(s) failed\n";

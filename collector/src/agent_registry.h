@@ -43,10 +43,6 @@ public:
 
     bool RemoveAgent(const std::string &agent_id);
 
-    // Drops every agent whose last heartbeat is older than max_age_ms. Returns
-    // the number of entries removed. max_age_ms <= 0 is a no-op.
-    size_t ExpireStale(int64_t max_age_ms);
-
     size_t TotalAgentCount() const;
 
     uint64_t HeartbeatCount() const;
