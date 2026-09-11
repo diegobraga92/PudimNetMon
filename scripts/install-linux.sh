@@ -80,7 +80,9 @@ PrivateDevices=true
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
 
-# Resource limits
+# Resource limits. Note: CPUQuota throttles the external tools too, so the
+# speedtest command reads roughly 10-15% lower than a bare-metal run on a fast
+# link; raise/remove it if you need parity with a terminal run.
 LimitNOFILE=65536
 MemoryMax=256M
 CPUQuota=50%
@@ -278,13 +280,15 @@ if [ "$NO_SERVICE" -eq 1 ]; then
   log "==> Skipping systemd (--no-service)"
 elif [ "$DRY_RUN" -eq 1 ]; then
   echo "    [dry-run] systemctl daemon-reload"
-  echo "    [dry-run] systemctl enable --now pudim-agent.service"
+  echo "    [dry-run] systemctl enable pudim-agent.service"
+  echo "    [dry-run] systemctl restart pudim-agent.service"
 else
-  log "==> Reloading systemd and starting pudim-agent.service"
+  log "==> Reloading systemd and (re)starting pudim-agent.service"
   systemctl daemon-reload
-  systemctl enable --now pudim-agent.service
+  systemctl enable pudim-agent.service
+  systemctl restart pudim-agent.service
   if systemctl is-active --quiet pudim-agent.service 2>/dev/null; then
-    log "==> pudim-agent.service is running"
+    log "==> pudim-agent.service is running the installed build"
   else
     log "==> Started. Verify with: systemctl status pudim-agent.service"
   fi

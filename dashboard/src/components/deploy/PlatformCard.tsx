@@ -1,6 +1,7 @@
 import { Check, Copy, Download } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '../../lib/cn'
+import { copyText } from '../../lib/clipboard'
 import { formatBytes } from '../../lib/formatters'
 import { useToast } from '../ui/toast'
 import type { AgentPlatform } from '../../types'
@@ -32,31 +33,6 @@ export function installCommand(platform: AgentPlatform): string {
     '  libpcap0.8t64 libsystemd0 libsqlite3-0',
     `./${platform.filename} --collector-endpoint=${endpoint} --node-id=$(hostname) --interval=5000`,
   ].join('\n')
-}
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-      return true
-    }
-  } catch {
-    // Fall back to the execCommand copy.
-  }
-  try {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.setAttribute('readonly', '')
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(ta)
-    return ok
-  } catch {
-    return false
-  }
 }
 
 function osLabel(os: string): string {

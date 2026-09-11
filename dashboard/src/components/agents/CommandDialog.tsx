@@ -12,6 +12,8 @@ import type { AgentCommand, AgentInfo, CommandResult } from '../../types'
 import { useAgentCommands, useRunAgentCommand } from '../../hooks/useAgentCommands'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { useToast } from '../ui/toast'
+import { copyText } from '../../lib/clipboard'
 import { formatTime } from '../../lib/formatters'
 
 interface CommandDialogProps {
@@ -126,13 +128,15 @@ function CommandResultView({
   result: CommandResult
   onReset: () => void
 }) {
+  const { toast } = useToast()
   const fields = result.fields ?? {}
   const issues = result.issues ?? []
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(result.detail || result.summary || '')
-    } catch {
-      // Ignore when the clipboard is unavailable.
+    const ok = await copyText(result.detail || result.summary || '')
+    if (ok) {
+      toast({ title: 'Command output copied', variant: 'success' })
+    } else {
+      toast({ title: 'Copy failed — select the text manually', variant: 'error' })
     }
   }
 

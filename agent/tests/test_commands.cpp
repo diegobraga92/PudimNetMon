@@ -54,6 +54,15 @@ int main() {
     Check(!pudimagent::ParseMtrLoss("HOST: dexter   Loss%  Snt   Last", &loss),
           "mtr header rejected");
 
+    const double dl_mbps = pudimagent::SpeedtestBytesPerSecToMbps(117003967);
+    Check(dl_mbps > 935.9 && dl_mbps < 936.1,
+          "ookla download bandwidth converts to ~936 Mbps");
+    const double ul_mbps = pudimagent::SpeedtestBytesPerSecToMbps(60145262);
+    Check(ul_mbps > 481.1 && ul_mbps < 481.2,
+          "ookla upload bandwidth converts to ~481 Mbps");
+    Check(pudimagent::SpeedtestBytesPerSecToMbps(0) == 0.0,
+          "zero throughput stays zero");
+
     // 1. The catalog is non-empty and exposes the expected commands.
     pudimnetmon::ListCommandsResponse list;
     pudimagent::ListCommands(&list);

@@ -283,9 +283,6 @@ std::string JsonBlock(const std::string &text, const std::string &from,
     return text.substr(start, end - start);
 }
 
-double BitsPerSecToMbps(double bps) { return bps / 1000000.0; }
-double BytesPerSecToMbps(double bps) { return bps * 8.0 / 1000000.0; }
-
 // Runs `cmd` wrapped in `timeout` when available (POSIX only) so a hung
 // external tool cannot block the agent forever.
 std::string RunBounded(const std::string &cmd, int timeout_s,
@@ -630,11 +627,13 @@ void RunSpeedtest(const CommandParams &params, CommandResponse *resp) {
     std::string ping_json = JsonBlock(parse, "ping", "download");
 
     double download_mbps =
-        ookla ? BitsPerSecToMbps(JsonNumber(dl_json, "bandwidth", 0.0))
-              : BytesPerSecToMbps(JsonNumber(parse, "download", 0.0));
+        SpeedtestBytesPerSecToMbps(JsonNumber(ookla ? dl_json : parse,
+                                             ookla ? "bandwidth" : "download",
+                                             0.0));
     double upload_mbps =
-        ookla ? BitsPerSecToMbps(JsonNumber(ul_json, "bandwidth", 0.0))
-              : BytesPerSecToMbps(JsonNumber(parse, "upload", 0.0));
+        SpeedtestBytesPerSecToMbps(JsonNumber(ookla ? ul_json : parse,
+                                             ookla ? "bandwidth" : "upload",
+                                             0.0));
     double ping_ms =
         JsonNumber(ping_json, "latency", JsonNumber(parse, "ping", 0.0));
     double jitter_ms = JsonNumber(ping_json, "jitter", 0.0);
@@ -955,6 +954,10 @@ const std::vector<CommandDef> &Catalog() {
 } // anonymous namespace
 
 const std::string &ToolHomeDir() { return ToolHomeDirImpl(); }
+
+double SpeedtestBytesPerSecToMbps(double bytes_per_s) {
+    return bytes_per_s * 8.0 / 1000000.0;
+}
 
 bool ParseMtrLoss(const std::string &line, double *loss) {
     if (loss == nullptr) return false;

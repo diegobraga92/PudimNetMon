@@ -8,10 +8,12 @@ import {
 } from 'lucide-react'
 import type { CommandRun } from '../../types'
 import { cn } from '../../lib/cn'
+import { copyText } from '../../lib/clipboard'
 import { formatDateTime } from '../../lib/formatters'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
+import { useToast } from '../ui/toast'
 
 export function RunStatusBadge({ run }: { run: CommandRun }) {
   if (run.running) return <Badge variant="info">Running</Badge>
@@ -25,14 +27,16 @@ export function RunStatusBadge({ run }: { run: CommandRun }) {
  */
 export function RunCard({ run }: { run: CommandRun }) {
   const [open, setOpen] = useState(false)
+  const { toast } = useToast()
   const fields = Object.entries(run.fields ?? {})
   const issues = run.issues ?? []
 
   const copyDetail = async () => {
-    try {
-      await navigator.clipboard.writeText(run.detail || run.summary || run.error || '')
-    } catch {
-      // Clipboard unavailable — ignore.
+    const ok = await copyText(run.detail || run.summary || run.error || '')
+    if (ok) {
+      toast({ title: 'Run output copied', variant: 'success' })
+    } else {
+      toast({ title: 'Copy failed — select the text manually', variant: 'error' })
     }
   }
 

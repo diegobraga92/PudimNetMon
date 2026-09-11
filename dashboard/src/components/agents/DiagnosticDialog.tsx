@@ -4,6 +4,8 @@ import type { AgentInfo } from '../../types'
 import { useRunDiagnostic } from '../../hooks/useDiagnostics'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { useToast } from '../ui/toast'
+import { copyText } from '../../lib/clipboard'
 import { formatTime } from '../../lib/formatters'
 
 interface DiagnosticDialogProps {
@@ -16,6 +18,7 @@ interface DiagnosticDialogProps {
 /** Runs a diagnostic against an agent and shows the output with a copy button. */
 export function DiagnosticDialog({ agent, open, onOpenChange, onResult }: DiagnosticDialogProps) {
   const run = useRunDiagnostic()
+  const { toast } = useToast()
 
   useEffect(() => {
     if (open && agent) {
@@ -35,10 +38,11 @@ export function DiagnosticDialog({ agent, open, onOpenChange, onResult }: Diagno
 
   const copy = async () => {
     if (!agent || !run.data) return
-    try {
-      await navigator.clipboard.writeText(run.data.result || run.data.error || '')
-    } catch {
-      // Ignore when the clipboard is unavailable.
+    const ok = await copyText(run.data.result || run.data.error || '')
+    if (ok) {
+      toast({ title: 'Diagnostic output copied', variant: 'success' })
+    } else {
+      toast({ title: 'Copy failed — select the text manually', variant: 'error' })
     }
   }
 

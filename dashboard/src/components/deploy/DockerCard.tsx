@@ -1,6 +1,7 @@
 import { Check, Container, Copy } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '../../lib/cn'
+import { copyText } from '../../lib/clipboard'
 import { useToast } from '../ui/toast'
 import { collectorHost } from './PlatformCard'
 
@@ -15,12 +16,12 @@ export function DockerCard() {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(DOCKER_COMMAND)
+    const ok = await copyText(DOCKER_COMMAND)
+    if (ok) {
       setCopied(true)
       toast({ title: 'Docker command copied', variant: 'success' })
       window.setTimeout(() => setCopied(false), 2000)
-    } catch {
+    } else {
       toast({ title: 'Copy failed — select the command manually', variant: 'error' })
     }
   }
