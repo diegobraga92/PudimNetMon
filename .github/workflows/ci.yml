@@ -7,8 +7,62 @@ on:
     branches: [ main ]
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      agent: ${{ steps.filter.outputs.agent }}
+      windows: ${{ steps.filter.outputs.windows }}
+      collector: ${{ steps.filter.outputs.collector }}
+      linux-release: ${{ steps.filter.outputs.linux-release }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Check latest: https://github.com/dorny/paths-filter/releases
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            # Everything that feeds the agent binaries (both platforms).
+            agent:
+              - 'agent/**'
+              - 'api/proto/**'
+              - '.github/workflows/ci.yml'
+            # The Windows job additionally builds the Inno Setup installer.
+            windows:
+              - 'agent/**'
+              - 'api/proto/**'
+              - 'installer/**'
+              - '.github/workflows/ci.yml'
+            # The collector compiles agent code (../agent/src/metrics and its
+            # headers) and shares the protos, so part of agent/ must trigger it.
+            collector:
+              - 'collector/**'
+              - 'agent/src/**'
+              - 'api/proto/**'
+              - '.github/workflows/ci.yml'
+            # The Linux release artifact is packaged by scripts/.
+            linux-release:
+              - 'agent/**'
+              - 'api/proto/**'
+              - 'scripts/**'
+              - '.github/workflows/ci.yml'
+            # The dashboard is a standalone Vite app that only talks to the
+            # collector's REST API (it does not use the protos).
+            dashboard:
+              - 'dashboard/**'
+              - '.github/workflows/ci.yml'
+
   cpp-agent:
     name: C++ Agent (build)
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
     # Check latest: https://github.com/actions/runner-images/releases
     runs-on: ubuntu-26.04
     steps:
@@ -36,6 +90,8 @@ jobs:
 
   cpp-collector:
     name: C++ Collector (build)
+    needs: changes
+    if: needs.changes.outputs.collector == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
@@ -61,6 +117,8 @@ jobs:
 
   cpp-agent-windows:
     name: C++ Agent (Windows build)
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
@@ -492,6 +550,8 @@ jobs:
 
   dashboard:
     name: Dashboard (lint + build)
+    needs: changes
+    if: needs.changes.outputs.dashboard == 'true'
     runs-on: ubuntu-26.04
     defaults:
       run:
@@ -522,6 +582,8 @@ jobs:
 
   agent-release-linux:
     name: C++ Agent (Linux release artifact)
+    needs: changes
+    if: needs.changes.outputs.linux-release == 'true'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7

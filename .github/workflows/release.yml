@@ -49,6 +49,8 @@ jobs:
           workflow: ci.yml
           branch: main
           workflow_conclusion: success
+          check_artifacts: true
+          search_artifacts: true
           if_no_artifact_found: fail
           path: dist/installer
 
