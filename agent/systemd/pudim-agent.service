@@ -16,6 +16,7 @@ Group=nogroup
 # Persistent state for the disk-backed metric buffer.
 StateDirectory=pudim
 StateDirectoryMode=0750
+Environment=HOME=/var/lib/pudim
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

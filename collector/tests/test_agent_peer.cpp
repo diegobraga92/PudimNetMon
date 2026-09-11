@@ -28,8 +28,14 @@ int main() {
              "10.0.0.5:50052", "ipv4 peer");
     ExpectEq(DiagnosticEndpointFromPeer("10.0.0.5:54321", "50052"),
              "10.0.0.5:50052", "ipv4 peer without scheme");
-    ExpectEq(DiagnosticEndpointFromPeer("ipv6:[fe80::1]:54321", "50052"),
-             "[fe80::1]:50052", "ipv6 peer");
+    ExpectEq(DiagnosticEndpointFromPeer("ipv6:[fe80::1]:54321", "50052"), "",
+             "link-local ipv6 peer is not dialable");
+    ExpectEq(DiagnosticEndpointFromPeer("ipv6:[FE80::A]:54321", "50052"), "",
+             "link-local ipv6 peer (uppercase) is not dialable");
+    ExpectEq(DiagnosticEndpointFromPeer("ipv6:[2001:db8::5]:54321", "50052"),
+             "[2001:db8::5]:50052", "routable ipv6 peer");
+    ExpectEq(DiagnosticEndpointFromPeer("ipv6:[::ffff:10.0.0.5]:54321", "50052"),
+             "10.0.0.5:50052", "ipv4-mapped ipv6 peer becomes ipv4");
     ExpectEq(DiagnosticEndpointFromPeer("ipv4:172.18.0.1:4321", "50052"),
              "172.18.0.1:50052", "docker gateway peer");
     ExpectEq(DiagnosticEndpointFromPeer("ipv4:10.0.0.5:54321", "51000"),

@@ -32,6 +32,8 @@ int64_t NowMs() {
         .count();
 }
 
+constexpr int kCommandRpcDeadlineSeconds = 900;
+
 // Small monotonic id generator for persisted schedules.
 std::string NewScheduleId() {
     static std::atomic<uint64_t> counter{0};
@@ -362,7 +364,8 @@ HttpServer::HttpServer(
         }
 
         // Dials the agent diagnostic service over mTLS when configured.
-        auto stub = PrepareAgentCall(agent_id, resp);
+        std::string endpoint;
+        auto stub = PrepareAgentCall(agent_id, resp, &endpoint);
         if (!stub) {
             return;
         }
@@ -378,7 +381,7 @@ HttpServer::HttpServer(
         pudimnetmon::DiagnosticResponse dresp;
         grpc::Status status = stub->RunDiagnostic(&ctx, dreq, &dresp);
         if (!status.ok()) {
-            SendAgentRpcError(resp, status);
+            SendAgentRpcError(resp, status, endpoint);
             return;
         }
         std::string json = "{\"success\":" +
@@ -445,7 +448,8 @@ HttpServer::HttpServer(
             return;
         }
 
-        auto stub = PrepareAgentCall(agent_id, resp);
+        std::string endpoint;
+        auto stub = PrepareAgentCall(agent_id, resp, &endpoint);
         if (!stub) {
             return;
         }
@@ -477,7 +481,7 @@ HttpServer::HttpServer(
         pudimnetmon::AgentConfigResponse cresp;
         grpc::Status status = stub->Reconfigure(&ctx, creq, &cresp);
         if (!status.ok()) {
-            SendAgentRpcError(resp, status);
+            SendAgentRpcError(resp, status, endpoint);
             return;
         }
         std::string json = "{\"success\":" +
@@ -498,7 +502,8 @@ HttpServer::HttpServer(
             return;
         }
 
-        auto stub = PrepareAgentCall(agent_id, resp);
+        std::string endpoint;
+        auto stub = PrepareAgentCall(agent_id, resp, &endpoint);
         if (!stub) {
             return;
         }
@@ -511,7 +516,7 @@ HttpServer::HttpServer(
         pudimnetmon::AgentConfigResponse gresp;
         grpc::Status status = stub->GetConfig(&ctx, greq, &gresp);
         if (!status.ok()) {
-            SendAgentRpcError(resp, status);
+            SendAgentRpcError(resp, status, endpoint);
             return;
         }
         std::string json = "{\"success\":" +
@@ -531,7 +536,8 @@ HttpServer::HttpServer(
             return;
         }
 
-        auto stub = PrepareAgentCall(agent_id, resp);
+        std::string endpoint;
+        auto stub = PrepareAgentCall(agent_id, resp, &endpoint);
         if (!stub) {
             return;
         }
@@ -544,7 +550,7 @@ HttpServer::HttpServer(
         pudimnetmon::ListCommandsResponse lresp;
         grpc::Status status = stub->ListCommands(&ctx, lreq, &lresp);
         if (!status.ok()) {
-            SendAgentRpcError(resp, status);
+            SendAgentRpcError(resp, status, endpoint);
             return;
         }
         std::string json = "{\"success\":" +
@@ -588,14 +594,15 @@ HttpServer::HttpServer(
             return;
         }
 
-        auto stub = PrepareAgentCall(agent_id, resp);
+        std::string endpoint;
+        auto stub = PrepareAgentCall(agent_id, resp, &endpoint);
         if (!stub) {
             return;
         }
 
         grpc::ClientContext ctx;
         ctx.set_deadline(std::chrono::system_clock::now() +
-                         std::chrono::seconds(30));
+                         std::chrono::seconds(kCommandRpcDeadlineSeconds));
         pudimnetmon::RunCommandRequest creq;
         creq.set_agent_id(agent_id);
         creq.set_command_id(command_id);
@@ -611,7 +618,7 @@ HttpServer::HttpServer(
         pudimnetmon::CommandResponse cresp;
         grpc::Status status = stub->RunCommand(&ctx, creq, &cresp);
         if (!status.ok()) {
-            SendAgentRpcError(resp, status);
+            SendAgentRpcError(resp, status, endpoint);
             return;
         }
 
@@ -1102,25 +1109,64 @@ std::string HttpServer::FormatPrometheusMetrics() const {
 
 std::unique_ptr<pudimnetmon::DiagnosticService::Stub>
 HttpServer::PrepareAgentCall(const std::string &agent_id,
-                             httplib::Response &resp) const {
+                             httplib::Response &resp,
+                             std::string *endpoint) const {
     // The agent must advertise a diagnostic endpoint in its heartbeat.
     std::string diag_endpoint = m_registry.GetDiagnosticEndpoint(agent_id);
     if (diag_endpoint.empty()) {
+        logger::emit("warn",
+                     "agent has no advertised diagnostic endpoint: cannot "
+                     "forward diagnostic/command calls",
+                     agent_id);
         resp.status = 404;
-        resp.set_content("{\"error\":\"agent has no advertised diagnostic "
-                         "endpoint\"}",
-                         "application/json");
+        resp.set_content(
+            "{\"error\":\"agent '" + logger::escape(agent_id) +
+                "' has no advertised diagnostic endpoint: the agent must be "
+                "online and either report diagnostic_endpoint in its heartbeat "
+                "or be reachable at its diagnostic port (default 50052)\"}",
+            "application/json");
         return nullptr;
     }
+    if (endpoint != nullptr) *endpoint = diag_endpoint;
     // Dials over mTLS when configured.
     return DialAgentDiagnostic(diag_endpoint, m_tls);
 }
 
 void HttpServer::SendAgentRpcError(httplib::Response &resp,
-                                   const grpc::Status &status) const {
+                                   const grpc::Status &status,
+                                   const std::string &endpoint) const {
     resp.status = 502;
-    resp.set_content("{\"error\":\"" + logger::escape(status.error_message()) +
-                         "\"}",
+    // gRPC often returns UNIMPLEMENTED with an empty message when the address
+    // is not an agent at all (a collector's own gRPC port, a proxy, or an agent
+    // build without the diagnostic methods), so spell the common cases out.
+    std::string msg = status.error_message();
+    if (msg.empty()) {
+        switch (status.error_code()) {
+            case grpc::StatusCode::UNIMPLEMENTED:
+                msg =
+                    "the gRPC server answered but does not implement the agent "
+                    "DiagnosticService (wrong endpoint, a collector port, or an "
+                    "agent build without pre-set commands)";
+                break;
+            case grpc::StatusCode::DEADLINE_EXCEEDED:
+                msg = "the agent did not answer in time";
+                break;
+            case grpc::StatusCode::UNAVAILABLE:
+                msg =
+                    "the agent could not be reached (offline, firewall or a "
+                    "wrong advertised address)";
+                break;
+            default:
+                msg = "agent RPC failed";
+        }
+    }
+    if (!endpoint.empty()) {
+        msg += " (diagnostic endpoint " + endpoint + ")";
+    }
+    // Logged with the endpoint so an unreachable agent is diagnosable from the
+    // collector logs alone (firewall, wrong address, stale agent, ...).
+    logger::emit("warn", "agent RPC failed: " + msg);
+    resp.set_content("{\"error\":\"" + logger::escape(msg) + "\"}",
                      "application/json");
 }
 

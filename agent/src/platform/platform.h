@@ -14,6 +14,9 @@ bool RandomBytes(unsigned char *out, size_t n);
 std::string DefaultStateDir();
 std::string TempDir();
 
+std::string AdvertisedDiagnosticEndpoint(const std::string &collector_endpoint,
+                                         const std::string &diagnostic_port);
+
 std::string LastErrorString();
 
 #ifdef _WIN32

@@ -368,5 +368,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME command-tests COMMAND test-commands)
 
+# Platform helper unit tests (local-address derivation for the advertised
+# diagnostic endpoint). No collector or network traffic is required.
+add_executable(test-platform
+  tests/test_platform.cpp
+  src/platform/platform.cpp
+)
+target_link_libraries(test-platform PRIVATE ${PUDIM_PLATFORM_LIBS})
+target_include_directories(test-platform PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(test-platform PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME platform-tests COMMAND test-platform)
+
 # Install
 install(TARGETS pudim-agent DESTINATION /usr/local/bin)

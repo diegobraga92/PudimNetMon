@@ -4,6 +4,12 @@
 
 #include "commands.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
 
 int g_failures = 0;
@@ -20,6 +26,34 @@ void Check(bool cond, const std::string &name) {
 } // namespace
 
 int main() {
+    const std::string &tool_home = pudimagent::ToolHomeDir();
+    Check(!tool_home.empty(), "tool home resolved");
+#ifdef _WIN32
+    Check(GetFileAttributesA(tool_home.c_str()) != INVALID_FILE_ATTRIBUTES,
+          "tool home exists");
+#else
+    Check(access(tool_home.c_str(), W_OK) == 0, "tool home is writable");
+#endif
+    Check(pudimagent::ToolHomeDir() == tool_home, "tool home is stable");
+
+    double loss = -1;
+    Check(pudimagent::ParseMtrLoss(
+              "  3.|-- 201.1.225.15              70.0%    20    2.3   2.3", &loss) &&
+              loss == 70.0,
+          "mtr loss parsed from percent row");
+    loss = -1;
+    Check(pudimagent::ParseMtrLoss(
+              "  2.|-- ???                       100.0    20    0.0   0.0", &loss) &&
+              loss == 100.0,
+          "mtr loss parsed for unanswered hop");
+    loss = -1;
+    Check(pudimagent::ParseMtrLoss(
+              "  8.|-- 1.1.1.1                    0.0%    20    4.0   4.0", &loss) &&
+              loss == 0.0,
+          "mtr loss parsed for healthy hop");
+    Check(!pudimagent::ParseMtrLoss("HOST: dexter   Loss%  Snt   Last", &loss),
+          "mtr header rejected");
+
     // 1. The catalog is non-empty and exposes the expected commands.
     pudimnetmon::ListCommandsResponse list;
     pudimagent::ListCommands(&list);

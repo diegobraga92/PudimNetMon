@@ -10,10 +10,16 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <bcrypt.h>
 #include <wchar.h>
 #else
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #endif
 
@@ -102,6 +108,82 @@ std::string TempDir() {
 #else
     return "/tmp";
 #endif
+}
+
+std::string AdvertisedDiagnosticEndpoint(const std::string &collector_endpoint,
+                                         const std::string &diagnostic_port) {
+    if (collector_endpoint.empty() || diagnostic_port.empty()) return "";
+
+    // Accepts "host:port", "host" and "[v6]:port".
+    std::string host = collector_endpoint;
+    if (host.front() == '[') {
+        const auto close = host.find(']');
+        if (close == std::string::npos) return "";
+        host = host.substr(1, close - 1);
+    } else {
+        const auto sep = host.rfind(':');
+        if (sep != std::string::npos) host = host.substr(0, sep);
+    }
+    if (host.empty()) return "";
+
+    struct addrinfo hints {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    struct addrinfo *addrs = nullptr;
+    if (::getaddrinfo(host.c_str(), "9", &hints, &addrs) != 0 || addrs == nullptr) {
+        return "";
+    }
+
+    std::string out;
+    for (struct addrinfo *ai = addrs; ai != nullptr && out.empty();
+         ai = ai->ai_next) {
+#ifdef _WIN32
+        SOCKET fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd == INVALID_SOCKET) continue;
+#else
+        int fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) continue;
+#endif
+        // Connecting a UDP socket sends no packets
+#ifdef _WIN32
+        const int rc =
+            ::connect(fd, ai->ai_addr, static_cast<int>(ai->ai_addrlen));
+#else
+        const int rc = ::connect(fd, ai->ai_addr, ai->ai_addrlen);
+#endif
+        if (rc == 0) {
+            struct sockaddr_storage local {};
+#ifdef _WIN32
+            int len = sizeof(local);
+#else
+            socklen_t len = sizeof(local);
+#endif
+            if (::getsockname(fd, reinterpret_cast<struct sockaddr *>(&local),
+                              &len) == 0) {
+                char buf[INET6_ADDRSTRLEN] = {0};
+                if (local.ss_family == AF_INET6) {
+                    auto *v6 = reinterpret_cast<struct sockaddr_in6 *>(&local);
+                    if (::inet_ntop(AF_INET6, &v6->sin6_addr, buf,
+                                    sizeof(buf)) != nullptr) {
+                        out = "[" + std::string(buf) + "]:" + diagnostic_port;
+                    }
+                } else if (local.ss_family == AF_INET) {
+                    auto *v4 = reinterpret_cast<struct sockaddr_in *>(&local);
+                    if (::inet_ntop(AF_INET, &v4->sin_addr, buf,
+                                    sizeof(buf)) != nullptr) {
+                        out = std::string(buf) + ":" + diagnostic_port;
+                    }
+                }
+            }
+        }
+#ifdef _WIN32
+        ::closesocket(fd);
+#else
+        ::close(fd);
+#endif
+    }
+    ::freeaddrinfo(addrs);
+    return out;
 }
 
 std::string LastErrorString() {

@@ -1,6 +1,8 @@
+#include <cerrno>
 #include <chrono>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <iomanip>
 #include <sstream>
@@ -19,6 +21,7 @@
 #else
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -41,15 +44,104 @@ std::string ReadAll(FILE *fp) {
     return out;
 }
 
-std::string RunFixed(const std::string &cmd) {
+// Creates `path` (including parents) when missing. Returns true only when the
+// directory exists and the agent can write to it.
+bool MakeDirs(const std::string &path) {
+    if (path.empty()) return false;
 #ifdef _WIN32
-    FILE *fp = popen((cmd + " 2>&1").c_str(), "r");
+    const std::wstring w = pudimagent::platform::Utf8ToWide(path);
+    if (w.empty()) return false;
+    for (size_t i = 0; i < w.size(); ++i) {
+        if (w[i] != L'\\' && w[i] != L'/') continue;
+        CreateDirectoryW(w.substr(0, i).c_str(), nullptr);
+    }
+    if (!CreateDirectoryW(w.c_str(), nullptr) &&
+        GetLastError() != ERROR_ALREADY_EXISTS) {
+        return GetFileAttributesW(w.c_str()) != INVALID_FILE_ATTRIBUTES;
+    }
+    return true;
 #else
-    FILE *fp = popen(("( " + cmd + " ) 2>&1").c_str(), "r");
+    for (size_t i = 1; i <= path.size(); ++i) {
+        if (i != path.size() && path[i] != '/') continue;
+        if (::mkdir(path.substr(0, i).c_str(), 0700) != 0 && errno != EEXIST) {
+            return false;
+        }
+    }
+    // The temporary fallback has a predictable name, so never hand a directory
+    // that somebody else owns (or that others can write to) to a child process.
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0) return false;
+    if (st.st_uid != ::geteuid()) return false;
+    return (st.st_mode & (S_IWGRP | S_IWOTH)) == 0;
+#endif
+}
+
+// Directory handed to external tools as $HOME.
+const std::string &ToolHomeDirImpl() {
+    static const std::string resolved = [] {
+        const std::vector<std::string> candidates = {
+#ifdef _WIN32
+            pudimagent::platform::DefaultStateDir() + "\\tool-home",
+            pudimagent::platform::TempDir() + "pudim-tool-home",
+#else
+            pudimagent::platform::DefaultStateDir() + "/tool-home",
+            pudimagent::platform::TempDir() + "/pudim-tool-home",
+#endif
+        };
+        for (const auto &dir : candidates) {
+            if (MakeDirs(dir)) return dir;
+        }
+        return std::string();
+    }();
+    return resolved;
+}
+
+// Shell prefix pointing external tools at a private, writable HOME.
+std::string ToolHomePrefix() {
+    const std::string &home = ToolHomeDirImpl();
+    if (home.empty()) return std::string();
+#ifdef _WIN32
+    const std::string cfg = home + "\\.config";
+    MakeDirs(cfg);
+    return "set \"HOME=" + home + "\" && set \"XDG_CONFIG_HOME=" + cfg +
+           "\" && ";
+#else
+    const std::string cfg = home + "/.config";
+    MakeDirs(cfg);
+    return "HOME='" + home + "' XDG_CONFIG_HOME='" + cfg + "' ";
+#endif
+}
+
+// Renders a pclose() status as "exit 0", "killed by signal 6 (Aborted)", ...
+std::string DescribeExitStatus(int status) {
+    if (status < 0) return "no exit status";
+#ifdef _WIN32
+    return "exit " + std::to_string(status);
+#else
+    if (WIFSIGNALED(status)) {
+        const int sig = WTERMSIG(status);
+        const char *name = ::strsignal(sig);
+        return "killed by signal " + std::to_string(sig) +
+               (name != nullptr ? std::string(" (") + name + ")" : std::string());
+    }
+    if (WIFEXITED(status)) return "exit " + std::to_string(WEXITSTATUS(status));
+    return "status " + std::to_string(status);
+#endif
+}
+
+// Runs `cmd` through the shell with stdout and stderr merged.
+std::string RunFixed(const std::string &cmd, int *exit_status = nullptr) {
+    if (exit_status != nullptr) *exit_status = -1;
+    const std::string full = ToolHomePrefix() + cmd;
+#ifdef _WIN32
+    FILE *fp = popen((full + " 2>&1").c_str(), "r");
+#else
+    FILE *fp = popen(("( " + full + " ) 2>&1").c_str(), "r");
 #endif
     if (!fp) return "";
     std::string out = ReadAll(fp);
-    pclose(fp);
+    const int status = pclose(fp);
+    if (exit_status != nullptr) *exit_status = status;
     return out;
 }
 
@@ -191,17 +283,19 @@ std::string JsonBlock(const std::string &text, const std::string &from,
     return text.substr(start, end - start);
 }
 
-double BitsPerSecToMbps(double bps) { return bps * 8.0 / 1000000.0; }
+double BitsPerSecToMbps(double bps) { return bps / 1000000.0; }
+double BytesPerSecToMbps(double bps) { return bps * 8.0 / 1000000.0; }
 
 // Runs `cmd` wrapped in `timeout` when available (POSIX only) so a hung
 // external tool cannot block the agent forever.
-std::string RunBounded(const std::string &cmd, int timeout_s) {
+std::string RunBounded(const std::string &cmd, int timeout_s,
+                       int *exit_status = nullptr) {
 #ifndef _WIN32
-    return RunFixed("timeout " + std::to_string(timeout_s) + " " + cmd +
-                    " || true");
+    return RunFixed("timeout " + std::to_string(timeout_s) + " " + cmd,
+                    exit_status);
 #else
     (void)timeout_s;
-    return RunFixed(cmd);
+    return RunFixed(cmd, exit_status);
 #endif
 }
 
@@ -402,10 +496,54 @@ bool IsOoklaTool(const std::string &bin) {
 
 // True when the CLI rejected the flags we passed instead of reporting results.
 bool SpeedtestRejectedFlags(const std::string &out) {
-    return out.find("usage:") != std::string::npos ||
-           out.find("Traceback") != std::string::npos ||
-           out.find("unknown option") != std::string::npos ||
-           out.find("unrecognized arguments") != std::string::npos;
+    std::string lower;
+    lower.reserve(out.size());
+    for (char c : out) {
+        lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return lower.find("usage:") != std::string::npos ||
+           lower.find("unrecognized option") != std::string::npos ||
+           lower.find("unknown option") != std::string::npos ||
+           lower.find("unrecognized arguments") != std::string::npos ||
+           lower.find("traceback") != std::string::npos;
+}
+
+// True when the CLI died instead of reporting a result.
+bool SpeedtestCrashed(const std::string &out) {
+    return out.find("terminate called") != std::string::npos ||
+           out.find("what():") != std::string::npos ||
+           out.find("core dumped") != std::string::npos ||
+           out.find("Segmentation fault") != std::string::npos;
+}
+
+// Extracts Ookla's `--format=json` result object.
+std::string OoklaResultJson(const std::string &out) {
+    std::string first_object;
+    size_t line_start = 0;
+    while (line_start < out.size()) {
+        size_t line_end = out.find('\n', line_start);
+        if (line_end == std::string::npos) line_end = out.size();
+        const std::string line =
+            Trim(out.substr(line_start, line_end - line_start));
+        line_start = line_end + 1;
+        if (line.empty() || line.front() != '{') continue;
+        if (line.find("\"type\":\"result\"") != std::string::npos) return line;
+        if (first_object.empty()) first_object = line;
+    }
+    return first_object;
+}
+
+// One-line description of the CLI's output for error messages.
+std::string FirstMeaningfulLine(const std::string &out) {
+    size_t pos = 0;
+    while (pos < out.size()) {
+        size_t end = out.find('\n', pos);
+        if (end == std::string::npos) end = out.size();
+        const std::string line = Trim(out.substr(pos, end - pos));
+        pos = end + 1;
+        if (!line.empty()) return line;
+    }
+    return "";
 }
 
 // Requires a speedtest tool on the agent.
@@ -446,7 +584,8 @@ void RunSpeedtest(const CommandParams &params, CommandResponse *resp) {
                       : (" --server " + server_id);
     }
 
-    std::string out = RunBounded(base, 420);
+    int status = -1;
+    std::string out = RunBounded(base, 420, &status);
     if (SpeedtestRejectedFlags(out)) {
         // Some installs expose a single client under both names, so retry once
         // with the opposite flag spelling before giving up.
@@ -457,16 +596,22 @@ void RunSpeedtest(const CommandParams &params, CommandResponse *resp) {
             alt += ookla ? (" --server " + server_id)
                          : (" --server-id=" + server_id);
         }
-        out = RunBounded(alt, 420);
+        out = RunBounded(alt, 420, &status);
     }
 
-    resp->mutable_detail()->append("=== speedtest ===\n");
+    resp->mutable_detail()->append("=== " + tool + " ===\n");
     resp->mutable_detail()->append(out);
     if (!out.empty() && out.back() != '\n') resp->mutable_detail()->append("\n");
 
-    if (Trim(out).empty()) {
+    if (Trim(out).empty() || SpeedtestCrashed(out)) {
         resp->set_success(false);
-        resp->set_error("speedtest tool produced no output");
+        AddField(resp, "tool", ookla ? "speedtest (ookla)" : "speedtest-cli");
+        const std::string line = FirstMeaningfulLine(out);
+        resp->set_error(
+            "speedtest tool " +
+            std::string(Trim(out).empty() ? "produced no output" : "crashed") +
+            " (" + DescribeExitStatus(status) + ")" +
+            (line.empty() ? "" : ": " + line));
         resp->set_summary("speedtest failed");
         return;
     }
@@ -475,37 +620,29 @@ void RunSpeedtest(const CommandParams &params, CommandResponse *resp) {
     AddField(resp, "tool", ookla ? "speedtest (ookla)" : "speedtest-cli");
     if (!server_id.empty()) AddField(resp, "server_id", server_id);
 
-    // Slice the JSON around the top-level blocks we care about. Ookla nests
-    // values (download.bandwidth), speedtest-cli uses flat bytes/s numbers
-    size_t dl_key = out.find("\"download\"");
-    size_t ul_key = out.find("\"upload\"");
-    size_t ping_key = out.find("\"ping\"");
-    std::string dl_json =
-        dl_key != std::string::npos
-            ? out.substr(dl_key, (ul_key == std::string::npos ||
-                                          ul_key < dl_key
-                                      ? out.size()
-                                      : ul_key - dl_key))
-            : "";
-    std::string ul_json =
-        ul_key != std::string::npos ? out.substr(ul_key) : "";
-    std::string ping_json =
-        (ping_key != std::string::npos && dl_key != std::string::npos)
-            ? out.substr(ping_key, dl_key - ping_key)
-            : (ping_key != std::string::npos ? out.substr(ping_key) : "");
+    // Parse only the machine-readable payload
+    std::string parse = ookla ? OoklaResultJson(out) : out;
+    if (parse.empty()) parse = out;
 
-    double download_mbps = BitsPerSecToMbps(JsonNumber(
-        dl_json, "bandwidth", JsonNumber(out, "download", 0.0)));
-    double upload_mbps = BitsPerSecToMbps(JsonNumber(
-        ul_json, "bandwidth", JsonNumber(out, "upload", 0.0)));
+    std::string dl_json = JsonBlock(parse, "download", "upload");
+    std::string ul_json = JsonBlock(parse, "upload", "packetLoss");
+    if (ul_json.empty()) ul_json = JsonBlock(parse, "upload", "");
+    std::string ping_json = JsonBlock(parse, "ping", "download");
+
+    double download_mbps =
+        ookla ? BitsPerSecToMbps(JsonNumber(dl_json, "bandwidth", 0.0))
+              : BytesPerSecToMbps(JsonNumber(parse, "download", 0.0));
+    double upload_mbps =
+        ookla ? BitsPerSecToMbps(JsonNumber(ul_json, "bandwidth", 0.0))
+              : BytesPerSecToMbps(JsonNumber(parse, "upload", 0.0));
     double ping_ms =
-        JsonNumber(ping_json, "latency", JsonNumber(out, "ping", 0.0));
+        JsonNumber(ping_json, "latency", JsonNumber(parse, "ping", 0.0));
     double jitter_ms = JsonNumber(ping_json, "jitter", 0.0);
-    double loss_pct = JsonNumber(out, "packetLoss", -1.0);
+    double loss_pct = JsonNumber(parse, "packetLoss", -1.0);
     std::string server_name =
-        JsonValue(JsonBlock(out, "server", "result"), "name");
-    if (server_name.empty()) server_name = JsonValue(out, "server");
-    std::string isp = JsonValue(out, "isp");
+        JsonValue(JsonBlock(parse, "server", "result"), "name");
+    if (server_name.empty()) server_name = JsonValue(parse, "server");
+    std::string isp = JsonValue(parse, "isp");
 
     AddField(resp, "download_mbps", Fmt(download_mbps));
     AddField(resp, "upload_mbps", Fmt(upload_mbps));
@@ -557,7 +694,7 @@ void RunPingBurst(const CommandParams &params, CommandResponse *resp) {
     double sent = 0, received = 0, loss_pct = 0;
     if (out.find("packets transmitted") != std::string::npos) {
         sent = NumberBefore(out, "packets transmitted");
-        received = NumberBefore(out, "packets received");
+        received = NumberBefore(out, "received");
         loss_pct = NumberBefore(out, "% packet loss");
     } else {
         sent = NumberBefore(out, "Sent =");
@@ -629,7 +766,7 @@ void RunPingBurst(const CommandParams &params, CommandResponse *resp) {
     if (loss_pct >= 20.0) {
         resp->add_issues("packet loss of " + Fmt(loss_pct) + "% toward " +
                          target);
-    } else if (parsed && received < sent) {
+    } else if (parsed && (received < sent || loss_pct > 0)) {
         resp->add_issues("some packets lost toward " + target);
     }
     if (avg_rtt >= 500.0) {
@@ -685,6 +822,8 @@ void RunRouteQuality(const CommandParams &params, CommandResponse *resp) {
     int hops = 0;
     double worst_loss = 0;
     int worst_hop = 0;
+    double dest_loss = 0;
+    int dest_hop = 0;
     std::vector<std::string> lines;
     std::string cur;
     for (char c : out) {
@@ -701,24 +840,13 @@ void RunRouteQuality(const CommandParams &params, CommandResponse *resp) {
         if (mode == "mtr") {
             if (line.find("|--") == std::string::npos) continue;
             ++hops;
-            size_t pct = line.find('%');
-            if (pct == std::string::npos) continue;
-            size_t start = pct;
-            while (start > 0 &&
-                   (std::isdigit(static_cast<unsigned char>(line[start - 1])) ||
-                    line[start - 1] == '.')) --start;
-            try {
-                double loss = std::stod(line.substr(start, pct - start));
-                if (loss > worst_loss) {
-                    worst_loss = loss;
-                    worst_hop = hops;
-                }
-                if (loss >= 20.0) {
-                    resp->add_issues("hop " + std::to_string(hops) +
-                                     " toward " + target + " has " +
-                                     Fmt(loss) + "% loss");
-                }
-            } catch (...) {
+            double loss = 0;
+            if (!ParseMtrLoss(line, &loss)) continue;
+            dest_loss = loss;
+            dest_hop = hops;
+            if (loss > worst_loss) {
+                worst_loss = loss;
+                worst_hop = hops;
             }
         } else if (mode == "pathping") {
             // pathping rows look like "  5  10.0.0.1  0/ 100 = 0%".
@@ -733,14 +861,11 @@ void RunRouteQuality(const CommandParams &params, CommandResponse *resp) {
                    !std::isdigit(static_cast<unsigned char>(line[start]))) ++start;
             try {
                 double loss = std::stod(line.substr(start, pct - start));
+                dest_loss = loss;
+                dest_hop = hops;
                 if (loss > worst_loss) {
                     worst_loss = loss;
                     worst_hop = hops;
-                }
-                if (loss >= 20.0) {
-                    resp->add_issues("hop " + std::to_string(hops) +
-                                     " toward " + target + " has " +
-                                     Fmt(loss) + "% loss");
                 }
             } catch (...) {
             }
@@ -765,10 +890,26 @@ void RunRouteQuality(const CommandParams &params, CommandResponse *resp) {
         AddField(resp, "note",
                  "mtr not installed; per-hop loss parsing skipped (raw "
                  "traceroute available in detail)");
+        resp->set_summary(mode + " to " + target + ": " +
+                          std::to_string(hops) +
+                          " hops (per-hop loss unavailable)");
+        return;
+    }
+
+    AddField(resp, "destination_hop", std::to_string(dest_hop));
+    AddField(resp, "destination_loss_pct", Fmt(dest_loss));
+    if (dest_loss >= 20.0) {
+        resp->add_issues("destination loss of " + Fmt(dest_loss) +
+                         "% toward " + target);
+    } else if (worst_loss >= 20.0) {
+        AddField(resp, "note",
+                 "loss on intermediate hops (" + Fmt(worst_loss) +
+                     "% at hop " + std::to_string(worst_hop) +
+                     ") is usually ICMP rate limiting; the target itself is " +
+                     Fmt(dest_loss) + "%");
     }
     resp->set_summary(mode + " to " + target + ": " + std::to_string(hops) +
-                      " hops, worst loss " +
-                      (worst_loss > 0 ? Fmt(worst_loss) : "0.0") + "%");
+                      " hops, destination loss " + Fmt(dest_loss) + "%");
 }
 
 struct CommandDef {
@@ -812,6 +953,38 @@ const std::vector<CommandDef> &Catalog() {
 }
 
 } // anonymous namespace
+
+const std::string &ToolHomeDir() { return ToolHomeDirImpl(); }
+
+bool ParseMtrLoss(const std::string &line, double *loss) {
+    if (loss == nullptr) return false;
+    size_t pos = line.find("|--");
+    if (pos == std::string::npos) return false;
+    pos += 3;
+    while (pos < line.size() && std::isspace(static_cast<unsigned char>(line[pos]))) {
+        ++pos;
+    }
+    // Skip the host/IP column.
+    while (pos < line.size() && !std::isspace(static_cast<unsigned char>(line[pos]))) {
+        ++pos;
+    }
+    while (pos < line.size() && std::isspace(static_cast<unsigned char>(line[pos]))) {
+        ++pos;
+    }
+    const size_t start = pos;
+    while (pos < line.size() &&
+           (std::isdigit(static_cast<unsigned char>(line[pos])) ||
+            line[pos] == '.')) {
+        ++pos;
+    }
+    if (pos == start) return false;
+    try {
+        *loss = std::stod(line.substr(start, pos - start));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
 
 void ListCommands(pudimnetmon::ListCommandsResponse *resp) {
     if (!resp) return;

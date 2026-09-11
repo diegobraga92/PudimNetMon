@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ClipboardCopy,
   Loader2,
+  RefreshCw,
   TerminalSquare,
 } from 'lucide-react'
 import type { AgentCommand, AgentInfo, CommandResult } from '../../types'
@@ -85,11 +86,34 @@ export function CommandDialog({ agent, open, onOpenChange }: CommandDialogProps)
           })}
         </div>
       ) : (
-        <p className="py-8 text-sm text-fg-muted">
-          {commands.isError
-            ? 'Could not load the command catalog.'
-            : 'This agent exposes no pre-set commands.'}
-        </p>
+        <div className="py-6 text-sm text-fg-muted">
+          {commands.isError ? (
+            <div className="space-y-2">
+              <p className="text-critical">Could not load the command catalog.</p>
+              <p className="text-xs">
+                {commands.error instanceof Error
+                  ? commands.error.message
+                  : 'The agent did not answer its diagnostic endpoint.'}
+              </p>
+              <p className="text-xs">
+                The agent has to be online and advertise a reachable diagnostic
+                endpoint (port 50052 by default) so the collector can forward the
+                request.
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={commands.isFetching}
+                onClick={() => void commands.refetch()}
+              >
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <p>This agent exposes no pre-set commands.</p>
+          )}
+        </div>
       )}
     </Dialog>
   )

@@ -55,11 +55,13 @@ private:
     // Dials the agent's diagnostic endpoint. Writes a 404 body and returns
     // nullptr when the agent has not advertised one.
     std::unique_ptr<pudimnetmon::DiagnosticService::Stub> PrepareAgentCall(
-        const std::string &agent_id, httplib::Response &resp) const;
+        const std::string &agent_id, httplib::Response &resp,
+        std::string *endpoint = nullptr) const;
 
-    // Writes the standard 502 JSON body for a failed agent RPC.
+    // Writes the standard 502 JSON body for a failed agent RPC
     void SendAgentRpcError(httplib::Response &resp,
-                           const grpc::Status &status) const;
+                           const grpc::Status &status,
+                           const std::string &endpoint = "") const;
 
     httplib::Server m_server;
     std::thread m_thread;

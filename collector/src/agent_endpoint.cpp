@@ -1,5 +1,7 @@
 #include "agent_endpoint.h"
 
+#include <cctype>
+
 namespace pudimcollector {
 
 std::string DiagnosticEndpointFromPeer(const std::string &peer,
@@ -27,6 +29,21 @@ std::string DiagnosticEndpointFromPeer(const std::string &peer,
         const auto close = hostport.find(']');
         if (close == std::string::npos) return "";
         host = hostport.substr(0, close + 1);
+        const std::string inner = host.substr(1, host.size() - 2);
+        std::string lower = inner;
+        for (char &c : lower) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+
+        if (lower.rfind("fe80:", 0) == 0) return "";
+ 
+        const std::string mapped = "::ffff:";
+        if (lower.rfind(mapped, 0) == 0) {
+            const std::string v4 = inner.substr(mapped.size());
+            if (v4.find('.') != std::string::npos) {
+                return v4 + ":" + diagnostic_port;
+            }
+        }
     } else {
         // IPv4/hostname peers are "host:port".
         const auto sep = hostport.rfind(':');

@@ -87,8 +87,17 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceCreateParams}; StatusMsg: "Registering PudimNetMonAgent service..."; Flags: waituntilterminated runhidden; BeforeInstall: WriteAgentConfig
 Filename: "{sys}\sc.exe"; Parameters: {code:GetServiceConfigParams}; StatusMsg: "Configuring PudimNetMonAgent service..."; Flags: waituntilterminated runhidden
 Filename: "{sys}\sc.exe"; Parameters: "description PudimNetMonAgent ""PudimNetMon network monitoring agent"""; Flags: waituntilterminated runhidden; AfterInstall: StartAgentService
+; Allow the collector to reach the agent's diagnostic gRPC server, which serves
+; ListCommands/RunCommand for the dashboard. Windows Defender Firewall blocks
+; inbound traffic by default, so without this rule the dashboard shows
+; "Could not load the command catalog" for this host. The port matches the
+; agent's default diagnostic-port (50052); update the rule if that is changed.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""PudimNetMon Agent diagnostic (TCP 50052)"" dir=in action=allow protocol=TCP localport=50052 profile=any"; StatusMsg: "Allowing inbound diagnostic port 50052..."; Flags: runhidden waituntilterminated ignoreerrors
 
 [UninstallRun]
+; Remove the inbound firewall rule added at install time. Unlike the service
+; steps below, this has no ordering dependency, so it is safe to declare here.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""PudimNetMon Agent diagnostic (TCP 50052)"""; Flags: runhidden waituntilterminated ignoreerrors
 ; Service stop and delete happen in [Code] (CurUninstallStepChanged ->
 ; RemoveAgentService). Declarative [UninstallRun] steps ran too early, since sc
 ; stop returns before the service stops and sc delete on a STOP_PENDING service

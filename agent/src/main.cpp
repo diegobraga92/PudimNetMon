@@ -112,15 +112,21 @@ int RunAgent(int argc, char **argv) {
         [port = cfg.diagnostic_port, diag_server_creds, probe_store]() {
             pudimagent::DiagnosticServiceImpl diag_service(probe_store);
             grpc::ServerBuilder builder;
-            builder.AddListeningPort("0.0.0.0:" + port, diag_server_creds);
+            int bound_port = 0;
+            builder.AddListeningPort("0.0.0.0:" + port, diag_server_creds,
+                                     &bound_port);
             builder.RegisterService(&diag_service);
             auto server = builder.BuildAndStart();
-            if (!server) {
-                std::cerr << "Failed to start diagnostic server on port "
-                          << port << "\n";
+            if (!server || bound_port == 0) {
+                LOG_ERROR(
+                    "Failed to start the diagnostic gRPC server on port " + port +
+                    " (port already in use?); pre-set commands and deep "
+                    "diagnostics for this agent will not work. Change "
+                    "diagnostic-port or free the port, then restart the agent.");
                 return;
             }
-            LOG_INFO("Diagnostic gRPC server listening on port " + port);
+            LOG_INFO("Diagnostic gRPC server listening on 0.0.0.0:" +
+                     std::to_string(bound_port));
             server->Wait();
         });
     diagnostic_thread.detach();
@@ -144,9 +150,22 @@ int RunAgent(int argc, char **argv) {
     auto reconnect = [&]() {
         const std::string &ep = failover.CurrentEndpoint();
         LOG_INFO("Connecting to collector endpoint: " + ep);
+        std::string advertised = cfg.diagnostic_address;
+        if (advertised.empty()) {
+            advertised = pudimagent::platform::AdvertisedDiagnosticEndpoint(
+                ep, cfg.diagnostic_port);
+        }
+        if (!advertised.empty()) {
+            LOG_INFO("Advertised diagnostic endpoint: " + advertised);
+        } else {
+            LOG_WARN(
+                "No diagnostic endpoint advertised; the collector will fall "
+                "back to the address it sees for this agent (set "
+                "diagnostic-address if commands cannot reach it)");
+        }
         return std::make_pair(
             std::make_unique<HeartbeatClient>(ep, creds, cfg.node_id,
-                                              cfg.diagnostic_address),
+                                              advertised),
             std::make_unique<MetricsClient>(ep, creds));
     };
     auto clients = reconnect();

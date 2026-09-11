@@ -69,6 +69,9 @@ ExecStart=/usr/local/bin/pudim-agent
 # Run unprivileged and retain only the capabilities the probes need
 User=nobody
 Group=nogroup
+StateDirectory=pudim
+StateDirectoryMode=0750
+Environment=HOME=/var/lib/pudim
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

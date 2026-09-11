@@ -257,7 +257,8 @@ void CommandScheduler::ExecuteRun(const CommandSchedule &sched) {
 
     if (!status.ok()) {
         run.success = false;
-        run.error = "agent RPC failed: " + status.error_message();
+        run.error = "agent RPC failed: " + status.error_message() +
+                    " (diagnostic endpoint " + endpoint + ")";
         record_result();
         return;
     }

@@ -100,7 +100,7 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.collector
     ports:
-      - "${PUDIM_COLLECTOR_SECONDARY_GRPC_PORT:-50052}:50052"  # gRPC
+      - "${PUDIM_COLLECTOR_SECONDARY_GRPC_PORT:-50053}:50052"  # gRPC
       - "${PUDIM_COLLECTOR_SECONDARY_HTTP_PORT:-8081}:8081"    # HTTP health/metrics
     command:
       - "--grpc-addr=0.0.0.0:50052"

@@ -69,7 +69,7 @@ Override ports that conflict on the server. Defaults are the following.
 | Collector HTTP (REST API, health) | `PUDIM_COLLECTOR_HTTP_PORT` | `8080` |
 | Collector gRPC (agents) | `PUDIM_COLLECTOR_GRPC_PORT` | `50051` |
 | Collector-secondary HTTP | `PUDIM_COLLECTOR_SECONDARY_HTTP_PORT` | `8081` |
-| Collector-secondary gRPC | `PUDIM_COLLECTOR_SECONDARY_GRPC_PORT` | `50052` |
+| Collector-secondary gRPC | `PUDIM_COLLECTOR_SECONDARY_GRPC_PORT` | `50053` |
 | TimescaleDB (PostgreSQL) | `PUDIM_TIMESCALEDB_PORT` | `5432` |
 | Kafka broker | `PUDIM_KAFKA_PORT` | `9092` |
 | Consumer-storage Prometheus | `PUDIM_CONSUMER_STORAGE_PROMETHEUS_PORT` | `9091` |
