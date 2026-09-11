@@ -154,9 +154,9 @@ std::string AdvertisedDiagnosticEndpoint(const std::string &collector_endpoint,
         if (rc == 0) {
             struct sockaddr_storage local {};
 #ifdef _WIN32
-            int len = sizeof(local);
+        int len = static_cast<int>(sizeof(local));
 #else
-            socklen_t len = sizeof(local);
+        socklen_t len = sizeof(local);
 #endif
             if (::getsockname(fd, reinterpret_cast<struct sockaddr *>(&local),
                               &len) == 0) {

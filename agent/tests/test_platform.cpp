@@ -1,7 +1,9 @@
+// Unit tests for the advertised diagnostic endpoint derivation.
 #include <iostream>
 #include <string>
 
 #include "platform/platform.h"
+#include "platform/win_service.h"
 
 namespace {
 
@@ -19,6 +21,14 @@ void Check(bool cond, const std::string &label) {
 } // namespace
 
 int main() {
+    // On Windows the helper goes through WinSock (getaddrinfo/socket/connect),
+    // so the process must initialise the network stack first.
+    std::string net_error;
+    if (!pudimagent::platform::InitNetwork(net_error)) {
+        std::cerr << "FAIL network init: " << net_error << "\n";
+        return 1;
+    }
+
     using pudimagent::platform::AdvertisedDiagnosticEndpoint;
 
     Check(AdvertisedDiagnosticEndpoint("127.0.0.1:50051", "50052") ==
@@ -44,6 +54,8 @@ int main() {
           "empty collector endpoint");
     Check(AdvertisedDiagnosticEndpoint("127.0.0.1:50051", "").empty(),
           "empty diagnostic port");
+
+    pudimagent::platform::CleanupNetwork();
 
     if (g_failures > 0) {
         std::cerr << g_failures << " platform test(s) failed\n";

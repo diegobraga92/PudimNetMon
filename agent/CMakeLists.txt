@@ -369,12 +369,13 @@ endif()
 add_test(NAME command-tests COMMAND test-commands)
 
 # Platform helper unit tests (local-address derivation for the advertised
-# diagnostic endpoint). No collector or network traffic is required.
+# diagnostic endpoint). No collector or network traffic is required
 add_executable(test-platform
   tests/test_platform.cpp
   src/platform/platform.cpp
+  src/platform/win_service.cpp
 )
-target_link_libraries(test-platform PRIVATE ${PUDIM_PLATFORM_LIBS})
+target_link_libraries(test-platform PRIVATE Threads::Threads ${PUDIM_PLATFORM_LIBS})
 target_include_directories(test-platform PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(test-platform PRIVATE -Wall -Wextra)
