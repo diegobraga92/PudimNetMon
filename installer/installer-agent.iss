@@ -90,19 +90,21 @@ Filename: "{sys}\sc.exe"; Parameters: "description PudimNetMonAgent ""PudimNetMo
 ; Allow the collector to reach the agent's diagnostic gRPC server, which serves
 ; ListCommands/RunCommand for the dashboard. Windows Defender Firewall blocks
 ; inbound traffic by default, so without this rule the dashboard shows
-; "Could not load the command catalog" for this host. The port matches the
-; agent's default diagnostic-port (50052); update the rule if that is changed.
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""PudimNetMon Agent diagnostic (TCP 50052)"" dir=in action=allow protocol=TCP localport=50052 profile=any"; StatusMsg: "Allowing inbound diagnostic port 50052..."; Flags: runhidden waituntilterminated ignoreerrors
+; "Could not load the command catalog" for this host.
+;
+; The rule is applied from [Code] (AddDiagnosticFirewallRule, called after the
+; files are installed) rather than from a [Run] entry: a non-zero netsh exit
+; code must not affect the install, and the delete-then-add pair there keeps
+; reinstalls and upgrades idempotent. The port matches the agent's default
+; diagnostic-port (50052); update both places if that ever changes.
 
 [UninstallRun]
-; Remove the inbound firewall rule added at install time. Unlike the service
-; steps below, this has no ordering dependency, so it is safe to declare here.
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""PudimNetMon Agent diagnostic (TCP 50052)"""; Flags: runhidden waituntilterminated ignoreerrors
-; Service stop and delete happen in [Code] (CurUninstallStepChanged ->
-; RemoveAgentService). Declarative [UninstallRun] steps ran too early, since sc
-; stop returns before the service stops and sc delete on a STOP_PENDING service
-; only marks it for deletion. That left the service registered with the agent
-; process still running after the uninstaller exited.
+; Service stop/delete and the diagnostic firewall rule removal both happen in
+; [Code] (CurUninstallStepChanged -> RemoveAgentService /
+; RemoveDiagnosticFirewallRule). Declarative [UninstallRun] steps ran too early,
+; since sc stop returns before the service stops and sc delete on a
+; STOP_PENDING service only marks it for deletion. That left the service
+; registered with the agent process still running after the uninstaller exited.
 
 [Code]
 
@@ -172,13 +174,60 @@ begin
        ewWaitUntilTerminated, ResultCode);
 end;
 
+// Adds the inbound firewall rule that lets the collector reach this agent's
+// diagnostic gRPC server (ListCommands/RunCommand). Windows Defender Firewall
+// blocks inbound traffic by default, so without it the dashboard reports that
+// it cannot load the command catalog for this host. The port must match the
+// agent's diagnostic-port (default 50052).
+//
+// Exec() is used instead of a [Run] entry because a non-zero netsh exit code
+// (for example "the rule already exists") must never affect the install, and
+// the delete-then-add pair keeps reinstalls and upgrades idempotent.
+procedure AddDiagnosticFirewallRule();
+var
+  ResultCode: Integer;
+  Netsh: String;
+  RuleName: String;
+begin
+  Netsh := ExpandConstant('{sys}\netsh.exe');
+  RuleName := 'PudimNetMon Agent diagnostic (TCP 50052)';
+  Exec(Netsh, 'advfirewall firewall delete rule name="' + RuleName + '"', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if Exec(Netsh,
+          'advfirewall firewall add rule name="' + RuleName +
+          '" dir=in action=allow protocol=TCP localport=50052 profile=any',
+          '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Log('Diagnostic firewall rule applied (netsh exit code ' +
+        IntToStr(ResultCode) + ')');
+  end
+  else
+  begin
+    Log('netsh.exe could not be run; the diagnostic firewall rule was not added');
+  end;
+end;
+
+// Removes the rule added by AddDiagnosticFirewallRule. Exit codes are ignored
+// (the rule may already be gone).
+procedure RemoveDiagnosticFirewallRule();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\netsh.exe'),
+       'advfirewall firewall delete rule name="PudimNetMon Agent diagnostic (TCP 50052)"',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 // Runs in the uninstaller. usAppMutexCheck is the first uninstall step, before
 // any file is removed, so stopping the agent there guarantees pudim-agent.exe
 // is unlocked by the time the uninstaller deletes it.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usAppMutexCheck then
+  begin
     RemoveAgentService();
+    RemoveDiagnosticFirewallRule();
+  end;
 end;
 
 // ---- config token from the setup file name --------------------------------
@@ -469,6 +518,12 @@ begin
     // Stop the service and wait before replacing the exe during an upgrade.
     // No-op on a fresh install (sc stop returns 1060/1062 immediately).
     StopAgentService();
+  end
+  else if CurStep = ssPostInstall then
+  begin
+    // Let the collector dial this agent's diagnostic port so dashboard
+    // commands and deep diagnostics work (see AddDiagnosticFirewallRule).
+    AddDiagnosticFirewallRule();
   end;
 end;
 
